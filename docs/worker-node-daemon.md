@@ -53,8 +53,6 @@ Use:
 - control plane;
 - coordinator.
 
-Avoid “slave.”
-
 ## Build Phases
 
 ### Phase 1 — Skeleton
