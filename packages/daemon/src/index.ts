@@ -74,3 +74,5 @@ export function createHeartbeat(state: DaemonState, daemonVersion: string): BeeH
     activeJobs: state.activeJobs,
   });
 }
+
+export * from "./identity.js";
