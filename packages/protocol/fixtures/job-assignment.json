@@ -1,0 +1,14 @@
+{
+  "type": "job.assign",
+  "job": {
+    "id": "job_123",
+    "type": "run_command",
+    "beeId": "bee_123",
+    "status": "assigned",
+    "payload": {
+      "command": "echo hello from bee"
+    },
+    "createdAt": "2026-05-08T20:00:00.000Z",
+    "assignedAt": "2026-05-08T20:00:01.000Z"
+  }
+}

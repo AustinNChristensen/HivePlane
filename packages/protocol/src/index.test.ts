@@ -1,0 +1,142 @@
+import { describe, expect, it } from "vitest";
+import {
+  ApprovalRequestSchema,
+  BeeHeartbeatSchema,
+  BeeRegistrationRequestSchema,
+  HiveToBeeMessageSchema,
+  JobEventBatchSchema,
+  JobSchema,
+  type BeeCapabilities,
+} from "./index.js";
+
+const capabilities: BeeCapabilities = {
+  runtimes: ["openclaw"],
+  modelBackends: ["ollama"],
+  models: ["qwen2.5-coder:7b"],
+  tools: ["shell", "filesystem"],
+  networking: ["tailscale"],
+  hardware: {
+    platform: "darwin-arm64",
+    hostname: "bee-mini",
+    cpuCores: 10,
+    memoryGb: 32,
+    gpu: "apple_m4",
+  },
+};
+
+describe("bee registration", () => {
+  it("validates a registration request", () => {
+    const parsed = BeeRegistrationRequestSchema.parse({
+      type: "bee.registration.request",
+      bootstrapToken: "hp_boot_test",
+      publicKey: "ed25519:abc",
+      beeName: "bee-mini",
+      daemonVersion: "0.1.0",
+      hiveUrl: "https://hive.example.ts.net",
+      labels: { role: "dev" },
+      capabilities,
+      requestedAt: "2026-05-08T20:00:00.000Z",
+    });
+
+    expect(parsed.capabilities.modelBackends).toContain("ollama");
+  });
+
+  it("rejects an invalid hive URL", () => {
+    expect(() =>
+      BeeRegistrationRequestSchema.parse({
+        type: "bee.registration.request",
+        bootstrapToken: "hp_boot_test",
+        publicKey: "ed25519:abc",
+        beeName: "bee-mini",
+        daemonVersion: "0.1.0",
+        hiveUrl: "not-a-url",
+        capabilities,
+        requestedAt: "2026-05-08T20:00:00.000Z",
+      }),
+    ).toThrow();
+  });
+});
+
+describe("heartbeat", () => {
+  it("validates bee heartbeat payloads", () => {
+    const heartbeat = BeeHeartbeatSchema.parse({
+      type: "bee.heartbeat",
+      beeId: "bee_123",
+      timestamp: "2026-05-08T20:00:00.000Z",
+      daemonVersion: "0.1.0",
+      status: "online",
+      activeJobs: 0,
+      capabilities,
+    });
+
+    expect(heartbeat.status).toBe("online");
+  });
+});
+
+describe("jobs and events", () => {
+  it("validates jobs and event batches", () => {
+    const job = JobSchema.parse({
+      id: "job_123",
+      type: "run_command",
+      beeId: "bee_123",
+      status: "queued",
+      payload: { command: "echo hello" },
+      createdAt: "2026-05-08T20:00:00.000Z",
+    });
+
+    const batch = JobEventBatchSchema.parse({
+      type: "job.events.append",
+      jobId: job.id,
+      beeId: job.beeId,
+      events: [
+        {
+          id: "evt_1",
+          jobId: job.id,
+          beeId: job.beeId,
+          sequence: 0,
+          type: "job.started",
+          level: "info",
+          actor: "bee",
+          data: { message: "started" },
+          createdAt: "2026-05-08T20:00:01.000Z",
+        },
+      ],
+    });
+
+    expect(batch.events).toHaveLength(1);
+  });
+});
+
+describe("approvals and wire messages", () => {
+  it("validates approval requests", () => {
+    const approval = ApprovalRequestSchema.parse({
+      type: "approval.request",
+      approvalId: "apv_123",
+      jobId: "job_123",
+      beeId: "bee_123",
+      risk: "write",
+      summary: "Install OpenClaw",
+      action: "install_runtime",
+      input: { runtime: "openclaw" },
+      requestedAt: "2026-05-08T20:00:00.000Z",
+    });
+
+    expect(approval.risk).toBe("write");
+  });
+
+  it("validates Hive-to-Bee assignment messages", () => {
+    const message = HiveToBeeMessageSchema.parse({
+      type: "job.assign",
+      job: {
+        id: "job_123",
+        type: "run_command",
+        beeId: "bee_123",
+        status: "assigned",
+        payload: { command: "echo hello" },
+        createdAt: "2026-05-08T20:00:00.000Z",
+      },
+    });
+
+    expect(message.type).toBe("job.assign");
+  });
+});

@@ -1,0 +1,26 @@
+{
+  "type": "bee.registration.request",
+  "bootstrapToken": "hp_boot_example",
+  "publicKey": "ed25519:example",
+  "beeName": "bee-mini",
+  "daemonVersion": "0.1.0",
+  "hiveUrl": "https://hive.example.ts.net",
+  "labels": {
+    "role": "dev"
+  },
+  "capabilities": {
+    "runtimes": ["openclaw"],
+    "modelBackends": ["ollama"],
+    "models": ["qwen2.5-coder:7b"],
+    "tools": ["shell", "filesystem"],
+    "networking": ["tailscale"],
+    "hardware": {
+      "platform": "darwin-arm64",
+      "hostname": "bee-mini",
+      "cpuCores": 10,
+      "memoryGb": 32,
+      "gpu": "apple_m4"
+    }
+  },
+  "requestedAt": "2026-05-08T20:00:00.000Z"
+}
