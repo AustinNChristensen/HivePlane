@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createReadStream, existsSync, statSync } from "node:fs";
+import { hostname as osHostname } from "node:os";
 import { dirname, join } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import {
   clearHiveSession,
@@ -15,6 +17,7 @@ import {
   writeHivePlaneConfig,
   writeHiveSession,
 } from "@hiveplane/daemon";
+import { classifyCredential } from "./credentials.js";
 import {
   getBeeServiceStatus,
   getServicePlatform,
@@ -95,10 +98,20 @@ async function main(): Promise<void> {
 }
 
 async function runLogin(parsed: ArgvParseResult): Promise<void> {
-  const url = parsed.positional[0];
+  // Resolve URL: from positional, or interactively if stdin is a TTY.
+  let url = parsed.positional[0];
+  const interactive = process.stdin.isTTY === true;
+
   if (!url) {
-    console.error("Usage: hive login <hive-url> [--token <bootstrap>]");
-    process.exit(2);
+    if (!interactive) {
+      console.error("Usage: hive login <hive-url> [--token <bootstrap>] [--pairing-key <key>]");
+      process.exit(2);
+    }
+    url = (await promptLine("Hive URL: ")).trim();
+    if (!url) {
+      console.error("Hive URL is required.");
+      process.exit(2);
+    }
   }
 
   let parsedUrl: URL;
@@ -113,8 +126,24 @@ async function runLogin(parsed: ArgvParseResult): Promise<void> {
     process.exit(2);
   }
 
-  const beeName =
+  // Resolve credential. Precedence: --token > --pairing-key > interactive prompt.
+  // Either flag accepts either form (we sniff the prefix), so scripted callers
+  // and operators copy-pasting from the dashboard both work.
+  let credentialFlag = pickCredentialFlag(parsed);
+  if (!credentialFlag && interactive) {
+    const typed = (await promptLine("Pairing key (or bootstrap token, blank to skip): ")).trim();
+    if (typed) credentialFlag = typed;
+  }
+
+  let beeName =
     typeof parsed.flags.get("name") === "string" ? (parsed.flags.get("name") as string) : undefined;
+  if (!beeName && interactive && !parsed.positional[0]) {
+    // Only prompt for the name in fully-guided mode (no positional URL given).
+    const defaultName = osHostname();
+    const typed = (await promptLine(`Bee name [${defaultName}]: `)).trim();
+    if (typed) beeName = typed;
+  }
+
   writeHivePlaneConfig(
     {
       hiveUrl: parsedUrl.toString(),
@@ -130,13 +159,21 @@ async function runLogin(parsed: ArgvParseResult): Promise<void> {
   console.log(`Logged into ${parsedUrl.toString()}`);
   console.log(`Bee identity: ${identity.fingerprint}`);
 
-  // If a bootstrap token was supplied, register so the daemon can use signed heartbeats.
-  const tokenFlag = parsed.flags.get("token");
-  if (typeof tokenFlag === "string") {
+  // If a credential was supplied, register so the daemon can use signed heartbeats.
+  if (credentialFlag) {
+    const credential = classifyCredential(credentialFlag);
+    if (!credential) {
+      console.error(
+        `Could not recognize the credential. Expected an 8-character pairing key (e.g. K7RQ-2P9X) or a bootstrap token starting with "hp_boot_".`,
+      );
+      process.exit(2);
+    }
     try {
       const response = await registerBeeWithHive({
         hiveUrl: parsedUrl.toString(),
-        bootstrapToken: tokenFlag,
+        ...(credential.kind === "bootstrap"
+          ? { bootstrapToken: credential.value }
+          : { pairingKey: credential.value }),
         identity,
         ...(beeName ? { beeName } : {}),
         daemonVersion: VERSION,
@@ -220,7 +257,9 @@ async function runStatus(parsed: ArgvParseResult): Promise<void> {
       `Session:       ${expired ? "expired" : "active"} (beeId=${session.beeId}, expires ${session.sessionExpiresAt})`,
     );
   } else {
-    console.log(`Session:       (none — register with \`hive login <url> --token <bootstrap>\`)`);
+    console.log(
+      `Session:       (none — run \`hive login\` and paste the Hive's pairing key when prompted)`,
+    );
   }
 
   const status = await getBeeServiceStatus(configDir);
@@ -401,6 +440,35 @@ async function runIdentity(parsed: ArgvParseResult): Promise<void> {
   }
 }
 
+// --- login helpers ---------------------------------------------------------
+
+/**
+ * Pull a credential off `--token` or `--pairing-key`, in that order. Both flags
+ * accept either form — we sniff the prefix downstream — so a user pasting from
+ * the dashboard's bootstrap-token UI into `--pairing-key` (or vice versa)
+ * still pairs successfully.
+ */
+function pickCredentialFlag(parsed: ArgvParseResult): string | undefined {
+  const token = parsed.flags.get("token");
+  if (typeof token === "string") return token;
+  const pairing = parsed.flags.get("pairing-key");
+  if (typeof pairing === "string") return pairing;
+  return undefined;
+}
+
+/**
+ * Prompt the user for a single line of input. Always uses stdin/stdout, and
+ * always closes the readline interface — re-prompting is the caller's job.
+ */
+async function promptLine(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await rl.question(question);
+  } finally {
+    rl.close();
+  }
+}
+
 type InstallEnvironment = { installDir: string; pnpmBin: string; nodeBinDir: string };
 
 function resolveInstallEnvironment(): InstallEnvironment {
@@ -456,6 +524,8 @@ function parseArgs(args: string[]): ArgvParseResult {
       flags.set("name", requireValue(args, ++i, "--name"));
     } else if (a === "--token") {
       flags.set("token", requireValue(args, ++i, "--token"));
+    } else if (a === "--pairing-key") {
+      flags.set("pairing-key", requireValue(args, ++i, "--pairing-key"));
     } else if (a === "-f") {
       flags.set("follow", true);
     } else if (a.startsWith("--")) {
@@ -487,9 +557,12 @@ function printHelp(): void {
     `HivePlane CLI v${VERSION}
 
 Usage:
-  hive login <url> [--token <bootstrap>]
-                             Connect this Bee to a Hive. With --token, register
-                             and persist a session for signed heartbeats.
+  hive login [<url>] [--pairing-key <key>] [--token <bootstrap>]
+                             Connect this Bee to a Hive. Run with no args on a
+                             TTY for a guided prompt (URL, then pairing key).
+                             --pairing-key takes the short 8-char code shown
+                             on the Hive dashboard. --token takes a long
+                             admin-minted bootstrap token (for scripts).
   hive logout                Forget the Hive URL + session, stop the service
   hive status                Show config, identity, session, and service state
   hive start                 Start the daemon. Auto-installs the launchd/systemd
@@ -507,7 +580,8 @@ Usage:
 Flags:
   --config-dir <path>        Override config dir (default: ~/.hiveplane)
   --name <name>              Friendly Bee name (used by 'hive login')
-  --token <bootstrap>        Bootstrap token (from \`hive bee token create\`)
+  --pairing-key <key>        Short pairing key from the Hive dashboard
+  --token <bootstrap>        Bootstrap token (long, scripted-install form)
   --foreground               'hive start' runs as a child process, not a service
   --no-start                 'hive enable': install unit but don't start it
   -f, --follow               'hive logs' tails the file

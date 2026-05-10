@@ -1,6 +1,13 @@
 import { generateKeyPairSync, sign as edSign } from "node:crypto";
 import { once } from "node:events";
 import { describe, expect, it } from "vitest";
+import {
+  formatPairingKeyForDisplay,
+  generatePairingKey,
+  normalizePairingKey,
+  PAIRING_KEY_ALPHABET,
+  PAIRING_KEY_LENGTH,
+} from "./auth.js";
 import { createHiveServer, createHiveServerState } from "./server.js";
 
 async function withServer<T>(
@@ -27,6 +34,42 @@ function generateBeeKeypair(): { publicKeyPem: string; privateKeyPem: string } {
     privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
   };
 }
+
+describe("pairing key helpers", () => {
+  it("generatePairingKey produces an 8-char Crockford-base32 code", () => {
+    for (let i = 0; i < 50; i += 1) {
+      const { code, rawToken, tokenHash } = generatePairingKey();
+      expect(code.length).toBe(PAIRING_KEY_LENGTH);
+      for (const ch of code) {
+        expect(PAIRING_KEY_ALPHABET).toContain(ch);
+      }
+      expect(rawToken).toBe(`hp_pair_${code}`);
+      expect(tokenHash).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  it("formatPairingKeyForDisplay inserts a midpoint dash", () => {
+    expect(formatPairingKeyForDisplay("K7RQ2P9X")).toBe("K7RQ-2P9X");
+    // Doesn't crash on shorter / longer input.
+    expect(formatPairingKeyForDisplay("ABC")).toBe("ABC");
+  });
+
+  it("normalizePairingKey accepts dashed, lowercase, prefixed input", () => {
+    expect(normalizePairingKey("K7RQ-2P9X")).toBe("hp_pair_K7RQ2P9X");
+    expect(normalizePairingKey("k7rq2p9x")).toBe("hp_pair_K7RQ2P9X");
+    expect(normalizePairingKey("hp_pair_K7RQ2P9X")).toBe("hp_pair_K7RQ2P9X");
+    expect(normalizePairingKey("  HP_PAIR_k7rq 2p9x  ")).toBe("hp_pair_K7RQ2P9X");
+  });
+
+  it("normalizePairingKey rejects ambiguous chars and bad lengths", () => {
+    // 0/O/1/I/L/U are excluded from the alphabet — typing them is a hard error.
+    expect(normalizePairingKey("K7RQ2POX")).toBeUndefined();
+    expect(normalizePairingKey("K7RQ2P0X")).toBeUndefined();
+    expect(normalizePairingKey("K7RQ2P9")).toBeUndefined();
+    expect(normalizePairingKey("K7RQ2P9XX")).toBeUndefined();
+    expect(normalizePairingKey("")).toBeUndefined();
+  });
+});
 
 describe("admin auth on POST /api/bootstrap-tokens", () => {
   it("503 when HIVEPLANE_ADMIN_TOKEN is not set on the server", async () => {

@@ -33,9 +33,29 @@ export const BeeCapabilitiesSchema = z.object({
   hardware: BeeHardwareSchema,
 });
 
-export const BeeRegistrationRequestSchema = z.object({
+/**
+ * Plain object form of the registration request. Kept as a `ZodObject` so it
+ * can participate in `BeeToHiveMessageSchema`'s discriminated union.
+ *
+ * The "exactly one of bootstrapToken / pairingKey" cross-field constraint
+ * lives on `BeeRegistrationRequestSchema` below — the server uses the refined
+ * schema for direct parsing, and the union schema for type discrimination
+ * only.
+ */
+export const BeeRegistrationRequestObjectSchema = z.object({
   type: z.literal("bee.registration.request"),
-  bootstrapToken: z.string().min(1),
+  /**
+   * Long-form bootstrap token (`hp_boot_…`). Either this OR `pairingKey`
+   * must be supplied. Bootstrap tokens are admin-minted, single-use, and
+   * intended for scripted installs.
+   */
+  bootstrapToken: z.string().min(1).optional(),
+  /**
+   * Short human-typeable pairing key (`hp_pair_…`). Either this OR
+   * `bootstrapToken` must be supplied. Pairing keys are 8 Crockford-base32
+   * chars, displayed in the Hive dashboard, and rotate after each use.
+   */
+  pairingKey: z.string().min(1).optional(),
   publicKey: z.string().min(1),
   beeName: z.string().min(1),
   daemonVersion: z.string().min(1),
@@ -44,6 +64,14 @@ export const BeeRegistrationRequestSchema = z.object({
   capabilities: BeeCapabilitiesSchema,
   requestedAt: IsoDateTimeSchema,
 });
+
+export const BeeRegistrationRequestSchema = BeeRegistrationRequestObjectSchema.refine(
+  (req) => Boolean(req.bootstrapToken) !== Boolean(req.pairingKey),
+  {
+    message: "exactly one of bootstrapToken or pairingKey must be provided",
+    path: ["bootstrapToken"],
+  },
+);
 
 export const BeeRegistrationResponseSchema = z.object({
   type: z.literal("bee.registration.response"),
@@ -217,7 +245,10 @@ export const HiveToBeeMessageSchema = z.discriminatedUnion("type", [
 ]);
 
 export const BeeToHiveMessageSchema = z.discriminatedUnion("type", [
-  BeeRegistrationRequestSchema,
+  // The discriminator only inspects `type`, so the plain-object form is
+  // sufficient. Cross-field validation (exactly-one auth credential) lives
+  // on `BeeRegistrationRequestSchema`, which the server uses directly.
+  BeeRegistrationRequestObjectSchema,
   BeeHeartbeatSchema,
   JobEventBatchSchema,
   JobCompleteRequestSchema,

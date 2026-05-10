@@ -11,11 +11,23 @@ Three commands total: install, login, start.
 # 1. install (no args needed)
 curl -fsSL https://hive.your-tailnet.ts.net:8787/install/bee.sh | sh
 
-# 2. point at a Hive
-hive login http://hive.your-tailnet.ts.net:8787
+# 2. log in (no args runs an interactive prompt: Hive URL + pairing key)
+hive login
 
 # 3. start (auto-installs the service unit on first run; survives reboot)
 hive start
+```
+
+The pairing key is the 8-character code shown on the Hive dashboard (admin
+section of the **Bees** tab). It's single-use and rotates after each pair.
+For unattended/scripted installs, pass everything inline:
+
+```sh
+hive login http://hive.your-tailnet.ts.net:8787 \
+  --name laptop-1 \
+  --pairing-key K7RQ-2P9X            # from the dashboard
+# or, for fully-automated installs:
+hive login <url> --token hp_boot_…   # long bootstrap token
 ```
 
 What `bee.sh` does:

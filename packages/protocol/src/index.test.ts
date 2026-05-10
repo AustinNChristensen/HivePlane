@@ -55,6 +55,51 @@ describe("bee registration", () => {
       }),
     ).toThrow();
   });
+
+  it("accepts a pairing key in place of a bootstrap token", () => {
+    const parsed = BeeRegistrationRequestSchema.parse({
+      type: "bee.registration.request",
+      pairingKey: "hp_pair_K7RQ2P9X",
+      publicKey: "ed25519:abc",
+      beeName: "bee-mini",
+      daemonVersion: "0.1.0",
+      hiveUrl: "https://hive.example.ts.net",
+      capabilities,
+      requestedAt: "2026-05-08T20:00:00.000Z",
+    });
+    expect(parsed.pairingKey).toBe("hp_pair_K7RQ2P9X");
+    expect(parsed.bootstrapToken).toBeUndefined();
+  });
+
+  it("rejects a registration that supplies neither bootstrap token nor pairing key", () => {
+    expect(() =>
+      BeeRegistrationRequestSchema.parse({
+        type: "bee.registration.request",
+        publicKey: "ed25519:abc",
+        beeName: "bee-mini",
+        daemonVersion: "0.1.0",
+        hiveUrl: "https://hive.example.ts.net",
+        capabilities,
+        requestedAt: "2026-05-08T20:00:00.000Z",
+      }),
+    ).toThrow(/exactly one/);
+  });
+
+  it("rejects a registration that supplies BOTH bootstrap token and pairing key", () => {
+    expect(() =>
+      BeeRegistrationRequestSchema.parse({
+        type: "bee.registration.request",
+        bootstrapToken: "hp_boot_test",
+        pairingKey: "hp_pair_K7RQ2P9X",
+        publicKey: "ed25519:abc",
+        beeName: "bee-mini",
+        daemonVersion: "0.1.0",
+        hiveUrl: "https://hive.example.ts.net",
+        capabilities,
+        requestedAt: "2026-05-08T20:00:00.000Z",
+      }),
+    ).toThrow(/exactly one/);
+  });
 });
 
 describe("heartbeat", () => {
