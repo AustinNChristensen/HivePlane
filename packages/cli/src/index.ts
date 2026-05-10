@@ -4,12 +4,16 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  clearHiveSession,
   clearHiveUrl,
   getDefaultHivePlaneConfigDir,
   getHivePlaneConfigPaths,
   loadOrCreateBeeIdentity,
   readHivePlaneConfig,
+  readHiveSession,
+  registerBeeWithHive,
   writeHivePlaneConfig,
+  writeHiveSession,
 } from "@hiveplane/daemon";
 
 const VERSION = "0.0.1";
@@ -103,12 +107,50 @@ async function runLogin(parsed: ArgvParseResult): Promise<void> {
 
   console.log(`Logged into ${parsedUrl.toString()}`);
   console.log(`Bee identity: ${identity.fingerprint}`);
+
+  // If a bootstrap token was supplied, perform the registration handshake so
+  // the daemon can use signed heartbeats. Otherwise the daemon runs in legacy
+  // unauthenticated mode (fine for v0.0.x dev; required to be configured for v0.1+).
+  const tokenFlag = parsed.flags.get("token");
+  if (typeof tokenFlag === "string") {
+    try {
+      const response = await registerBeeWithHive({
+        hiveUrl: parsedUrl.toString(),
+        bootstrapToken: tokenFlag,
+        identity,
+        ...(beeName ? { beeName } : {}),
+        daemonVersion: VERSION,
+      });
+      writeHiveSession(
+        {
+          hiveUrl: parsedUrl.toString(),
+          beeId: response.beeId,
+          sessionToken: response.sessionToken,
+          sessionExpiresAt: response.sessionExpiresAt,
+        },
+        parsed.configDir,
+      );
+      console.log(`Registered with Hive as ${response.beeId} (signed-heartbeat mode).`);
+    } catch (error) {
+      console.error(
+        `Registration failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      console.error(
+        "Hive URL was saved. You can retry with `hive login <url> --token <new-token>`.",
+      );
+      process.exit(1);
+    }
+  } else {
+    console.log(`Run with \`--token <bootstrap-token>\` to register and use signed heartbeats.`);
+  }
+
   console.log(`Run \`hive start\` to begin heartbeating.`);
 }
 
 async function runLogout(parsed: ArgvParseResult): Promise<void> {
   clearHiveUrl(parsed.configDir);
-  console.log("Logged out. Hive URL cleared from config.");
+  clearHiveSession(parsed.configDir);
+  console.log("Logged out. Hive URL + session cleared from config.");
 }
 
 async function runStatus(parsed: ArgvParseResult): Promise<void> {
@@ -131,6 +173,16 @@ async function runStatus(parsed: ArgvParseResult): Promise<void> {
     console.log(`Created:       ${identity.createdAt}`);
   } else {
     console.log(`Identity:      (will be generated on first login)`);
+  }
+
+  const session = readHiveSession(configDir);
+  if (session) {
+    const expired = new Date(session.sessionExpiresAt).getTime() <= Date.now();
+    console.log(
+      `Session:       ${expired ? "expired" : "active"} (beeId=${session.beeId}, expires ${session.sessionExpiresAt})`,
+    );
+  } else {
+    console.log(`Session:       (none — register with \`hive login <url> --token <bootstrap>\`)`);
   }
 }
 
@@ -201,6 +253,8 @@ function parseArgs(args: string[]): ArgvParseResult {
       configDir = requireValue(args, ++i, "--config-dir");
     } else if (a === "--name") {
       flags.set("name", requireValue(args, ++i, "--name"));
+    } else if (a === "--token") {
+      flags.set("token", requireValue(args, ++i, "--token"));
     } else if (a.startsWith("--")) {
       const eq = a.indexOf("=");
       if (eq > -1) {
@@ -230,9 +284,11 @@ function printHelp(): void {
     `HivePlane CLI v${VERSION}
 
 Usage:
-  hive login <url>           Connect this Bee to a Hive (writes ~/.hiveplane/config.json)
-  hive logout                Forget the Hive URL (keeps Bee identity)
-  hive status                Show config + identity for this machine
+  hive login <url> [--token <bootstrap>]
+                             Connect this Bee to a Hive. With --token, register
+                             and persist a session for signed heartbeats.
+  hive logout                Forget the Hive URL + session (keeps Bee identity)
+  hive status                Show config, identity, and session for this machine
   hive start                 Run the Bee daemon in the foreground
   hive identity init|show    Generate or print the Bee Ed25519 identity
   hive --version             Print version
@@ -241,6 +297,7 @@ Usage:
 Flags:
   --config-dir <path>        Override config dir (default: ~/.hiveplane)
   --name <name>              Friendly Bee name (used by 'hive login')
+  --token <bootstrap>        Bootstrap token (from \`hive bee token create\`)
 `,
   );
 }

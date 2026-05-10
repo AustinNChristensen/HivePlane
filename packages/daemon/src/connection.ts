@@ -133,13 +133,17 @@ export class BeeConnectionManager {
   }
 }
 
+export type HttpBeeConnectionTransportOptions = {
+  hiveUrl: string;
+  fetchImpl?: typeof fetch;
+  /** Provides per-request auth headers (session token + signature). Optional during v0.0.x dev mode. */
+  authHeaderProvider?: (
+    rawBody: Uint8Array,
+  ) => Promise<Record<string, string>> | Record<string, string>;
+};
+
 export class HttpBeeConnectionTransport implements BeeConnectionTransport {
-  constructor(
-    private readonly options: {
-      hiveUrl: string;
-      fetchImpl?: typeof fetch;
-    },
-  ) {}
+  constructor(private readonly options: HttpBeeConnectionTransportOptions) {}
 
   async postHeartbeat(
     heartbeat: BeeHeartbeat,
@@ -147,10 +151,18 @@ export class HttpBeeConnectionTransport implements BeeConnectionTransport {
   ): Promise<BeeHeartbeatResponse> {
     const fetchImpl = this.options.fetchImpl ?? fetch;
     const url = new URL("/api/bees/heartbeat", this.options.hiveUrl);
+    const rawBody = Buffer.from(JSON.stringify(BeeHeartbeatSchema.parse(heartbeat)));
+    const headers: Record<string, string> = { "content-type": "application/json" };
+
+    if (this.options.authHeaderProvider) {
+      const auth = await this.options.authHeaderProvider(rawBody);
+      Object.assign(headers, auth);
+    }
+
     const init: RequestInit = {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(BeeHeartbeatSchema.parse(heartbeat)),
+      headers,
+      body: rawBody,
     };
 
     if (signal) {
