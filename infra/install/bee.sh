@@ -97,3 +97,13 @@ echo "Next:"
 echo "  hive login <hive-url>     # e.g. http://hive.your-tailnet.ts.net:8787"
 echo "  hive start                # auto-installs launchd/systemd unit + heartbeats"
 echo "  hive start --foreground   # or run as a child process for dev"
+
+# Reboot survival on Linux requires user-level systemd to keep running after
+# logout. `hive start` will also warn at runtime if linger is off; mentioning
+# it here lets the operator front-load the fix instead of being surprised
+# after their first reboot.
+if [ "$(uname -s)" = "Linux" ]; then
+  echo
+  echo "Linux: for the daemon to survive reboot you need linger enabled once:"
+  echo "  loginctl enable-linger $(id -un)"
+fi
