@@ -1,0 +1,70 @@
+import { once } from "node:events";
+import { describe, expect, it } from "vitest";
+import { createHiveServer, createHiveServerState, upsertBeeHeartbeat } from "./server.js";
+
+describe("Hive heartbeat state", () => {
+  it("records first and latest Bee heartbeats", () => {
+    const state = createHiveServerState();
+
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_one",
+      timestamp: "2026-05-09T20:00:00.000Z",
+      daemonVersion: "0.0.1",
+      status: "online",
+      activeJobs: 0,
+    });
+    const latest = upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_one",
+      timestamp: "2026-05-09T20:01:00.000Z",
+      daemonVersion: "0.0.1",
+      status: "degraded",
+      activeJobs: 1,
+    });
+
+    expect(latest).toMatchObject({
+      beeId: "bee_one",
+      firstSeenAt: "2026-05-09T20:00:00.000Z",
+      lastSeenAt: "2026-05-09T20:01:00.000Z",
+      heartbeatCount: 2,
+      status: "degraded",
+      activeJobs: 1,
+    });
+  });
+});
+
+describe("Hive server", () => {
+  it("accepts heartbeat posts and lists connected Bees", async () => {
+    const server = createHiveServer();
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    try {
+      const address = server.address();
+      if (!address || typeof address !== "object")
+        throw new Error("server did not bind to a TCP port");
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+
+      const heartbeatResponse = await fetch(`${baseUrl}/api/bees/heartbeat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "bee.heartbeat",
+          beeId: "bee_two",
+          timestamp: "2026-05-09T20:02:00.000Z",
+          daemonVersion: "0.0.1",
+          status: "online",
+          activeJobs: 0,
+        }),
+      });
+      expect(heartbeatResponse.status).toBe(200);
+
+      const beesResponse = await fetch(`${baseUrl}/api/bees`);
+      const body = (await beesResponse.json()) as { bees: Array<{ beeId: string }> };
+      expect(body.bees).toEqual([expect.objectContaining({ beeId: "bee_two" })]);
+    } finally {
+      server.close();
+    }
+  });
+});
