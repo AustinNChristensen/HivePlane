@@ -90,36 +90,197 @@ Benefits:
 - user owns the network path;
 - HivePlane avoids becoming the mandatory relay provider.
 
-Three commands to set up a Bee — install once (no args), point it at a Hive, enable auto-start:
+Tailscale is the network layer. HivePlane still handles application-level identity with bootstrap tokens, device keys, RBAC, policies, approvals, and audit logs.
+
+## Install Guide
+
+End-to-end walkthrough: stand up a Hive on one machine, install a Bee daemon on another, connect them, and dispatch a test job.
+
+### Prerequisites
+
+On both the Hive machine and each Bee machine:
+
+- **Node 20+** (`node -v`).
+- **git** on PATH.
+- **A reachable network path** from each Bee to the Hive's URL. The recommended setup is [Tailscale](https://tailscale.com) on every machine — gives you stable `*.ts.net` hostnames and encryption at the network layer with no public ports. LAN works too. Public-internet exposure works but currently does not provide TLS — see [#49](https://github.com/AustinNChristensen/HivePlane/issues/49).
+
+Everything else (pnpm, the daemon binary, identity keypair, service unit) is set up by the install scripts.
+
+### Step 1 — Install and start the Hive
+
+On the control-plane machine:
 
 ```bash
-# 1. install Bee daemon + `hive` CLI
-curl -fsSL https://hive.your-tailnet.ts.net/install/bee.sh | sh
+# pick an admin token; save it, you'll need it to mint bootstrap tokens
+export HIVEPLANE_ADMIN_TOKEN=$(openssl rand -hex 32)
+echo "admin token: $HIVEPLANE_ADMIN_TOKEN"
 
-# 2. point at a Hive
-hive login https://hive.your-tailnet.ts.net
+# enforce signed/authenticated heartbeats (recommended)
+export HIVEPLANE_AUTH_REQUIRED=true
 
-# 3. start (auto-installs the service unit on first run; survives reboot)
-hive start
-```
-
-Or with a raw Tailnet IP:
-
-```bash
-curl -fsSL http://100.87.12.34:8787/install/bee.sh | sh
-hive login http://100.87.12.34:8787
-hive start
-```
-
-Hive install:
-
-```bash
+# install + run (defaults to 0.0.0.0:8787, foreground)
 curl -fsSL https://raw.githubusercontent.com/AustinNChristensen/HivePlane/main/infra/install/hive.sh | sh
 ```
 
-Once the Hive is running, open `http://<hive-host>:8787/` in a browser for the **dashboard** — connected Bees, jobs, and a one-click bootstrap-token mint. Paste your `HIVEPLANE_ADMIN_TOKEN` into the field at the top to unlock jobs + token issuance; the Bees list works without auth.
+The Hive runs in the foreground and logs requests to stderr. It currently does not auto-start on boot — use `tmux`/`screen` or open a terminal session you can leave running. Hive auto-start is tracked in [#46](https://github.com/AustinNChristensen/HivePlane/issues/46).
 
-Tailscale is the network layer. HivePlane still handles application-level identity with bootstrap tokens, device keys, RBAC, policies, approvals, and audit logs.
+> **Heads up**: the Hive keeps state in memory. A restart wipes registered Bees, sessions, bootstrap tokens, and jobs ([#47](https://github.com/AustinNChristensen/HivePlane/issues/47)). Until that lands, plan to re-bootstrap your Bees if you restart the Hive.
+
+Find the Hive URL each Bee will use:
+
+```bash
+tailscale status                # gives you e.g. mac-mini.tailnet-name.ts.net
+# or `ip a` / `hostname -I` for LAN setups
+```
+
+Quick sanity check from another machine on the same network:
+
+```bash
+curl http://mac-mini.tailnet-name.ts.net:8787/healthz
+# {"ok":true,"service":"hiveplane-hive"}
+```
+
+Open `http://mac-mini.tailnet-name.ts.net:8787/` in a browser for the **dashboard** — connected Bees, jobs, and a one-click bootstrap-token mint. Paste your `HIVEPLANE_ADMIN_TOKEN` into the field at the top to unlock the Jobs and Tokens tabs; the Bees list works without auth.
+
+### Step 2 — Mint a bootstrap token
+
+Easiest: open the dashboard's **Tokens** tab, paste your admin token at the top, click _Mint token_, copy the result. Or via curl, on the Hive machine (or anywhere with the admin token):
+
+```bash
+TOKEN=$(curl -fsSL -X POST http://mac-mini.tailnet-name.ts.net:8787/api/bootstrap-tokens \
+  -H "Authorization: Bearer $HIVEPLANE_ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"beeName":"laptop-1"}' | jq -r .token)
+echo $TOKEN
+# hp_boot_xxxxxxxxxxxxxxxxxxx
+```
+
+Bootstrap tokens are single-use and expire in 30 minutes by default. Mint one per Bee.
+
+### Step 3 — Install the Bee daemon
+
+On each Bee machine:
+
+```bash
+curl -fsSL http://mac-mini.tailnet-name.ts.net:8787/install/bee.sh | sh
+```
+
+This clones HivePlane to `~/.hiveplane/install`, runs `pnpm install`, drops `hive` and `hiveplane-bee` shims into `~/.local/bin`, and generates a persistent Ed25519 identity under `~/.hiveplane`. It does **not** start anything yet.
+
+If `~/.local/bin` isn't on your shell's PATH, the installer prints the line you need to add to your shell rc.
+
+### Step 4 — Connect the Bee to the Hive
+
+Still on the Bee machine, paste in the bootstrap token from Step 2:
+
+```bash
+hive login http://mac-mini.tailnet-name.ts.net:8787 \
+  --name laptop-1 \
+  --token hp_boot_xxxxxxxxxxxxxxxxxxx
+```
+
+This:
+
+- writes the Hive URL to `~/.hiveplane/config.json`
+- performs the registration handshake with the Hive (consumes the bootstrap token, gets back a session token + `beeId`)
+- saves the session to `~/.hiveplane/session.json` for signed heartbeats
+
+You should see:
+
+```text
+Logged into http://mac-mini.tailnet-name.ts.net:8787/
+Bee identity: sha256:...
+Registered with Hive as bee_xxxxxxxx (signed-heartbeat mode).
+Run `hive start` to begin heartbeating.
+```
+
+### Step 5 — Start the Bee
+
+```bash
+hive start
+```
+
+On macOS this writes `~/Library/LaunchAgents/com.hiveplane.bee.plist` and bootstraps it via `launchctl`. On Linux it writes `~/.config/systemd/user/hiveplane-bee.service` and runs `systemctl --user enable --now`. Either way, the daemon now survives reboots and crashes. Logs land in `~/.hiveplane/logs/` (macOS) or the journal (Linux, queried via `hive logs -f`).
+
+> **Linux only**: run `loginctl enable-linger $USER` once if you want the daemon to keep running when you log out.
+
+### Step 6 — Verify the Bee is connected
+
+Open the dashboard's **Bees** tab in a browser — your new Bee should appear with status `online` and a heartbeat count that ticks up every 10 seconds. Or via curl from any machine that can reach the Hive:
+
+```bash
+curl http://mac-mini.tailnet-name.ts.net:8787/api/bees | jq
+```
+
+On the Bee itself, `hive status` shows the same info plus session details and service state.
+
+Repeat steps 2–5 for each additional Bee.
+
+### Step 7 — Dispatch a test job
+
+The point of all this. From the Hive (or anywhere with the admin token), enqueue a healthcheck for a specific Bee:
+
+```bash
+BEE_ID=bee_xxxxxxxx_xxxxxxxxxxxx        # from `curl /api/bees`
+curl -fsSL -X POST http://mac-mini.tailnet-name.ts.net:8787/api/bees/$BEE_ID/jobs \
+  -H "Authorization: Bearer $HIVEPLANE_ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"type":"run_healthcheck","payload":{}}'
+```
+
+The Bee picks it up on the next heartbeat (≤10s), runs it, and posts a completion. Watch the **Jobs** tab in the dashboard — the row's status pill flips from `queued` → `assigned` → `succeeded` and the _Detail_ column shows the output. Or via curl:
+
+```bash
+curl http://mac-mini.tailnet-name.ts.net:8787/api/jobs?beeId=$BEE_ID \
+  -H "Authorization: Bearer $HIVEPLANE_ADMIN_TOKEN" | jq
+```
+
+Status should be `succeeded` with `output.daemonVersion` and `output.beeId`.
+
+### Step 8 — (Optional) Allow `run_command` jobs
+
+For the Hive to dispatch arbitrary shell commands to a Bee, the **Bee operator** has to opt in via a local policy. By default `run_command` is denied — see [#50](https://github.com/AustinNChristensen/HivePlane/issues/50) for the rough edges here.
+
+On the Bee, edit `~/.hiveplane/policy.json`:
+
+```json
+{
+  "runCommand": {
+    "allow": ["git", "ls", "ps", "df", "uptime"]
+  }
+}
+```
+
+The allowlist matches on `argv[0]` basename. Restart isn't required — the daemon reads policy at job execution time.
+
+Then from the Hive:
+
+```bash
+curl -fsSL -X POST http://mac-mini.tailnet-name.ts.net:8787/api/bees/$BEE_ID/jobs \
+  -H "Authorization: Bearer $HIVEPLANE_ADMIN_TOKEN" \
+  -d '{"type":"run_command","payload":{"command":"git","args":["status"]}}'
+```
+
+Inspect the result the same way as Step 7. Failed `run_command` jobs include the policy reason in their `error` payload, so an AI consuming the API can tell the difference between "command failed" and "command refused locally."
+
+### Day-2 commands on the Bee
+
+```bash
+hive status                # config + identity + session + service state
+hive logs -f               # follow daemon output
+hive stop / hive restart   # control the running service
+hive logout                # forget Hive URL + session, stop the service
+hive disable               # remove the service unit (use `hive start` to reinstall)
+```
+
+### Known limitations to track
+
+- **[#47](https://github.com/AustinNChristensen/HivePlane/issues/47)** — Hive forgets state on restart (highest-priority gap).
+- **[#46](https://github.com/AustinNChristensen/HivePlane/issues/46)** — Hive doesn't auto-start; runs in foreground.
+- **[#49](https://github.com/AustinNChristensen/HivePlane/issues/49)** — No TLS on the Hive; rely on Tailscale or a reverse proxy.
+- **[#50](https://github.com/AustinNChristensen/HivePlane/issues/50)** — `run_command` policy DX is hand-edited JSON.
+- **[#51](https://github.com/AustinNChristensen/HivePlane/issues/51)** — systemd path is unverified on real Linux.
+- **[#48](https://github.com/AustinNChristensen/HivePlane/issues/48)** — install scripts hard-code the upstream repo URL.
 
 ### Supported Deployment Modes
 
