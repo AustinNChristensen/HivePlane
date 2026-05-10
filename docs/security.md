@@ -20,15 +20,15 @@ The control plane can request work, but the worker node daemon must enforce loca
 
 ## MVP Mitigations
 
-| Threat | Mitigation |
-|---|---|
-| Dangerous actions | Local policy + approvals |
-| Cloud compromise | Device-side enforcement |
-| Token theft | Short-lived tokens + local keypair challenge |
-| Bad approvals | RBAC + audit logs |
-| Secret leakage | Secret redaction + local secret injection |
-| Recipe abuse | Signed/checksummed recipes + visible logs |
-| Artifact leakage | Explicit artifact upload rules |
+| Threat            | Mitigation                                   |
+| ----------------- | -------------------------------------------- |
+| Dangerous actions | Local policy + approvals                     |
+| Cloud compromise  | Device-side enforcement                      |
+| Token theft       | Short-lived tokens + local keypair challenge |
+| Bad approvals     | RBAC + audit logs                            |
+| Secret leakage    | Secret redaction + local secret injection    |
+| Recipe abuse      | Signed/checksummed recipes + visible logs    |
+| Artifact leakage  | Explicit artifact upload rules               |
 
 ## Device Identity
 

@@ -90,33 +90,42 @@ Benefits:
 - user owns the network path;
 - HivePlane avoids becoming the mandatory relay provider.
 
-Example Bee install command:
+Two-step Bee setup — install once (no args), then connect:
 
 ```bash
-curl -fsSL https://hive.your-tailnet.ts.net/install/bee.sh | sh -s -- \
-  --hive-url https://hive.your-tailnet.ts.net \
-  --token hp_boot_...
+# 1. install Bee daemon + `hive` CLI
+curl -fsSL https://hive.your-tailnet.ts.net/install/bee.sh | sh
+
+# 2. connect to a Hive
+hive login https://hive.your-tailnet.ts.net
+hive start
 ```
 
 Or with a raw Tailnet IP:
 
 ```bash
-curl -fsSL http://100.87.12.34:8787/install/bee.sh | sh -s -- \
-  --hive-url http://100.87.12.34:8787 \
-  --token hp_boot_...
+curl -fsSL http://100.87.12.34:8787/install/bee.sh | sh
+hive login http://100.87.12.34:8787
+hive start
+```
+
+Hive install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AustinNChristensen/HivePlane/main/infra/install/hive.sh | sh
 ```
 
 Tailscale is the network layer. HivePlane still handles application-level identity with bootstrap tokens, device keys, RBAC, policies, approvals, and audit logs.
 
 ### Supported Deployment Modes
 
-| Mode | Description | Status |
-|---|---|---|
-| Local dev | Hive and Bee on one machine | Planned |
-| Self-host + LAN | Hive URL is a LAN IP/host | Planned |
-| Self-host + Tailscale | Recommended self-host mode | Planned |
-| Self-host + public URL | User-managed domain/reverse proxy/TLS | Planned |
-| HivePlane Cloud | Managed hosted control plane | Coming soon |
+| Mode                   | Description                           | Status      |
+| ---------------------- | ------------------------------------- | ----------- |
+| Local dev              | Hive and Bee on one machine           | Planned     |
+| Self-host + LAN        | Hive URL is a LAN IP/host             | Planned     |
+| Self-host + Tailscale  | Recommended self-host mode            | Planned     |
+| Self-host + public URL | User-managed domain/reverse proxy/TLS | Planned     |
+| HivePlane Cloud        | Managed hosted control plane          | Coming soon |
 
 ## HivePlane Cloud
 

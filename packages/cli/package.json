@@ -1,18 +1,25 @@
 {
   "name": "@hiveplane/cli",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "hive": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "pnpm typecheck && pnpm test",
     "lint": "pnpm typecheck",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "tsx src/index.ts",
+    "dev": "tsx src/index.ts"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@hiveplane/daemon": "workspace:*"
+  },
   "devDependencies": {}
 }

@@ -1,10 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import {
-  BeeHeartbeatSchema,
-  JobSchema,
-  type BeeHeartbeat,
-  type Job,
-} from "@hiveplane/protocol";
+import { BeeHeartbeatSchema, JobSchema, type BeeHeartbeat, type Job } from "@hiveplane/protocol";
 import { z } from "zod";
 import { createHeartbeat, type DaemonState } from "./index.js";
 

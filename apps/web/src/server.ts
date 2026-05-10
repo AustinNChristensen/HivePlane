@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { BeeHeartbeatSchema, type BeeHeartbeat } from "@hiveplane/protocol";
 
 export type HiveBeeRecord = {
@@ -19,6 +22,8 @@ export type HiveServerState = {
 export type CreateHiveServerOptions = {
   state?: HiveServerState;
   now?: () => Date;
+  /** Override directory where install scripts live. Defaults to repo `infra/install`. */
+  installScriptsDir?: string;
 };
 
 export function createHiveServerState(): HiveServerState {
@@ -46,9 +51,18 @@ export function upsertBeeHeartbeat(
   return record;
 }
 
+function defaultInstallScriptsDir(): string {
+  // apps/web/src/server.ts → ../../../infra/install
+  const here = dirname(fileURLToPath(import.meta.url));
+  return join(here, "..", "..", "..", "infra", "install");
+}
+
+const INSTALL_SCRIPT_NAMES = new Set(["bee.sh", "hive.sh"]);
+
 export function createHiveServer(options: CreateHiveServerOptions = {}) {
   const state = options.state ?? createHiveServerState();
   const now = options.now ?? (() => new Date());
+  const installScriptsDir = options.installScriptsDir ?? defaultInstallScriptsDir();
 
   return createServer(async (request, response) => {
     try {
@@ -67,6 +81,28 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         const heartbeat = BeeHeartbeatSchema.parse(body);
         const bee = upsertBeeHeartbeat(state, heartbeat, now());
         return sendJson(response, 200, { accepted: true, bee, jobs: [] });
+      }
+
+      if (request.method === "GET" && url.pathname.startsWith("/install/")) {
+        const name = url.pathname.slice("/install/".length);
+        if (!INSTALL_SCRIPT_NAMES.has(name)) {
+          return sendJson(response, 404, { error: "not_found" });
+        }
+        const filePath = join(installScriptsDir, name);
+        try {
+          const body = readFileSync(filePath, "utf8");
+          response.writeHead(200, {
+            "content-type": "text/x-shellscript; charset=utf-8",
+            "cache-control": "no-store",
+          });
+          response.end(body);
+          return;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            return sendJson(response, 404, { error: "install_script_missing", name });
+          }
+          throw error;
+        }
       }
 
       return sendJson(response, 404, { error: "not_found" });

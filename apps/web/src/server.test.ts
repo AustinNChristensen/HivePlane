@@ -1,4 +1,7 @@
 import { once } from "node:events";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createHiveServer, createHiveServerState, upsertBeeHeartbeat } from "./server.js";
 
@@ -63,6 +66,37 @@ describe("Hive server", () => {
       const beesResponse = await fetch(`${baseUrl}/api/bees`);
       const body = (await beesResponse.json()) as { bees: Array<{ beeId: string }> };
       expect(body.bees).toEqual([expect.objectContaining({ beeId: "bee_two" })]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("serves install scripts and 404s on unknown ones", async () => {
+    const installDir = mkdtempSync(join(tmpdir(), "hiveplane-install-test-"));
+    writeFileSync(join(installDir, "bee.sh"), "#!/bin/sh\necho hi from bee installer\n");
+    writeFileSync(join(installDir, "hive.sh"), "#!/bin/sh\necho hi from hive installer\n");
+
+    const server = createHiveServer({ installScriptsDir: installDir });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    try {
+      const address = server.address();
+      if (!address || typeof address !== "object")
+        throw new Error("server did not bind to a TCP port");
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+
+      const beeRes = await fetch(`${baseUrl}/install/bee.sh`);
+      expect(beeRes.status).toBe(200);
+      expect(beeRes.headers.get("content-type")).toContain("text/x-shellscript");
+      expect(await beeRes.text()).toContain("hi from bee installer");
+
+      const hiveRes = await fetch(`${baseUrl}/install/hive.sh`);
+      expect(hiveRes.status).toBe(200);
+      expect(await hiveRes.text()).toContain("hi from hive installer");
+
+      const wrongRes = await fetch(`${baseUrl}/install/evil.sh`);
+      expect(wrongRes.status).toBe(404);
     } finally {
       server.close();
     }
