@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -267,6 +267,7 @@ async function runStart(parsed: ArgvParseResult): Promise<void> {
     }
     await startBeeService();
     console.log(`Started. Tail logs with \`hive logs -f\`. Stop with \`hive stop\`.`);
+    warnIfLingerOff();
     return;
   }
 
@@ -350,10 +351,32 @@ async function runLogs(parsed: ArgvParseResult): Promise<void> {
     const args = ["--user", "-u", "hiveplane-bee.service", "--no-pager"];
     if (follow) args.push("-f");
     const child = spawn("journalctl", args, { stdio: "inherit" });
-    child.on("exit", (code) => process.exit(code ?? 0));
+    // Minimal containers / WSL1 / some systemd-less distros don't ship
+    // `journalctl`. Fall through to the file-based reader rather than
+    // exiting with a confusing ENOENT spawn error.
+    let spawned = false;
+    child.on("spawn", () => {
+      spawned = true;
+    });
+    child.on("error", (err) => {
+      if (!spawned && (err as NodeJS.ErrnoException).code === "ENOENT") {
+        console.warn(`journalctl not on PATH; falling back to file logs at ${status.logDir}.`);
+        runLogsFromFile(logFile, follow);
+        return;
+      }
+      console.error(`journalctl failed: ${err.message}`);
+      process.exit(1);
+    });
+    child.on("exit", (code) => {
+      if (spawned) process.exit(code ?? 0);
+    });
     return;
   }
 
+  runLogsFromFile(logFile, follow);
+}
+
+function runLogsFromFile(logFile: string, follow: boolean): void {
   if (!existsSync(logFile)) {
     console.error(
       `No log file at ${logFile} yet. Service writes logs once it has started at least once.`,
@@ -426,6 +449,38 @@ function findOnPath(bin: string): string | undefined {
     if (existsSync(candidate)) return candidate;
   }
   return undefined;
+}
+
+/**
+ * On Linux, a systemd-user unit only survives a reboot if the user has
+ * `loginctl enable-linger` set. Without it, the user's systemd instance is
+ * torn down at logout and the daemon dies with it. We can't run the linger
+ * command ourselves (it requires elevated privileges on most distros), but
+ * we can detect when it's off and remind the operator at the moment they
+ * notice the daemon disappearing across reboots.
+ *
+ * Best-effort: if `loginctl` is missing or the call fails for any reason we
+ * stay silent — the warning is a UX nudge, not a correctness check.
+ */
+function warnIfLingerOff(): void {
+  if (process.platform !== "linux") return;
+  try {
+    const user = process.env.USER ?? process.env.LOGNAME;
+    if (!user) return;
+    const out = execFileSync("loginctl", ["show-user", user, "--property=Linger"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .trim();
+    if (out === "Linger=no") {
+      console.log("");
+      console.log("Note: `loginctl show-user` reports Linger=no. Without linger, your user's");
+      console.log("systemd instance stops at logout and the daemon will not survive reboot.");
+      console.log(`Enable it once with:  loginctl enable-linger ${user}`);
+    }
+  } catch {
+    // loginctl missing or call failed — silent.
+  }
 }
 
 function stripGlobalFlags(args: string[]): { configDir?: string; commandArgs: string[] } {
