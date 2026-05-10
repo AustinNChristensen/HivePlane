@@ -94,7 +94,7 @@ case ":$PATH:" in
      ;;
 esac
 echo "Next:"
-echo "  hive login <hive-url>     # e.g. http://hive.your-tailnet.ts.net:8787"
+echo "  hive login <hive-url>     # e.g. http://hive.your-tailnet.ts.net:4483"
 echo "  hive start                # auto-installs launchd/systemd unit + heartbeats"
 echo "  hive start --foreground   # or run as a child process for dev"
 

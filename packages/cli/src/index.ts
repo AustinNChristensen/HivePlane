@@ -41,7 +41,7 @@ import {
   uninstallHiveService,
 } from "./service.js";
 
-const VERSION = "0.0.2";
+const VERSION = "0.0.3";
 
 type ArgvParseResult = {
   configDir?: string;
@@ -580,7 +580,7 @@ async function runSelfhostInit(parsed: ArgvParseResult): Promise<void> {
   const config = {
     adminToken: existing.adminToken ?? generateAdminToken(),
     host: hostFlag ?? existing.host ?? "0.0.0.0",
-    port: portFlag !== undefined ? Number(portFlag) : (existing.port ?? 8787),
+    port: portFlag !== undefined ? Number(portFlag) : (existing.port ?? 4483),
     authRequired: authRequiredFlag ?? existing.authRequired ?? false,
     openBrowser: existing.openBrowser ?? false,
   };
@@ -640,7 +640,7 @@ async function runSelfhostStart(parsed: ArgvParseResult): Promise<void> {
   }
   await startHiveService();
   const cfg = readHiveOnDiskConfig(configDir);
-  const port = cfg.port ?? 8787;
+  const port = cfg.port ?? 4483;
   console.log(`Hive started. Dashboard: http://localhost:${port}/`);
   console.log(`Tail logs with \`hive selfhost logs -f\`. Stop with \`hive selfhost stop\`.`);
   warnIfLingerOff();
@@ -665,7 +665,7 @@ async function runSelfhostStatus(parsed: ArgvParseResult): Promise<void> {
   console.log(
     `Admin token:   ${cfg.adminToken ? "(set; run `hive selfhost init` to view/rotate)" : "(unset — admin endpoints disabled)"}`,
   );
-  console.log(`Bind:          ${cfg.host ?? "(default 0.0.0.0)"}:${cfg.port ?? "(default 8787)"}`);
+  console.log(`Bind:          ${cfg.host ?? "(default 0.0.0.0)"}:${cfg.port ?? "(default 4483)"}`);
   console.log(`authRequired:  ${cfg.authRequired ?? false}`);
 
   const stateLabel =
