@@ -3,7 +3,7 @@ import { readHiveOnDiskConfig } from "./config.js";
 import { attachPersistence, getDefaultHiveStatePath, loadHiveServerState } from "./persistence.js";
 import { createHiveServer } from "./server.js";
 
-const VERSION = "0.0.1";
+const VERSION = "0.0.2";
 
 // Read the on-disk Hive config first so env vars and CLI flags can override
 // individual fields below — the precedence is: CLI flag > env var > config
