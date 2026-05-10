@@ -140,11 +140,13 @@ curl http://mac-mini.tailnet-name.ts.net:8787/healthz
 # {"ok":true,"service":"hiveplane-hive"}
 ```
 
-When the Hive starts on a TTY (i.e. you ran `hive.sh` interactively, not under a service unit), it prints the dashboard URL and auto-opens it in your default browser. Pass `--no-open` (or set `HIVEPLANE_OPEN_BROWSER=false`) to skip on a headless server. The **dashboard** shows connected Bees, jobs, and a one-click bootstrap-token mint — paste your `HIVEPLANE_ADMIN_TOKEN` into the field at the top to unlock the Jobs and Tokens tabs; the Bees list works without auth. `/dashboard` and `/index.html` are aliases for `/`. `curl http://mac-mini.tailnet-name.ts.net:8787/version` confirms which build the Hive is running — useful if `/` 404s, since that usually means the Hive process is older than the source on disk and needs a restart.
+When the Hive starts on a TTY (i.e. you ran `hive.sh` interactively, not under a service unit), it prints the dashboard URL and auto-opens it in your default browser. Pass `--no-open` (or set `HIVEPLANE_OPEN_BROWSER=false`) to skip on a headless server. The **dashboard** shows connected Bees, jobs, the current pairing key, and a bootstrap-token minter — paste your `HIVEPLANE_ADMIN_TOKEN` into the field at the top to unlock the admin features; the Bees list works without auth. `/dashboard` and `/index.html` are aliases for `/`. `curl http://mac-mini.tailnet-name.ts.net:8787/version` confirms which build the Hive is running — useful if `/` 404s, since that usually means the Hive process is older than the source on disk and needs a restart.
 
-### Step 2 — Mint a bootstrap token
+### Step 2 — Read the pairing key off the dashboard
 
-Easiest: open the dashboard's **Tokens** tab, paste your admin token at the top, click _Mint token_, copy the result. Or via curl, on the Hive machine (or anywhere with the admin token):
+After saving your admin token in the top-right field, the **Pair a new Bee** card appears at the top of the **Bees** tab with the current pairing key — an 8-character code like `K7RQ-2P9X`. Keys are single-use, default-15-minute TTL, and rotate automatically after each successful pair (or any time you click _Rotate_). That's all you need on the Hive side for the human-driven flow.
+
+For unattended/scripted Bee installs, mint a long-form bootstrap token instead via the dashboard's **Tokens** tab, or:
 
 ```bash
 TOKEN=$(curl -fsSL -X POST http://mac-mini.tailnet-name.ts.net:8787/api/bootstrap-tokens \
@@ -155,7 +157,7 @@ echo $TOKEN
 # hp_boot_xxxxxxxxxxxxxxxxxxx
 ```
 
-Bootstrap tokens are single-use and expire in 30 minutes by default. Mint one per Bee.
+Bootstrap tokens are single-use and expire in 30 minutes by default.
 
 ### Step 3 — Install the Bee daemon
 
@@ -171,28 +173,38 @@ If `~/.local/bin` isn't on your shell's PATH, the installer prints the line you 
 
 ### Step 4 — Connect the Bee to the Hive
 
-Still on the Bee machine, paste in the bootstrap token from Step 2:
-
-```bash
-hive login http://mac-mini.tailnet-name.ts.net:8787 \
-  --name laptop-1 \
-  --token hp_boot_xxxxxxxxxxxxxxxxxxx
-```
-
-This:
-
-- writes the Hive URL to `~/.hiveplane/config.json`
-- performs the registration handshake with the Hive (consumes the bootstrap token, gets back a session token + `beeId`)
-- saves the session to `~/.hiveplane/session.json` for signed heartbeats
-
-You should see:
+Still on the Bee machine, run `hive login` with no arguments — it'll prompt you for the Hive URL and the pairing key from Step 2:
 
 ```text
+$ hive login
+Hive URL: http://mac-mini.tailnet-name.ts.net:8787
+Pairing key (or bootstrap token, blank to skip): K7RQ-2P9X
+Bee name [laptop-1]:
 Logged into http://mac-mini.tailnet-name.ts.net:8787/
 Bee identity: sha256:...
 Registered with Hive as bee_xxxxxxxx (signed-heartbeat mode).
 Run `hive start` to begin heartbeating.
 ```
+
+For scripted/unattended installs you can pass everything on the command line:
+
+```bash
+# pairing key (short form, from the dashboard):
+hive login http://mac-mini.tailnet-name.ts.net:8787 \
+  --name laptop-1 \
+  --pairing-key K7RQ-2P9X
+
+# or bootstrap token (long form):
+hive login http://mac-mini.tailnet-name.ts.net:8787 \
+  --name laptop-1 \
+  --token hp_boot_xxxxxxxxxxxxxxxxxxx
+```
+
+Either path:
+
+- writes the Hive URL to `~/.hiveplane/config.json`
+- performs the registration handshake with the Hive (consumes the credential, gets back a session token + `beeId`)
+- saves the session to `~/.hiveplane/session.json` for signed heartbeats
 
 ### Step 5 — Start the Bee
 

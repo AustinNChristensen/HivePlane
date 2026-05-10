@@ -8,9 +8,16 @@ import {
 import { getHardwareSnapshot } from "./index.js";
 import type { BeeIdentity } from "./identity.js";
 
+/**
+ * Caller supplies exactly one of the two credentials. The Hive accepts both
+ * paths interchangeably — `bootstrapToken` is the long admin-minted token used
+ * by automation; `pairingKey` is the short human-typeable code surfaced in the
+ * Hive dashboard.
+ */
 export type RegisterBeeOptions = {
   hiveUrl: string;
-  bootstrapToken: string;
+  bootstrapToken?: string;
+  pairingKey?: string;
   identity: BeeIdentity;
   beeName?: string;
   daemonVersion: string;
@@ -26,9 +33,17 @@ export async function registerBeeWithHive(
     throw new Error(`registration: unsupported platform (${process.platform}/${process.arch})`);
   }
 
+  if (!options.bootstrapToken && !options.pairingKey) {
+    throw new Error("registration: either bootstrapToken or pairingKey is required");
+  }
+  if (options.bootstrapToken && options.pairingKey) {
+    throw new Error("registration: supply only one of bootstrapToken / pairingKey");
+  }
+
   const body: BeeRegistrationRequest = BeeRegistrationRequestSchema.parse({
     type: "bee.registration.request",
-    bootstrapToken: options.bootstrapToken,
+    ...(options.bootstrapToken ? { bootstrapToken: options.bootstrapToken } : {}),
+    ...(options.pairingKey ? { pairingKey: options.pairingKey } : {}),
     publicKey: options.identity.publicKeyPem,
     beeName: options.beeName ?? hostname(),
     daemonVersion: options.daemonVersion,

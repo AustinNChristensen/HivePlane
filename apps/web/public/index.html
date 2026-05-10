@@ -307,6 +307,60 @@
         font-size: 12px;
         color: var(--muted);
       }
+      .pairing-card {
+        margin-bottom: 16px;
+        background: var(--panel);
+        border: 1px solid var(--accent);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .pairing-card .panel-header {
+        background: var(--accent-soft);
+      }
+      .pairing-card .pairing-body {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        column-gap: 24px;
+        row-gap: 8px;
+        align-items: center;
+        padding: 18px;
+      }
+      .pairing-card .pairing-code {
+        font-family: var(--mono);
+        font-size: 28px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+        white-space: nowrap;
+      }
+      .pairing-card .pairing-code.unset {
+        font-size: 14px;
+        font-weight: 400;
+        color: var(--muted);
+        letter-spacing: 0;
+      }
+      .pairing-card .pairing-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .pairing-card .pairing-instructions {
+        grid-column: 1 / -1;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .pairing-card .pairing-instructions code {
+        background: var(--panel-2);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: var(--mono);
+      }
+      .pairing-card .pairing-meta {
+        grid-column: 1 / -1;
+        font-size: 12px;
+        color: var(--muted);
+      }
       details > summary {
         cursor: pointer;
         font-size: 12px;
@@ -369,6 +423,23 @@
 
     <main>
       <section data-view="bees">
+        <div class="pairing-card" id="pairingCard" hidden>
+          <div class="panel-header">
+            <span>Pair a new Bee</span>
+            <span class="meta" id="pairingMeta">—</span>
+          </div>
+          <div class="pairing-body">
+            <div class="pairing-code unset" id="pairingCode">— set an admin token to load —</div>
+            <div class="pairing-actions">
+              <button class="ghost" id="copyPairing" disabled>Copy</button>
+              <button class="action" id="rotatePairing">Rotate</button>
+            </div>
+            <div class="pairing-instructions" id="pairingInstructions">
+              On the Bee, run <code>hive login</code> and paste the key when prompted (or
+              <code>hive login &lt;hive-url&gt; --pairing-key &lt;key&gt;</code>).
+            </div>
+          </div>
+        </div>
         <div class="panel">
           <div class="panel-header">
             <span>Connected Bees</span>
@@ -429,7 +500,17 @@
         tokenBeeName: document.getElementById("tokenBeeName"),
         mintToken: document.getElementById("mintToken"),
         tokenResult: document.getElementById("tokenResult"),
+        pairingCard: document.getElementById("pairingCard"),
+        pairingCode: document.getElementById("pairingCode"),
+        pairingMeta: document.getElementById("pairingMeta"),
+        pairingInstructions: document.getElementById("pairingInstructions"),
+        copyPairing: document.getElementById("copyPairing"),
+        rotatePairing: document.getElementById("rotatePairing"),
       };
+
+      // Holds the most recently loaded pairing key so Copy + the countdown
+      // ticker can find it without re-fetching.
+      const pairing = { record: null, countdownTimer: null };
 
       // --- tabs ----------------------------------------------------------------
       document.querySelectorAll("nav.tabs button.tab").forEach((btn) => {
@@ -516,6 +597,104 @@
         );
       }
 
+      // --- pairing key card ----------------------------------------------------
+      // The pairing-key endpoints are admin-gated. The card stays hidden until
+      // an admin token is saved AND the GET succeeds. Rotate triggers a refetch
+      // so the new key (and freshly-extended TTL) lands in the UI immediately.
+      async function refreshPairingCard() {
+        if (state.activeTab !== "bees") return;
+        if (!state.adminToken) {
+          els.pairingCard.hidden = true;
+          stopPairingCountdown();
+          return;
+        }
+        try {
+          const res = await fetch("/api/pairing-key", { headers: authHeaders() });
+          if (res.status === 401 || res.status === 503) {
+            els.pairingCard.hidden = true;
+            stopPairingCountdown();
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const body = await res.json();
+          renderPairingKey(body);
+        } catch (err) {
+          els.pairingCard.hidden = false;
+          els.pairingCode.textContent = "— failed to load —";
+          els.pairingCode.classList.add("unset");
+          els.pairingMeta.textContent = err.message;
+          els.copyPairing.disabled = true;
+          stopPairingCountdown();
+        }
+      }
+      function renderPairingKey(body) {
+        pairing.record = body;
+        els.pairingCard.hidden = false;
+        els.pairingCode.textContent = body.display || body.code;
+        els.pairingCode.classList.remove("unset");
+        els.copyPairing.disabled = false;
+        const hiveUrl = `${window.location.protocol}//${window.location.host}`;
+        els.pairingInstructions.innerHTML = `
+          On the Bee, run <code>hive login</code> and paste the key when prompted, or
+          <code>hive login ${escapeHtml(hiveUrl)} --pairing-key ${escapeHtml(body.code)}</code>.
+          Single-use — rotates after each successful pair.`;
+        startPairingCountdown();
+      }
+      function startPairingCountdown() {
+        stopPairingCountdown();
+        updatePairingCountdown();
+        pairing.countdownTimer = setInterval(updatePairingCountdown, 1000);
+      }
+      function stopPairingCountdown() {
+        if (pairing.countdownTimer) {
+          clearInterval(pairing.countdownTimer);
+          pairing.countdownTimer = null;
+        }
+      }
+      function updatePairingCountdown() {
+        if (!pairing.record) return;
+        const remaining = new Date(pairing.record.expiresAt).getTime() - Date.now();
+        if (remaining <= 0) {
+          els.pairingMeta.textContent = "expired — click Rotate for a new key";
+          stopPairingCountdown();
+          return;
+        }
+        const m = Math.floor(remaining / 60_000);
+        const s = Math.floor((remaining % 60_000) / 1000);
+        els.pairingMeta.textContent = `expires in ${m}m ${String(s).padStart(2, "0")}s`;
+      }
+      els.copyPairing.addEventListener("click", () => {
+        if (!pairing.record) return;
+        navigator.clipboard.writeText(pairing.record.code).then(() => {
+          const original = els.copyPairing.textContent;
+          els.copyPairing.textContent = "Copied!";
+          setTimeout(() => (els.copyPairing.textContent = original), 1200);
+        });
+      });
+      els.rotatePairing.addEventListener("click", async () => {
+        if (!state.adminToken) {
+          els.pairingMeta.textContent = "set an admin token (top right) first";
+          return;
+        }
+        els.rotatePairing.disabled = true;
+        try {
+          const res = await fetch("/api/pairing-key/rotate", {
+            method: "POST",
+            headers: authHeaders(),
+          });
+          if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(`HTTP ${res.status}: ${text}`);
+          }
+          const body = await res.json();
+          renderPairingKey(body);
+        } catch (err) {
+          els.pairingMeta.textContent = `rotate failed: ${err.message}`;
+        } finally {
+          els.rotatePairing.disabled = false;
+        }
+      });
+
       // --- bees view -----------------------------------------------------------
       async function refreshBees() {
         try {
@@ -530,7 +709,7 @@
       }
       function renderBees(bees) {
         if (bees.length === 0) {
-          els.beesBody.innerHTML = `<div class="empty">No bees connected yet.<br>Run <code>curl http://&lt;hive&gt;/install/bee.sh | sh</code> on a worker, then <code>hive login &lt;url&gt; --token &lt;bootstrap&gt;</code>.</div>`;
+          els.beesBody.innerHTML = `<div class="empty">No bees connected yet.<br>Run <code>curl http://&lt;hive&gt;/install/bee.sh | sh</code> on a worker, then <code>hive login</code> and paste the pairing key above.</div>`;
           return;
         }
         const rows = bees
@@ -701,8 +880,12 @@
 
       // --- polling -------------------------------------------------------------
       function refreshActive() {
-        if (state.activeTab === "bees") refreshBees();
-        else if (state.activeTab === "jobs") refreshJobs();
+        if (state.activeTab === "bees") {
+          refreshBees();
+          refreshPairingCard();
+        } else if (state.activeTab === "jobs") {
+          refreshJobs();
+        }
       }
 
       refreshActive();

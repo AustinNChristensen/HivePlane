@@ -88,7 +88,9 @@ fi
 echo
 echo "Starting Hive on $HIVE_HOST:$HIVE_PORT (Ctrl-C to stop)..."
 echo "Connect Bees with:"
-echo "  hive login http://$(hostname):$HIVE_PORT"
+echo "  hive login                       # interactive prompt for URL + pairing key"
+echo "  # or, scripted:"
+echo "  hive login http://$(hostname):$HIVE_PORT --pairing-key <key-from-dashboard>"
 echo
 cd "$INSTALL_DIR"
 exec pnpm --silent --filter @hiveplane/web start -- --host "$HIVE_HOST" --port "$HIVE_PORT"

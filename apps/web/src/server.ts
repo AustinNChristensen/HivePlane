@@ -14,16 +14,21 @@ import {
 } from "@hiveplane/protocol";
 import {
   extractBearer,
+  formatPairingKeyForDisplay,
   generateBootstrapToken,
+  generatePairingKey,
   generateSessionToken,
   getRequiredAdminToken,
   isAuthRequired,
   looksLikeBootstrapToken,
+  looksLikePairingKey,
   looksLikeSessionToken,
+  PAIRING_KEY_DEFAULT_TTL_MS,
   safeEquals,
   sha256Hex,
   verifyBeeSignature,
   type BootstrapTokenRecord,
+  type PairingKeyRecord,
   type SessionRecord,
 } from "./auth.js";
 import {
@@ -51,12 +56,39 @@ export type HiveBeeRecord = {
   heartbeatCount: number;
 };
 
+/**
+ * Tracks failed pairing-key attempts for soft rate-limiting. Keyed by remote
+ * address (or `"unknown"` if we can't read one). On every successful
+ * registration the entry is cleared.
+ */
+export type PairingAttemptRecord = {
+  /** Failures within the current 60s sliding window. */
+  recentFailures: number;
+  /** Wall-clock ms when the window started. */
+  windowStart: number;
+  /** If set, no attempts are accepted from this remote until this ms. */
+  lockoutUntil?: number;
+};
+
 export type HiveServerState = {
   bees: Map<string, HiveBeeRecord>;
   /** Bootstrap tokens keyed by hash of the raw token. */
   bootstrapTokens: Map<string, BootstrapTokenRecord>;
   /** Sessions keyed by hash of the raw session token. */
   sessions: Map<string, SessionRecord>;
+  /**
+   * The single currently-active pairing key, or `undefined` if one has not
+   * been generated yet. Populated lazily on first GET /api/pairing-key.
+   */
+  activePairingKey?: PairingKeyRecord;
+  /**
+   * History of recently-rotated pairing keys, kept long enough for an
+   * inflight-on-rotate registration to fail with a clearer "expired" message
+   * rather than "not recognized". Capped at 8 entries.
+   */
+  retiredPairingKeys: PairingKeyRecord[];
+  /** Per-remote pairing-key attempt log for rate-limit decisions. */
+  pairingAttempts: Map<string, PairingAttemptRecord>;
   /** Jobs keyed by jobId (queued/assigned/running/...) — see jobs.ts. */
   jobsState: JobsState;
 };
@@ -79,7 +111,79 @@ export function createHiveServerState(): HiveServerState {
     bees: new Map(),
     bootstrapTokens: new Map(),
     sessions: new Map(),
+    retiredPairingKeys: [],
+    pairingAttempts: new Map(),
     jobsState: createJobsState(),
+  };
+}
+
+/** How long a freshly-minted pairing key stays valid by default. */
+function pairingKeyTtlMs(): number {
+  const env = process.env.HIVEPLANE_PAIRING_KEY_TTL_MS;
+  if (!env) return PAIRING_KEY_DEFAULT_TTL_MS;
+  const parsed = Number.parseInt(env, 10);
+  if (!Number.isFinite(parsed) || parsed < 60_000) return PAIRING_KEY_DEFAULT_TTL_MS;
+  return parsed;
+}
+
+/** Per-remote: max consecutive failures before a 60s soft lockout. */
+const PAIRING_FAILURE_LIMIT_PER_REMOTE = 10;
+/** Per-remote: lockout window after the failure limit is hit. */
+const PAIRING_LOCKOUT_MS = 60_000;
+/** Sliding window used for the per-remote failure counter. */
+const PAIRING_FAILURE_WINDOW_MS = 60_000;
+
+/**
+ * Mint (or recycle) the active pairing key. Idempotent unless `force` is set:
+ * if there's already an unexpired, unconsumed key we return that one;
+ * otherwise we generate a new one, retire the previous, and clear all per-
+ * remote rate-limit state (a rotation is the operator saying "fresh start").
+ */
+export function ensureActivePairingKey(
+  state: HiveServerState,
+  now: Date,
+  force = false,
+): PairingKeyRecord {
+  const existing = state.activePairingKey;
+  if (!force && existing && !existing.consumedAt && existing.expiresAt.getTime() > now.getTime()) {
+    return existing;
+  }
+
+  if (existing) {
+    state.retiredPairingKeys.unshift(existing);
+    if (state.retiredPairingKeys.length > 8) {
+      state.retiredPairingKeys.length = 8;
+    }
+  }
+
+  const { keyId, code, tokenHash } = generatePairingKey();
+  const record: PairingKeyRecord = {
+    keyId,
+    code,
+    tokenHash,
+    createdAt: now,
+    expiresAt: new Date(now.getTime() + pairingKeyTtlMs()),
+  };
+  state.activePairingKey = record;
+  // A rotate is also a hard reset on rate-limit state — the previous key is
+  // gone, so old attempt counts no longer apply.
+  if (force) state.pairingAttempts.clear();
+  return record;
+}
+
+function serializePairingKey(record: PairingKeyRecord): {
+  keyId: string;
+  code: string;
+  display: string;
+  createdAt: string;
+  expiresAt: string;
+} {
+  return {
+    keyId: record.keyId,
+    code: record.code,
+    display: formatPairingKeyForDisplay(record.code),
+    createdAt: record.createdAt.toISOString(),
+    expiresAt: record.expiresAt.toISOString(),
   };
 }
 
@@ -195,6 +299,28 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         return sendJson(response, 200, createBootstrapToken(state, parsed.data, now()));
       }
 
+      // GET /api/pairing-key — admin-gated; returns (and lazily mints) the
+      // current short pairing key for human-driven Bee onboarding.
+      if (request.method === "GET" && url.pathname === "/api/pairing-key") {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const record = ensureActivePairingKey(state, now());
+        return sendJson(response, 200, {
+          type: "pairing_key.current",
+          ...serializePairingKey(record),
+        });
+      }
+
+      // POST /api/pairing-key/rotate — admin-gated; mints a fresh key and
+      // invalidates the previous one.
+      if (request.method === "POST" && url.pathname === "/api/pairing-key/rotate") {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const record = ensureActivePairingKey(state, now(), true);
+        return sendJson(response, 200, {
+          type: "pairing_key.rotated",
+          ...serializePairingKey(record),
+        });
+      }
+
       if (request.method === "POST" && url.pathname === "/api/bees/register") {
         const { body, raw: _raw } = await readJson(request);
         const parsed = BeeRegistrationRequestSchema.safeParse(
@@ -206,9 +332,12 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
             message: parsed.error.message,
           });
         }
-        const result = registerBee(state, parsed.data, now());
+        const result = registerBee(state, parsed.data, now(), {
+          remote: remoteAddress(request),
+        });
         if ("error" in result) {
-          return sendJson(response, 401, result);
+          const status = result.error === "rate_limited" ? 429 : 401;
+          return sendJson(response, status, result);
         }
         return sendJson(response, 200, result);
       }
@@ -406,23 +535,50 @@ export function createBootstrapToken(
 
 type RegisterError = { error: string; reason: string };
 
+type RegistrationOptions = {
+  /** Remote identifier used to scope pairing-key rate-limiting. */
+  remote?: string;
+};
+
+type RegistrationSuccess = {
+  type: "bee.registration.response";
+  beeId: string;
+  sessionToken: string;
+  sessionExpiresAt: string;
+  acceptedAt: string;
+};
+
 export function registerBee(
   state: HiveServerState,
   request: BeeRegistrationRequest,
   now: Date,
-):
-  | {
-      type: "bee.registration.response";
-      beeId: string;
-      sessionToken: string;
-      sessionExpiresAt: string;
-      acceptedAt: string;
-    }
-  | RegisterError {
-  if (!looksLikeBootstrapToken(request.bootstrapToken)) {
+  options: RegistrationOptions = {},
+): RegistrationSuccess | RegisterError {
+  if (request.bootstrapToken && request.pairingKey) {
+    // Should never reach here because the schema rejects this — defence in
+    // depth.
+    return { error: "bad_request", reason: "supply only one of bootstrapToken / pairingKey" };
+  }
+
+  if (request.bootstrapToken) {
+    return registerBeeWithBootstrapToken(state, request, request.bootstrapToken, now);
+  }
+  if (request.pairingKey) {
+    return registerBeeWithPairingKey(state, request, request.pairingKey, now, options);
+  }
+  return { error: "bad_request", reason: "missing bootstrapToken / pairingKey" };
+}
+
+function registerBeeWithBootstrapToken(
+  state: HiveServerState,
+  request: BeeRegistrationRequest,
+  bootstrapToken: string,
+  now: Date,
+): RegistrationSuccess | RegisterError {
+  if (!looksLikeBootstrapToken(bootstrapToken)) {
     return { error: "unauthorized", reason: "bootstrap token shape invalid" };
   }
-  const tokenHash = sha256Hex(request.bootstrapToken);
+  const tokenHash = sha256Hex(bootstrapToken);
   const tokenRecord = state.bootstrapTokens.get(tokenHash);
   if (!tokenRecord) {
     return { error: "unauthorized", reason: "bootstrap token not recognized" };
@@ -435,14 +591,79 @@ export function registerBee(
   }
 
   const beeId = `bee_${tokenRecord.tokenId.slice(3)}_${sha256Hex(request.publicKey).slice(0, 12)}`;
+  tokenRecord.consumedAt = now;
+  tokenRecord.consumedByBeeId = beeId;
+  return finalizeRegistration(state, request, beeId, now);
+}
+
+function registerBeeWithPairingKey(
+  state: HiveServerState,
+  request: BeeRegistrationRequest,
+  pairingKey: string,
+  now: Date,
+  options: RegistrationOptions,
+): RegistrationSuccess | RegisterError {
+  const remote = options.remote ?? "unknown";
+  const lockout = checkPairingLockout(state, remote, now);
+  if (lockout) return lockout;
+
+  if (!looksLikePairingKey(pairingKey)) {
+    recordPairingFailure(state, remote, now);
+    return { error: "unauthorized", reason: "pairing key shape invalid" };
+  }
+
+  const tokenHash = sha256Hex(pairingKey);
+  const active = state.activePairingKey;
+  const matchesActive = active && safeEquals(active.tokenHash, tokenHash);
+
+  if (!matchesActive) {
+    // Was it a recently-rotated key? Surface a clearer message in that case.
+    const retired = state.retiredPairingKeys.find((r) => safeEquals(r.tokenHash, tokenHash));
+    recordPairingFailure(state, remote, now);
+    if (retired) {
+      return {
+        error: "unauthorized",
+        reason: "pairing key was rotated; ask the Hive operator for the new one",
+      };
+    }
+    return { error: "unauthorized", reason: "pairing key not recognized" };
+  }
+
+  if (active.consumedAt) {
+    recordPairingFailure(state, remote, now);
+    return {
+      error: "unauthorized",
+      reason: "pairing key already used; ask the Hive operator to rotate",
+    };
+  }
+  if (active.expiresAt.getTime() < now.getTime()) {
+    recordPairingFailure(state, remote, now);
+    return {
+      error: "unauthorized",
+      reason: "pairing key expired; ask the Hive operator to rotate",
+    };
+  }
+
+  const beeId = `bee_${active.keyId.slice(3)}_${sha256Hex(request.publicKey).slice(0, 12)}`;
+  active.consumedAt = now;
+  active.consumedByBeeId = beeId;
+  // Pairing keys are single-use: rotate immediately so the next Bee can't
+  // reuse a key the operator already read aloud once.
+  ensureActivePairingKey(state, now, true);
+  // Successful pairing clears the rate-limit slate for this remote.
+  state.pairingAttempts.delete(remote);
+  return finalizeRegistration(state, request, beeId, now);
+}
+
+function finalizeRegistration(
+  state: HiveServerState,
+  request: BeeRegistrationRequest,
+  beeId: string,
+  now: Date,
+): RegistrationSuccess {
   const session = generateSessionToken();
   const sessionExpiresAt = new Date(now.getTime() + SESSION_TTL_SECONDS * 1000);
 
-  // Mark token consumed
-  tokenRecord.consumedAt = now;
-  tokenRecord.consumedByBeeId = beeId;
-
-  // Persist bee record (publicKey is the auth anchor going forward)
   const existing = state.bees.get(beeId);
   state.bees.set(beeId, {
     beeId,
@@ -471,6 +692,48 @@ export function registerBee(
     sessionExpiresAt: sessionExpiresAt.toISOString(),
     acceptedAt: now.toISOString(),
   };
+}
+
+function checkPairingLockout(
+  state: HiveServerState,
+  remote: string,
+  now: Date,
+): RegisterError | undefined {
+  const record = state.pairingAttempts.get(remote);
+  if (!record) return undefined;
+  if (record.lockoutUntil && record.lockoutUntil > now.getTime()) {
+    const seconds = Math.max(1, Math.ceil((record.lockoutUntil - now.getTime()) / 1000));
+    return {
+      error: "rate_limited",
+      reason: `too many pairing attempts; retry in ${seconds}s`,
+    };
+  }
+  // Slide the window forward if it's stale.
+  if (now.getTime() - record.windowStart > PAIRING_FAILURE_WINDOW_MS) {
+    record.windowStart = now.getTime();
+    record.recentFailures = 0;
+    delete record.lockoutUntil;
+  }
+  return undefined;
+}
+
+function recordPairingFailure(state: HiveServerState, remote: string, now: Date): void {
+  const existing = state.pairingAttempts.get(remote);
+  if (!existing || now.getTime() - existing.windowStart > PAIRING_FAILURE_WINDOW_MS) {
+    state.pairingAttempts.set(remote, {
+      recentFailures: 1,
+      windowStart: now.getTime(),
+    });
+    return;
+  }
+  existing.recentFailures += 1;
+  if (existing.recentFailures >= PAIRING_FAILURE_LIMIT_PER_REMOTE) {
+    existing.lockoutUntil = now.getTime() + PAIRING_LOCKOUT_MS;
+  }
+}
+
+function remoteAddress(request: IncomingMessage): string {
+  return request.socket.remoteAddress ?? "unknown";
 }
 
 type AuthOutcome = { ok: true } | { ok: false; reason: string };
