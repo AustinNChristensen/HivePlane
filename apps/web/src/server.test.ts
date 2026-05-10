@@ -102,7 +102,7 @@ describe("Hive server", () => {
     }
   });
 
-  it("serves the dashboard index.html at / and 404s if the file is missing", async () => {
+  it("serves the dashboard at /, /dashboard, and /index.html", async () => {
     const publicDir = mkdtempSync(join(tmpdir(), "hiveplane-public-test-"));
     writeFileSync(join(publicDir, "index.html"), "<!doctype html><title>Test Dashboard</title>");
 
@@ -116,10 +116,12 @@ describe("Hive server", () => {
         throw new Error("server did not bind to a TCP port");
       const baseUrl = `http://127.0.0.1:${address.port}`;
 
-      const ok = await fetch(`${baseUrl}/`);
-      expect(ok.status).toBe(200);
-      expect(ok.headers.get("content-type")).toContain("text/html");
-      expect(await ok.text()).toContain("Test Dashboard");
+      for (const path of ["/", "/dashboard", "/dashboard/", "/index.html"]) {
+        const ok = await fetch(`${baseUrl}${path}`);
+        expect(ok.status, `path ${path}`).toBe(200);
+        expect(ok.headers.get("content-type")).toContain("text/html");
+        expect(await ok.text()).toContain("Test Dashboard");
+      }
     } finally {
       server.close();
     }
@@ -140,6 +142,31 @@ describe("Hive server", () => {
       expect(body.error).toBe("dashboard_not_built");
     } finally {
       server2.close();
+    }
+  });
+
+  it("/healthz and /version include the running version", async () => {
+    const server = createHiveServer();
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    try {
+      const address = server.address();
+      if (!address || typeof address !== "object")
+        throw new Error("server did not bind to a TCP port");
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+
+      const healthz = await fetch(`${baseUrl}/healthz`);
+      const healthzBody = (await healthz.json()) as { ok: boolean; version: string };
+      expect(healthzBody.ok).toBe(true);
+      expect(healthzBody.version).toMatch(/^\d+\.\d+\.\d+/);
+
+      const version = await fetch(`${baseUrl}/version`);
+      const versionBody = (await version.json()) as { version: string; service: string };
+      expect(versionBody.service).toBe("hiveplane-hive");
+      expect(versionBody.version).toBe(healthzBody.version);
+    } finally {
+      server.close();
     }
   });
 });
