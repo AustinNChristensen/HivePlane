@@ -7,7 +7,7 @@ import { loadOrCreateBeeIdentity } from "./identity.js";
 import { JobExecutor } from "./jobs.js";
 import { isSessionExpired, readHiveSession } from "./session.js";
 
-const VERSION = "0.0.1";
+const VERSION = "0.0.2";
 
 type BeeCliOptions = {
   hiveUrl: string;

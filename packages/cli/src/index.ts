@@ -41,7 +41,7 @@ import {
   uninstallHiveService,
 } from "./service.js";
 
-const VERSION = "0.0.1";
+const VERSION = "0.0.2";
 
 type ArgvParseResult = {
   configDir?: string;
