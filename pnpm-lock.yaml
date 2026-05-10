@@ -33,7 +33,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/protocol
 
-  packages/cli: {}
+  packages/cli:
+    dependencies:
+      '@hiveplane/daemon':
+        specifier: workspace:*
+        version: link:../daemon
 
   packages/daemon:
     dependencies:

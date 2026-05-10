@@ -1,4 +1,5 @@
 import { BeeConnectionManager, HttpBeeConnectionTransport } from "./connection.js";
+import { readHivePlaneConfig } from "./config.js";
 import { createDaemonState } from "./index.js";
 import { loadOrCreateBeeIdentity } from "./identity.js";
 
@@ -75,8 +76,24 @@ function parseArgs(args: string[]): BeeCliOptions {
     }
   }
 
+  // Fall back to ~/.hiveplane/config.json (written by `hive login`).
+  if (!hiveUrl || !name) {
+    const stored = readHivePlaneConfig(configDir);
+    if (!hiveUrl) hiveUrl = stored.hiveUrl;
+    if (!name && stored.beeName) name = stored.beeName;
+    if (
+      Number.isFinite(stored.heartbeatIntervalSeconds) &&
+      !process.env.HIVEPLANE_HEARTBEAT_SECONDS &&
+      !args.includes("--interval")
+    ) {
+      intervalSeconds = stored.heartbeatIntervalSeconds ?? intervalSeconds;
+    }
+  }
+
   if (!hiveUrl) {
-    throw new Error("Missing required --hive-url or HIVEPLANE_HIVE_URL");
+    throw new Error(
+      "No Hive URL configured. Run `hive login <url>` or pass --hive-url / HIVEPLANE_HIVE_URL.",
+    );
   }
   if (!Number.isInteger(intervalSeconds) || intervalSeconds <= 0) {
     throw new Error(`Invalid --interval: ${intervalSeconds}`);
@@ -99,7 +116,7 @@ function requireValue(args: string[], index: number, flag: string): string {
 
 function printHelp(): void {
   console.log(
-    `HivePlane Bee daemon v${VERSION}\n\nUsage:\n  pnpm --filter @hiveplane/daemon start -- --hive-url http://hive.tailnet.ts.net:8787 --name mac-mini\n\nOptions:\n  --hive-url <url>      Hive control-plane URL, usually the Tailscale URL\n  --name <name>         Friendly Bee name for logs\n  --config-dir <path>   Config/identity directory, defaults to ~/.hiveplane\n  --interval <seconds>  Heartbeat interval, defaults to 10\n  --once                Send one heartbeat and exit\n`,
+    `HivePlane Bee daemon v${VERSION}\n\nUsage:\n  hiveplane-bee                                     # uses ~/.hiveplane/config.json\n  hiveplane-bee --hive-url http://hive.example     # explicit URL\n\nOptions:\n  --hive-url <url>      Hive URL (overrides config.json). Usually the Tailscale URL.\n  --name <name>         Friendly Bee name for logs\n  --config-dir <path>   Config/identity directory, defaults to ~/.hiveplane\n  --interval <seconds>  Heartbeat interval, defaults to 10\n  --once                Send one heartbeat and exit\n`,
   );
 }
 

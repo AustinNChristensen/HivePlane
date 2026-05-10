@@ -34,17 +34,17 @@ This means local policy enforcement must live inside the daemon. A compromised o
 
 ## Key Components
 
-| Component | Responsibility |
-|---|---|
-| Web dashboard | Manage nodes, agents, jobs, approvals, logs, and settings |
-| API service | CRUD APIs, auth checks, job queue, event ingestion |
-| Coordinator | Maintains outbound node connections and dispatches jobs |
-| Worker daemon | Executes node jobs and streams events |
-| Recipe engine | Installs/configures software like OpenClaw, Hermes, Ollama |
-| Runtime adapters | Manage OpenClaw, Hermes, and future agent runtimes |
-| Model adapters | Manage local model backends like Ollama and MLX |
-| Policy engine | Allows, denies, or pauses actions for approval |
-| Audit log | Records security-relevant changes and approvals |
+| Component        | Responsibility                                             |
+| ---------------- | ---------------------------------------------------------- |
+| Web dashboard    | Manage nodes, agents, jobs, approvals, logs, and settings  |
+| API service      | CRUD APIs, auth checks, job queue, event ingestion         |
+| Coordinator      | Maintains outbound node connections and dispatches jobs    |
+| Worker daemon    | Executes node jobs and streams events                      |
+| Recipe engine    | Installs/configures software like OpenClaw, Hermes, Ollama |
+| Runtime adapters | Manage OpenClaw, Hermes, and future agent runtimes         |
+| Model adapters   | Manage local model backends like Ollama and MLX            |
+| Policy engine    | Allows, denies, or pauses actions for approval             |
+| Audit log        | Records security-relevant changes and approvals            |
 
 ## Communication Model
 

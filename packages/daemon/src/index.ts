@@ -77,3 +77,4 @@ export function createHeartbeat(state: DaemonState, daemonVersion: string): BeeH
 
 export * from "./identity.js";
 export * from "./connection.js";
+export * from "./config.js";
