@@ -66,6 +66,8 @@ export type CreateHiveServerOptions = {
   now?: () => Date;
   /** Override directory where install scripts live. Defaults to repo `infra/install`. */
   installScriptsDir?: string;
+  /** Override directory for the static dashboard. Defaults to `apps/web/public`. */
+  publicDir?: string;
   /** Override admin token (otherwise read from HIVEPLANE_ADMIN_TOKEN). Useful for tests. */
   adminToken?: string;
   /** Override the auth-required toggle. Useful for tests. */
@@ -110,6 +112,12 @@ function defaultInstallScriptsDir(): string {
   return join(here, "..", "..", "..", "infra", "install");
 }
 
+function defaultPublicDir(): string {
+  // apps/web/src/server.ts → ../public
+  const here = dirname(fileURLToPath(import.meta.url));
+  return join(here, "..", "public");
+}
+
 const INSTALL_SCRIPT_NAMES = new Set(["bee.sh", "hive.sh"]);
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
@@ -118,12 +126,35 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
   const state = options.state ?? createHiveServerState();
   const now = options.now ?? (() => new Date());
   const installScriptsDir = options.installScriptsDir ?? defaultInstallScriptsDir();
+  const publicDir = options.publicDir ?? defaultPublicDir();
   const adminToken = options.adminToken ?? getRequiredAdminToken();
   const authRequired = options.authRequired ?? isAuthRequired();
 
   return createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
+
+      // Dashboard: GET / serves the static index.html.
+      if (request.method === "GET" && url.pathname === "/") {
+        const indexPath = join(publicDir, "index.html");
+        try {
+          const html = readFileSync(indexPath, "utf8");
+          response.writeHead(200, {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "no-store",
+          });
+          response.end(html);
+          return;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            return sendJson(response, 404, {
+              error: "dashboard_not_built",
+              message: `dashboard index.html not found at ${indexPath}`,
+            });
+          }
+          throw error;
+        }
+      }
 
       if (request.method === "GET" && url.pathname === "/healthz") {
         return sendJson(response, 200, { ok: true, service: "hiveplane-hive" });

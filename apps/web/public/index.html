@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HivePlane</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #161922;
+        --panel-2: #1d212d;
+        --text: #e6e9ef;
+        --muted: #8a93a6;
+        --accent: #ffb84d;
+        --accent-soft: rgba(255, 184, 77, 0.15);
+        --good: #4ade80;
+        --warn: #fbbf24;
+        --bad: #f87171;
+        --border: #2a2f3d;
+        --row-hover: #1f2330;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #fafaf7;
+          --panel: #ffffff;
+          --panel-2: #f3f3ee;
+          --text: #1a1a1a;
+          --muted: #6a6f7a;
+          --accent: #d97706;
+          --accent-soft: rgba(217, 119, 6, 0.12);
+          --good: #15803d;
+          --warn: #b45309;
+          --bad: #b91c1c;
+          --border: #e3e3dc;
+          --row-hover: #f3f3ee;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+        font-size: 14px;
+        line-height: 1.45;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 24px;
+        border-bottom: 1px solid var(--border);
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 600;
+        font-size: 16px;
+      }
+      .brand-mark {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        background: var(--accent);
+      }
+      .auth {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .auth input {
+        background: var(--panel);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-family: var(--mono);
+        font-size: 12px;
+        width: 280px;
+      }
+      .auth-status {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .auth-status.ok {
+        color: var(--good);
+      }
+      .auth-status.bad {
+        color: var(--bad);
+      }
+      nav.tabs {
+        display: flex;
+        gap: 0;
+        padding: 0 24px;
+        border-bottom: 1px solid var(--border);
+      }
+      nav.tabs button {
+        background: transparent;
+        border: none;
+        color: var(--muted);
+        padding: 12px 16px;
+        cursor: pointer;
+        font-size: 14px;
+        border-bottom: 2px solid transparent;
+        font-weight: 500;
+      }
+      nav.tabs button.active {
+        color: var(--text);
+        border-bottom-color: var(--accent);
+      }
+      main {
+        padding: 24px;
+        max-width: 1400px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .panel-header {
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border);
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .panel-header .meta {
+        font-size: 12px;
+        color: var(--muted);
+        font-weight: 400;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      tbody tr:hover {
+        background: var(--row-hover);
+      }
+      tbody tr:last-child td {
+        border-bottom: none;
+      }
+      .mono {
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      .truncate {
+        max-width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 10px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 500;
+        background: var(--panel-2);
+        color: var(--text);
+      }
+      .pill .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--muted);
+      }
+      .pill.online .dot,
+      .pill.succeeded .dot,
+      .pill.running .dot {
+        background: var(--good);
+      }
+      .pill.degraded .dot,
+      .pill.queued .dot,
+      .pill.assigned .dot,
+      .pill.waiting_for_approval .dot {
+        background: var(--warn);
+      }
+      .pill.offline .dot,
+      .pill.failed .dot,
+      .pill.cancelled .dot,
+      .pill.timed_out .dot {
+        background: var(--bad);
+      }
+      .empty {
+        padding: 40px 24px;
+        text-align: center;
+        color: var(--muted);
+      }
+      .empty code {
+        background: var(--panel-2);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: var(--mono);
+      }
+      button.action,
+      input.action {
+        background: var(--accent);
+        color: #1a1a1a;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 14px;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      button.action:hover {
+        opacity: 0.9;
+      }
+      button.action:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      button.ghost {
+        background: transparent;
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 12px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      button.ghost:hover {
+        background: var(--row-hover);
+      }
+      .form-row {
+        display: flex;
+        gap: 12px;
+        align-items: flex-end;
+        padding: 18px;
+        flex-wrap: wrap;
+      }
+      .form-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .form-field label {
+        font-size: 11px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .form-field input {
+        background: var(--panel-2);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 13px;
+        min-width: 200px;
+      }
+      .token-display {
+        margin: 0 18px 18px;
+        padding: 14px 16px;
+        background: var(--accent-soft);
+        border: 1px solid var(--accent);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .token-display .token-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-family: var(--mono);
+        font-size: 13px;
+        word-break: break-all;
+      }
+      .token-display .token-row code {
+        flex: 1;
+      }
+      .token-display .meta {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      details > summary {
+        cursor: pointer;
+        font-size: 12px;
+        color: var(--muted);
+        list-style: none;
+      }
+      details > summary::-webkit-details-marker {
+        display: none;
+      }
+      details[open] > summary {
+        margin-bottom: 6px;
+      }
+      pre.snippet {
+        margin: 0;
+        background: var(--panel-2);
+        padding: 8px 10px;
+        border-radius: 6px;
+        font-family: var(--mono);
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 200px;
+        overflow: auto;
+      }
+      .footer {
+        padding: 16px 24px;
+        border-top: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 24px;
+      }
+      .footer a {
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <div class="brand-mark"></div>
+        HivePlane
+      </div>
+      <div class="auth">
+        <input
+          id="adminToken"
+          type="password"
+          placeholder="Admin token (HIVEPLANE_ADMIN_TOKEN)"
+          autocomplete="off"
+        />
+        <button class="ghost" id="saveAdminToken">Save</button>
+        <span class="auth-status" id="authStatus">no admin token saved</span>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="bees">Bees</button>
+      <button class="tab" data-tab="jobs">Jobs</button>
+      <button class="tab" data-tab="tokens">Tokens</button>
+    </nav>
+
+    <main>
+      <section data-view="bees">
+        <div class="panel">
+          <div class="panel-header">
+            <span>Connected Bees</span>
+            <span class="meta" id="beesMeta">—</span>
+          </div>
+          <div id="beesBody"></div>
+        </div>
+      </section>
+
+      <section data-view="jobs" hidden>
+        <div class="panel">
+          <div class="panel-header">
+            <span>Jobs</span>
+            <span class="meta" id="jobsMeta">—</span>
+          </div>
+          <div id="jobsBody"></div>
+        </div>
+      </section>
+
+      <section data-view="tokens" hidden>
+        <div class="panel">
+          <div class="panel-header">
+            <span>Mint a bootstrap token</span>
+            <span class="meta">single-use, default 30-min TTL</span>
+          </div>
+          <div class="form-row">
+            <div class="form-field">
+              <label for="tokenBeeName">Bee name (optional)</label>
+              <input id="tokenBeeName" placeholder="laptop-1" />
+            </div>
+            <button class="action" id="mintToken">Mint token</button>
+          </div>
+          <div id="tokenResult"></div>
+        </div>
+      </section>
+    </main>
+
+    <div class="footer">
+      Auto-refreshes every 5s. Service:
+      <code id="hiveService">hiveplane-hive</code>. See
+      <a href="https://github.com/AustinNChristensen/HivePlane">GitHub</a>.
+    </div>
+
+    <script>
+      const ADMIN_KEY = "hiveplane.adminToken";
+      const POLL_MS = 5000;
+
+      const state = { activeTab: "bees", adminToken: localStorage.getItem(ADMIN_KEY) || "" };
+
+      const els = {
+        adminToken: document.getElementById("adminToken"),
+        saveAdminToken: document.getElementById("saveAdminToken"),
+        authStatus: document.getElementById("authStatus"),
+        beesMeta: document.getElementById("beesMeta"),
+        beesBody: document.getElementById("beesBody"),
+        jobsMeta: document.getElementById("jobsMeta"),
+        jobsBody: document.getElementById("jobsBody"),
+        tokenBeeName: document.getElementById("tokenBeeName"),
+        mintToken: document.getElementById("mintToken"),
+        tokenResult: document.getElementById("tokenResult"),
+      };
+
+      // --- tabs ----------------------------------------------------------------
+      document.querySelectorAll("nav.tabs button.tab").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.activeTab = btn.dataset.tab;
+          document
+            .querySelectorAll("nav.tabs button.tab")
+            .forEach((b) => b.classList.toggle("active", b === btn));
+          document.querySelectorAll("main section").forEach((s) => {
+            s.hidden = s.dataset.view !== state.activeTab;
+          });
+          refreshActive();
+        });
+      });
+
+      // --- admin token ---------------------------------------------------------
+      els.adminToken.value = state.adminToken;
+      updateAuthStatus();
+
+      els.saveAdminToken.addEventListener("click", () => {
+        state.adminToken = els.adminToken.value.trim();
+        if (state.adminToken) localStorage.setItem(ADMIN_KEY, state.adminToken);
+        else localStorage.removeItem(ADMIN_KEY);
+        updateAuthStatus();
+        refreshActive();
+      });
+
+      async function updateAuthStatus() {
+        if (!state.adminToken) {
+          els.authStatus.textContent = "no admin token (jobs + tokens disabled)";
+          els.authStatus.className = "auth-status";
+          return;
+        }
+        try {
+          const res = await fetch("/api/jobs", { headers: authHeaders() });
+          if (res.ok) {
+            els.authStatus.textContent = "admin token verified";
+            els.authStatus.className = "auth-status ok";
+          } else {
+            els.authStatus.textContent = `admin token rejected (${res.status})`;
+            els.authStatus.className = "auth-status bad";
+          }
+        } catch {
+          els.authStatus.textContent = "could not reach Hive";
+          els.authStatus.className = "auth-status bad";
+        }
+      }
+
+      function authHeaders() {
+        return state.adminToken ? { Authorization: `Bearer ${state.adminToken}` } : {};
+      }
+
+      // --- formatting helpers --------------------------------------------------
+      function shortId(id) {
+        if (!id) return "—";
+        if (id.length <= 24) return id;
+        return id.slice(0, 8) + "…" + id.slice(-8);
+      }
+      function relativeTime(iso) {
+        if (!iso) return "—";
+        const ms = Date.now() - new Date(iso).getTime();
+        if (Number.isNaN(ms)) return "—";
+        const s = Math.round(ms / 1000);
+        if (s < 0) return "in the future";
+        if (s < 5) return "just now";
+        if (s < 60) return `${s}s ago`;
+        const m = Math.round(s / 60);
+        if (m < 60) return `${m}m ago`;
+        const h = Math.round(m / 60);
+        if (h < 24) return `${h}h ago`;
+        return `${Math.round(h / 24)}d ago`;
+      }
+      function pill(value, extraClass = "") {
+        const cls = String(value)
+          .replace(/[^a-z_]/gi, "_")
+          .toLowerCase();
+        const text = String(value).replace(/_/g, " ");
+        return `<span class="pill ${cls} ${extraClass}"><span class="dot"></span>${escapeHtml(text)}</span>`;
+      }
+      function escapeHtml(s) {
+        return String(s).replace(
+          /[&<>"']/g,
+          (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+        );
+      }
+
+      // --- bees view -----------------------------------------------------------
+      async function refreshBees() {
+        try {
+          const res = await fetch("/api/bees");
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const { bees } = await res.json();
+          renderBees(bees ?? []);
+          els.beesMeta.textContent = `${bees.length} connected · updated ${new Date().toLocaleTimeString()}`;
+        } catch (err) {
+          els.beesBody.innerHTML = `<div class="empty">Failed to load bees: ${escapeHtml(err.message)}</div>`;
+        }
+      }
+      function renderBees(bees) {
+        if (bees.length === 0) {
+          els.beesBody.innerHTML = `<div class="empty">No bees connected yet.<br>Run <code>curl http://&lt;hive&gt;/install/bee.sh | sh</code> on a worker, then <code>hive login &lt;url&gt; --token &lt;bootstrap&gt;</code>.</div>`;
+          return;
+        }
+        const rows = bees
+          .map(
+            (b) => `
+              <tr>
+                <td>${pill(b.status || "unknown")}</td>
+                <td><span class="mono truncate" title="${escapeHtml(b.beeId)}">${escapeHtml(b.beeName || shortId(b.beeId))}</span></td>
+                <td><span class="mono truncate" title="${escapeHtml(b.beeId)}">${escapeHtml(shortId(b.beeId))}</span></td>
+                <td>${escapeHtml(b.daemonVersion || "—")}</td>
+                <td>${escapeHtml(b.activeJobs ?? 0)}</td>
+                <td title="${escapeHtml(b.lastSeenAt || "")}">${relativeTime(b.lastSeenAt)}</td>
+                <td>${escapeHtml(b.heartbeatCount ?? 0)}</td>
+                <td title="${escapeHtml(b.firstSeenAt || "")}">${relativeTime(b.firstSeenAt)}</td>
+              </tr>
+            `,
+          )
+          .join("");
+        els.beesBody.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Name</th>
+                <th>Bee ID</th>
+                <th>Version</th>
+                <th>Active jobs</th>
+                <th>Last heartbeat</th>
+                <th>Heartbeats</th>
+                <th>First seen</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      }
+
+      // --- jobs view -----------------------------------------------------------
+      async function refreshJobs() {
+        if (!state.adminToken) {
+          els.jobsBody.innerHTML = `<div class="empty">Set an admin token (top right) to view jobs.</div>`;
+          els.jobsMeta.textContent = "—";
+          return;
+        }
+        try {
+          const res = await fetch("/api/jobs", { headers: authHeaders() });
+          if (res.status === 401) {
+            els.jobsBody.innerHTML = `<div class="empty">Admin token rejected.</div>`;
+            els.jobsMeta.textContent = "—";
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const { jobs } = await res.json();
+          renderJobs(jobs ?? []);
+          els.jobsMeta.textContent = `${jobs.length} jobs · updated ${new Date().toLocaleTimeString()}`;
+        } catch (err) {
+          els.jobsBody.innerHTML = `<div class="empty">Failed to load jobs: ${escapeHtml(err.message)}</div>`;
+        }
+      }
+      function renderJobs(jobs) {
+        if (jobs.length === 0) {
+          els.jobsBody.innerHTML = `<div class="empty">No jobs yet.<br>Dispatch one with <code>POST /api/bees/&lt;beeId&gt;/jobs</code>.</div>`;
+          return;
+        }
+        const sorted = [...jobs].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        );
+        const rows = sorted
+          .map((j) => {
+            const detail = jobDetailSnippet(j);
+            return `
+              <tr>
+                <td>${pill(j.status)}</td>
+                <td>${escapeHtml(j.type)}</td>
+                <td><span class="mono truncate" title="${escapeHtml(j.id)}">${escapeHtml(shortId(j.id))}</span></td>
+                <td><span class="mono truncate" title="${escapeHtml(j.beeId)}">${escapeHtml(shortId(j.beeId))}</span></td>
+                <td title="${escapeHtml(j.createdAt || "")}">${relativeTime(j.createdAt)}</td>
+                <td title="${escapeHtml(j.completedAt || "")}">${j.completedAt ? relativeTime(j.completedAt) : "—"}</td>
+                <td>${j.eventCount ?? 0}</td>
+                <td>${detail}</td>
+              </tr>
+            `;
+          })
+          .join("");
+        els.jobsBody.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Type</th>
+                <th>Job ID</th>
+                <th>Bee ID</th>
+                <th>Created</th>
+                <th>Completed</th>
+                <th>Events</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      }
+      function jobDetailSnippet(j) {
+        if (j.error) {
+          const errCode = j.error.code ? `<strong>${escapeHtml(j.error.code)}</strong>: ` : "";
+          const message = escapeHtml(j.error.message || "(no message)");
+          return `<details><summary>error</summary><pre class="snippet">${errCode}${message}</pre></details>`;
+        }
+        if (j.output) {
+          const stdout = j.output.stdout;
+          if (typeof stdout === "string" && stdout.trim()) {
+            return `<details><summary>output</summary><pre class="snippet">${escapeHtml(stdout)}</pre></details>`;
+          }
+          return `<details><summary>output</summary><pre class="snippet">${escapeHtml(JSON.stringify(j.output, null, 2))}</pre></details>`;
+        }
+        return "—";
+      }
+
+      // --- tokens view ---------------------------------------------------------
+      els.mintToken.addEventListener("click", async () => {
+        if (!state.adminToken) {
+          els.tokenResult.innerHTML = `<div class="empty">Set an admin token (top right) first.</div>`;
+          return;
+        }
+        els.mintToken.disabled = true;
+        try {
+          const beeName = els.tokenBeeName.value.trim();
+          const res = await fetch("/api/bootstrap-tokens", {
+            method: "POST",
+            headers: { ...authHeaders(), "content-type": "application/json" },
+            body: JSON.stringify(beeName ? { beeName } : {}),
+          });
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(`HTTP ${res.status}: ${text}`);
+          }
+          const body = await res.json();
+          renderToken(body);
+          refreshJobs();
+        } catch (err) {
+          els.tokenResult.innerHTML = `<div class="empty">Mint failed: ${escapeHtml(err.message)}</div>`;
+        } finally {
+          els.mintToken.disabled = false;
+        }
+      });
+      function renderToken(body) {
+        const expiresIn = relativeTime(body.expiresAt).replace(" ago", "");
+        els.tokenResult.innerHTML = `
+          <div class="token-display">
+            <div class="token-row">
+              <code>${escapeHtml(body.token)}</code>
+              <button class="ghost" id="copyToken">Copy</button>
+            </div>
+            <div class="meta">id ${escapeHtml(body.tokenId)} · expires in ${escapeHtml(expiresIn)} (${escapeHtml(body.expiresAt)})</div>
+            <div class="meta">
+              On the Bee:
+              <code>hive login &lt;hive-url&gt; --token ${escapeHtml(body.token)}</code>
+            </div>
+            <div class="meta">⚠️ Single-use. Copy now — it will not be shown again.</div>
+          </div>`;
+        document.getElementById("copyToken").addEventListener("click", () => {
+          navigator.clipboard.writeText(body.token).then(() => {
+            const btn = document.getElementById("copyToken");
+            const original = btn.textContent;
+            btn.textContent = "Copied!";
+            setTimeout(() => (btn.textContent = original), 1200);
+          });
+        });
+      }
+
+      // --- polling -------------------------------------------------------------
+      function refreshActive() {
+        if (state.activeTab === "bees") refreshBees();
+        else if (state.activeTab === "jobs") refreshJobs();
+      }
+
+      refreshActive();
+      setInterval(refreshActive, POLL_MS);
+    </script>
+  </body>
+</html>
