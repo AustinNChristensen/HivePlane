@@ -117,6 +117,8 @@ Hive install:
 curl -fsSL https://raw.githubusercontent.com/AustinNChristensen/HivePlane/main/infra/install/hive.sh | sh
 ```
 
+Once the Hive is running, open `http://<hive-host>:8787/` in a browser for the **dashboard** — connected Bees, jobs, and a one-click bootstrap-token mint. Paste your `HIVEPLANE_ADMIN_TOKEN` into the field at the top to unlock jobs + token issuance; the Bees list works without auth.
+
 Tailscale is the network layer. HivePlane still handles application-level identity with bootstrap tokens, device keys, RBAC, policies, approvals, and audit logs.
 
 ### Supported Deployment Modes

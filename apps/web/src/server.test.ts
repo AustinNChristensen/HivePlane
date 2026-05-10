@@ -101,4 +101,45 @@ describe("Hive server", () => {
       server.close();
     }
   });
+
+  it("serves the dashboard index.html at / and 404s if the file is missing", async () => {
+    const publicDir = mkdtempSync(join(tmpdir(), "hiveplane-public-test-"));
+    writeFileSync(join(publicDir, "index.html"), "<!doctype html><title>Test Dashboard</title>");
+
+    const server = createHiveServer({ publicDir });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    try {
+      const address = server.address();
+      if (!address || typeof address !== "object")
+        throw new Error("server did not bind to a TCP port");
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+
+      const ok = await fetch(`${baseUrl}/`);
+      expect(ok.status).toBe(200);
+      expect(ok.headers.get("content-type")).toContain("text/html");
+      expect(await ok.text()).toContain("Test Dashboard");
+    } finally {
+      server.close();
+    }
+
+    // Now point at an empty dir → 404 with the helpful error.
+    const emptyDir = mkdtempSync(join(tmpdir(), "hiveplane-empty-test-"));
+    const server2 = createHiveServer({ publicDir: emptyDir });
+    server2.listen(0, "127.0.0.1");
+    await once(server2, "listening");
+
+    try {
+      const address = server2.address();
+      if (!address || typeof address !== "object")
+        throw new Error("server did not bind to a TCP port");
+      const res = await fetch(`http://127.0.0.1:${address.port}/`);
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("dashboard_not_built");
+    } finally {
+      server2.close();
+    }
+  });
 });
