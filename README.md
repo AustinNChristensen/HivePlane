@@ -124,7 +124,7 @@ curl -fsSL https://raw.githubusercontent.com/AustinNChristensen/HivePlane/main/i
 
 The Hive runs in the foreground and logs requests to stderr. It currently does not auto-start on boot — use `tmux`/`screen` or open a terminal session you can leave running. Hive auto-start is tracked in [#46](https://github.com/AustinNChristensen/HivePlane/issues/46).
 
-> **Heads up**: the Hive keeps state in memory. A restart wipes registered Bees, sessions, bootstrap tokens, and jobs ([#47](https://github.com/AustinNChristensen/HivePlane/issues/47)). Until that lands, plan to re-bootstrap your Bees if you restart the Hive.
+The Hive snapshots its state (registered Bees, signed-heartbeat sessions, bootstrap tokens, jobs) to `~/.hiveplane/hive-state.json` (mode 0600) on every mutation. Restarting the Hive reloads the snapshot, so paired Bees stay paired across reboots and crashes. Pass `--no-persist` (or set `HIVEPLANE_PERSIST=false`) to run ephemerally — useful for tests and CI. Use `--state-file <path>` / `HIVEPLANE_STATE_FILE` to override the location.
 
 Find the Hive URL each Bee will use:
 
@@ -287,8 +287,6 @@ hive disable               # remove the service unit (use `hive start` to reinst
 
 ### Known limitations to track
 
-- **[#47](https://github.com/AustinNChristensen/HivePlane/issues/47)** — Hive forgets state on restart (highest-priority gap).
-- **[#46](https://github.com/AustinNChristensen/HivePlane/issues/46)** — Hive doesn't auto-start; runs in foreground.
 - **[#49](https://github.com/AustinNChristensen/HivePlane/issues/49)** — No TLS on the Hive; rely on Tailscale or a reverse proxy.
 - **[#50](https://github.com/AustinNChristensen/HivePlane/issues/50)** — `run_command` policy DX is hand-edited JSON.
 - **[#51](https://github.com/AustinNChristensen/HivePlane/issues/51)** — systemd path is unverified on real Linux.

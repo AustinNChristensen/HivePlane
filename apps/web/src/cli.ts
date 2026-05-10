@@ -1,10 +1,43 @@
 import { spawn } from "node:child_process";
+import { attachPersistence, getDefaultHiveStatePath, loadHiveServerState } from "./persistence.js";
 import { createHiveServer } from "./server.js";
 
 const VERSION = "0.0.1";
 
-const { host, port, open } = parseArgs(process.argv.slice(2));
-const server = createHiveServer();
+const { host, port, open, persist, statePath } = parseArgs(process.argv.slice(2));
+
+// Reload prior Bee/session/token/job state if a snapshot exists. v0.0.1
+// persistence is a debounced JSON file at `<configDir>/hive-state.json`; see
+// `apps/web/src/persistence.ts` for the rationale (small fleets, single
+// process, atomic rename). SQLite is the right answer for v0.1.
+const state = persist ? loadHiveServerState(statePath) : undefined;
+const persistor = persist
+  ? attachPersistence(state ?? loadHiveServerState(statePath), { filePath: statePath })
+  : undefined;
+
+const server = createHiveServer({
+  ...(state ? { state } : {}),
+  ...(persistor ? { onMutation: persistor.markDirty } : {}),
+});
+
+// Flush pending writes before the process exits. SIGTERM is what launchd /
+// systemd send on shutdown; SIGINT is Ctrl-C from --foreground mode.
+async function shutdown(signal: string): Promise<void> {
+  console.log(`\n[hive] received ${signal}, flushing state...`);
+  try {
+    await persistor?.stop();
+  } catch (error) {
+    console.warn(
+      `[hive] state flush failed (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+  server.close(() => process.exit(0));
+  // Belt-and-braces: if Node hangs onto an open keep-alive socket, force exit
+  // after a short grace period so we don't block reboot.
+  setTimeout(() => process.exit(0), 2000).unref();
+}
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
 
 server.listen(port, host, () => {
   const address = server.address();
@@ -27,13 +60,23 @@ server.listen(port, host, () => {
   }
 });
 
-function parseArgs(args: string[]): { host: string; port: number; open: boolean } {
+function parseArgs(args: string[]): {
+  host: string;
+  port: number;
+  open: boolean;
+  persist: boolean;
+  statePath: string;
+} {
   let host = process.env.HIVEPLANE_HIVE_HOST ?? "127.0.0.1";
   let port = Number(process.env.HIVEPLANE_HIVE_PORT ?? 8787);
   // Auto-open the browser on interactive (TTY) runs unless explicitly disabled.
   // When the Hive runs under launchd/systemd, stdout isn't a TTY, so this is
   // automatically off without needing the service unit to pass a flag.
   let open = parseBoolEnv(process.env.HIVEPLANE_OPEN_BROWSER) ?? Boolean(process.stdout.isTTY);
+  // Default-on: a Hive restart should not wipe paired Bees / sessions /
+  // tokens / jobs. `--no-persist` exists for ephemeral tests + CI.
+  let persist = parseBoolEnv(process.env.HIVEPLANE_PERSIST) ?? true;
+  let statePath = process.env.HIVEPLANE_STATE_FILE ?? getDefaultHiveStatePath();
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -42,13 +85,16 @@ function parseArgs(args: string[]): { host: string; port: number; open: boolean 
     else if (arg === "--port") port = Number(requireValue(args, ++index, "--port"));
     else if (arg === "--open") open = true;
     else if (arg === "--no-open") open = false;
+    else if (arg === "--persist") persist = true;
+    else if (arg === "--no-persist") persist = false;
+    else if (arg === "--state-file") statePath = requireValue(args, ++index, "--state-file");
   }
 
   if (!Number.isInteger(port) || port <= 0) {
     throw new Error(`Invalid --port: ${port}`);
   }
 
-  return { host, port, open };
+  return { host, port, open, persist, statePath };
 }
 
 function requireValue(args: string[], index: number, flag: string): string {

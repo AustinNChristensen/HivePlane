@@ -104,6 +104,13 @@ export type CreateHiveServerOptions = {
   adminToken?: string;
   /** Override the auth-required toggle. Useful for tests. */
   authRequired?: boolean;
+  /**
+   * Called after every state-mutating request finishes successfully. The
+   * persistence layer (`apps/web/src/persistence.ts`) wires this to a
+   * debounced atomic file write. Tests typically pass a `vi.fn()` to assert
+   * mutation paths fire the hook, or omit it entirely.
+   */
+  onMutation?: () => void;
 };
 
 export function createHiveServerState(): HiveServerState {
@@ -235,6 +242,8 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
   const publicDir = options.publicDir ?? defaultPublicDir();
   const adminToken = options.adminToken ?? getRequiredAdminToken();
   const authRequired = options.authRequired ?? isAuthRequired();
+  // No-op when persistence isn't attached (tests, --no-persist, etc.).
+  const markDirty = options.onMutation ?? (() => {});
 
   return createServer(async (request, response) => {
     try {
@@ -296,7 +305,9 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
             message: parsed.error.message,
           });
         }
-        return sendJson(response, 200, createBootstrapToken(state, parsed.data, now()));
+        const created = createBootstrapToken(state, parsed.data, now());
+        markDirty();
+        return sendJson(response, 200, created);
       }
 
       // GET /api/pairing-key — admin-gated; returns (and lazily mints) the
@@ -339,6 +350,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           const status = result.error === "rate_limited" ? 429 : 401;
           return sendJson(response, status, result);
         }
+        markDirty();
         return sendJson(response, 200, result);
       }
 
@@ -359,6 +371,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         const bee = upsertBeeHeartbeat(state, heartbeat, now());
         // Hand back any pending jobs and mark them as assigned.
         const jobs = claimPendingJobs(state.jobsState, heartbeat.beeId, now());
+        markDirty();
         return sendJson(response, 200, { accepted: true, bee, jobs });
       }
 
@@ -379,6 +392,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           });
         }
         const job = createJob(state.jobsState, beeId, parsed.data, now());
+        markDirty();
         return sendJson(response, 200, { job: serializeJob(job) });
       }
 
@@ -406,6 +420,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           return sendJson(response, 403, { error: "forbidden", reason: "job is not yours" });
         }
         appendEvents(state.jobsState, jobId, parsed.data.events);
+        markDirty();
         return sendJson(response, 200, { accepted: true, eventCount: job.events.length });
       }
 
@@ -433,6 +448,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           return sendJson(response, 403, { error: "forbidden", reason: "job is not yours" });
         }
         const updated = completeJob(state.jobsState, jobId, parsed.data, now());
+        markDirty();
         return sendJson(response, 200, { job: updated ? serializeJob(updated) : null });
       }
 
