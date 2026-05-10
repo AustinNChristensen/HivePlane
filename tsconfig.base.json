@@ -12,6 +12,10 @@
     "declarationMap": true,
     "sourceMap": true,
     "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true
+    "exactOptionalPropertyTypes": true,
+    "baseUrl": ".",
+    "paths": {
+      "@hiveplane/*": ["packages/*/src/index.ts"]
+    }
   }
 }
