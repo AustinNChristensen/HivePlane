@@ -6,7 +6,7 @@
 # reboots, then starts it. Pass --foreground to skip the service install and
 # run the Hive interactively instead (useful for development).
 #
-# Either way it binds to 0.0.0.0:8787 by default so other machines on the
+# Either way it binds to 0.0.0.0:4483 by default so other machines on the
 # Tailnet/LAN can reach it. Override with --host / --port.
 #
 # Idempotent: safe to re-run to upgrade an existing install.
@@ -19,7 +19,13 @@ BIN_DIR="${HIVEPLANE_BIN_DIR:-$HOME/.local/bin}"
 REPO_URL="${HIVEPLANE_REPO_URL:-https://github.com/AustinNChristensen/HivePlane.git}"
 REPO_REF="${HIVEPLANE_REPO_REF:-main}"
 HIVE_HOST="${HIVE_HOST:-0.0.0.0}"
-HIVE_PORT="${HIVE_PORT:-8787}"
+# 4483 = "HIVE" on a phone keypad. Picked because the 4xxx range is much less
+# crowded than the 3000/5000/8000/8787/9000 cluster of dev-server defaults
+# (Selenium 4444, Sinatra 4567, GlassFish 4848 are the only neighbours and
+# none of them are common). v0.0.2 defaulted to 8787 and immediately hit a
+# real-world collision with another local dev server — see the v0.0.3
+# release notes.
+HIVE_PORT="${HIVE_PORT:-4483}"
 MODE="service"   # "service" (default) or "foreground"
 
 while [ $# -gt 0 ]; do
@@ -33,7 +39,7 @@ while [ $# -gt 0 ]; do
 HivePlane Hive installer
 
 Usage:
-  hive.sh [--host 0.0.0.0] [--port 8787] [--foreground] [--no-start]
+  hive.sh [--host 0.0.0.0] [--port 4483] [--foreground] [--no-start]
 
 By default installs a launchd / systemd-user service unit and starts it,
 so the Hive survives reboots. Use --foreground to run interactively

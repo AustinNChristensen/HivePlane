@@ -9,7 +9,7 @@ Three commands total: install, login, start.
 
 ```sh
 # 1. install (no args needed)
-curl -fsSL https://hive.your-tailnet.ts.net:8787/install/bee.sh | sh
+curl -fsSL https://hive.your-tailnet.ts.net:4483/install/bee.sh | sh
 
 # 2. log in (no args runs an interactive prompt: Hive URL + pairing key)
 hive login
@@ -23,7 +23,7 @@ section of the **Bees** tab). It's single-use and rotates after each pair.
 For unattended/scripted installs, pass everything inline:
 
 ```sh
-hive login http://hive.your-tailnet.ts.net:8787 \
+hive login http://hive.your-tailnet.ts.net:4483 \
   --name laptop-1 \
   --pairing-key K7RQ-2P9X            # from the dashboard
 # or, for fully-automated installs:
@@ -60,7 +60,7 @@ On Linux, run `loginctl enable-linger $USER` if you want the daemon to keep runn
 ## Hive (control plane)
 
 ```sh
-# defaults: host 0.0.0.0, port 8787, install as a service
+# defaults: host 0.0.0.0, port 4483, install as a service
 curl -fsSL https://raw.githubusercontent.com/AustinNChristensen/HivePlane/main/infra/install/hive.sh | sh
 
 # custom host/port
@@ -100,7 +100,7 @@ Once the Hive is running it serves these scripts itself at `GET /install/bee.sh`
 and `GET /install/hive.sh`, so other machines can do:
 
 ```sh
-curl -fsSL http://hive.your-tailnet.ts.net:8787/install/bee.sh | sh
+curl -fsSL http://hive.your-tailnet.ts.net:4483/install/bee.sh | sh
 ```
 
 ### `hive-config.json`

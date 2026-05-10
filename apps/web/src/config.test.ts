@@ -30,7 +30,7 @@ describe("HiveOnDiskConfig", () => {
     const config = {
       adminToken: "secret",
       host: "0.0.0.0",
-      port: 8787,
+      port: 4483,
       authRequired: true,
       openBrowser: false,
     };

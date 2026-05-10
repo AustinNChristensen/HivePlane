@@ -120,7 +120,7 @@ This:
 
 - clones HivePlane to `~/.hiveplane/install` and runs `pnpm install`;
 - drops the `hive` shim into `~/.local/bin`;
-- writes `~/.hiveplane/hive-config.json` (mode 0600) with a freshly-generated `adminToken` and the bind host/port (default `0.0.0.0:8787`);
+- writes `~/.hiveplane/hive-config.json` (mode 0600) with a freshly-generated `adminToken` and the bind host/port (default `0.0.0.0:4483`);
 - installs a launchd plist (`~/Library/LaunchAgents/com.hiveplane.hive.plist`) on macOS or a systemd user unit (`~/.config/systemd/user/hiveplane-hive.service`) on Linux;
 - starts the service. The Hive will come back automatically after reboots and crashes.
 
@@ -154,11 +154,11 @@ tailscale status                # gives you e.g. mac-mini.tailnet-name.ts.net
 Quick sanity check from another machine on the same network:
 
 ```bash
-curl http://mac-mini.tailnet-name.ts.net:8787/healthz
+curl http://mac-mini.tailnet-name.ts.net:4483/healthz
 # {"ok":true,"service":"hiveplane-hive"}
 ```
 
-In `--foreground` mode the Hive prints the dashboard URL and auto-opens it in your default browser on a TTY; pass `--no-open` (or set `HIVEPLANE_OPEN_BROWSER=false`) to skip on a headless server. Under the launchd/systemd unit there's no TTY, so the dashboard doesn't auto-open — visit `http://<hive>:8787/` manually. The **dashboard** shows connected Bees, jobs, the current pairing key, and a bootstrap-token minter — paste your admin token (from `hive-config.json` or `hive selfhost init`) into the field at the top to unlock the admin features; the Bees list works without auth. `/dashboard` and `/index.html` are aliases for `/`. `curl http://mac-mini.tailnet-name.ts.net:8787/version` confirms which build the Hive is running — useful if `/` 404s, since that usually means the Hive process is older than the source on disk and needs a restart.
+In `--foreground` mode the Hive prints the dashboard URL and auto-opens it in your default browser on a TTY; pass `--no-open` (or set `HIVEPLANE_OPEN_BROWSER=false`) to skip on a headless server. Under the launchd/systemd unit there's no TTY, so the dashboard doesn't auto-open — visit `http://<hive>:4483/` manually. The **dashboard** shows connected Bees, jobs, the current pairing key, and a bootstrap-token minter — paste your admin token (from `hive-config.json` or `hive selfhost init`) into the field at the top to unlock the admin features; the Bees list works without auth. `/dashboard` and `/index.html` are aliases for `/`. `curl http://mac-mini.tailnet-name.ts.net:4483/version` confirms which build the Hive is running — useful if `/` 404s, since that usually means the Hive process is older than the source on disk and needs a restart.
 
 ### Step 2 — Read the pairing key off the dashboard
 
@@ -167,7 +167,7 @@ After saving your admin token in the top-right field, the **Pair a new Bee** car
 For unattended/scripted Bee installs, mint a long-form bootstrap token instead via the dashboard's **Tokens** tab, or:
 
 ```bash
-TOKEN=$(curl -fsSL -X POST http://mac-mini.tailnet-name.ts.net:8787/api/bootstrap-tokens \
+TOKEN=$(curl -fsSL -X POST http://mac-mini.tailnet-name.ts.net:4483/api/bootstrap-tokens \
   -H "Authorization: Bearer $HIVEPLANE_ADMIN_TOKEN" \
   -H "content-type: application/json" \
   -d '{"beeName":"laptop-1"}' | jq -r .token)
@@ -182,7 +182,7 @@ Bootstrap tokens are single-use and expire in 30 minutes by default.
 On each Bee machine:
 
 ```bash
-curl -fsSL http://mac-mini.tailnet-name.ts.net:8787/install/bee.sh | sh
+curl -fsSL http://mac-mini.tailnet-name.ts.net:4483/install/bee.sh | sh
 ```
 
 This clones HivePlane to `~/.hiveplane/install`, runs `pnpm install`, drops `hive` and `hiveplane-bee` shims into `~/.local/bin`, and generates a persistent Ed25519 identity under `~/.hiveplane`. It does **not** start anything yet.
@@ -195,10 +195,10 @@ Still on the Bee machine, run `hive login` with no arguments — it'll prompt yo
 
 ```text
 $ hive login
-Hive URL: http://mac-mini.tailnet-name.ts.net:8787
+Hive URL: http://mac-mini.tailnet-name.ts.net:4483
 Pairing key (or bootstrap token, blank to skip): K7RQ-2P9X
 Bee name [laptop-1]:
-Logged into http://mac-mini.tailnet-name.ts.net:8787/
+Logged into http://mac-mini.tailnet-name.ts.net:4483/
 Bee identity: sha256:...
 Registered with Hive as bee_xxxxxxxx (signed-heartbeat mode).
 Run `hive start` to begin heartbeating.
@@ -208,12 +208,12 @@ For scripted/unattended installs you can pass everything on the command line:
 
 ```bash
 # pairing key (short form, from the dashboard):
-hive login http://mac-mini.tailnet-name.ts.net:8787 \
+hive login http://mac-mini.tailnet-name.ts.net:4483 \
   --name laptop-1 \
   --pairing-key K7RQ-2P9X
 
 # or bootstrap token (long form):
-hive login http://mac-mini.tailnet-name.ts.net:8787 \
+hive login http://mac-mini.tailnet-name.ts.net:4483 \
   --name laptop-1 \
   --token hp_boot_xxxxxxxxxxxxxxxxxxx
 ```
@@ -239,7 +239,7 @@ On macOS this writes `~/Library/LaunchAgents/com.hiveplane.bee.plist` and bootst
 Open the dashboard's **Bees** tab in a browser — your new Bee should appear with status `online` and a heartbeat count that ticks up every 10 seconds. Or via curl from any machine that can reach the Hive:
 
 ```bash
-curl http://mac-mini.tailnet-name.ts.net:8787/api/bees | jq
+curl http://mac-mini.tailnet-name.ts.net:4483/api/bees | jq
 ```
 
 On the Bee itself, `hive status` shows the same info plus session details and service state.
@@ -252,7 +252,7 @@ The point of all this. From the Hive (or anywhere with the admin token), enqueue
 
 ```bash
 BEE_ID=bee_xxxxxxxx_xxxxxxxxxxxx        # from `curl /api/bees`
-curl -fsSL -X POST http://mac-mini.tailnet-name.ts.net:8787/api/bees/$BEE_ID/jobs \
+curl -fsSL -X POST http://mac-mini.tailnet-name.ts.net:4483/api/bees/$BEE_ID/jobs \
   -H "Authorization: Bearer $HIVEPLANE_ADMIN_TOKEN" \
   -H "content-type: application/json" \
   -d '{"type":"run_healthcheck","payload":{}}'
@@ -261,7 +261,7 @@ curl -fsSL -X POST http://mac-mini.tailnet-name.ts.net:8787/api/bees/$BEE_ID/job
 The Bee picks it up on the next heartbeat (≤10s), runs it, and posts a completion. Watch the **Jobs** tab in the dashboard — the row's status pill flips from `queued` → `assigned` → `succeeded` and the _Detail_ column shows the output. Or via curl:
 
 ```bash
-curl http://mac-mini.tailnet-name.ts.net:8787/api/jobs?beeId=$BEE_ID \
+curl http://mac-mini.tailnet-name.ts.net:4483/api/jobs?beeId=$BEE_ID \
   -H "Authorization: Bearer $HIVEPLANE_ADMIN_TOKEN" | jq
 ```
 
@@ -286,7 +286,7 @@ The allowlist matches on `argv[0]` basename. Restart isn't required — the daem
 Then from the Hive:
 
 ```bash
-curl -fsSL -X POST http://mac-mini.tailnet-name.ts.net:8787/api/bees/$BEE_ID/jobs \
+curl -fsSL -X POST http://mac-mini.tailnet-name.ts.net:4483/api/bees/$BEE_ID/jobs \
   -H "Authorization: Bearer $HIVEPLANE_ADMIN_TOKEN" \
   -d '{"type":"run_command","payload":{"command":"git","args":["status"]}}'
 ```

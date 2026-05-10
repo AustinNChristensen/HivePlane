@@ -19,7 +19,7 @@ export const HiveOnDiskConfigSchema = z.object({
   adminToken: z.string().min(1).optional(),
   /** Bind host. Default `0.0.0.0` so Bees on the Tailnet/LAN can reach it. */
   host: z.string().min(1).optional(),
-  /** Bind port. Default `8787`. */
+  /** Bind port. Default `4483`. */
   port: z.number().int().positive().optional(),
   /**
    * Require signed heartbeats and authenticated admin calls. Default `false`

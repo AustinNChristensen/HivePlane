@@ -46,7 +46,7 @@ curl -fsSL https://hive.your-tailnet.ts.net/install/bee.sh | sh -s -- \
 Hive and Bee run on one machine.
 
 ```text
-http://localhost:8787
+http://localhost:4483
 ```
 
 ### 2. LAN
@@ -54,7 +54,7 @@ http://localhost:8787
 Hive is reachable on a private LAN address.
 
 ```text
-http://192.168.1.50:8787
+http://192.168.1.50:4483
 ```
 
 This is useful but less robust than Tailscale because IPs and firewalls can change.

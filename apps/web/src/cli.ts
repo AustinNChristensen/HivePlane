@@ -3,7 +3,7 @@ import { readHiveOnDiskConfig } from "./config.js";
 import { attachPersistence, getDefaultHiveStatePath, loadHiveServerState } from "./persistence.js";
 import { createHiveServer } from "./server.js";
 
-const VERSION = "0.0.2";
+const VERSION = "0.0.3";
 
 // Read the on-disk Hive config first so env vars and CLI flags can override
 // individual fields below — the precedence is: CLI flag > env var > config
@@ -85,7 +85,9 @@ function parseArgs(args: string[]): {
   statePath: string;
 } {
   let host = process.env.HIVEPLANE_HIVE_HOST ?? onDiskConfig.host ?? "127.0.0.1";
-  let port = Number(process.env.HIVEPLANE_HIVE_PORT ?? onDiskConfig.port ?? 8787);
+  // 4483 = "HIVE" on a phone keypad — see infra/install/hive.sh for the
+  // rationale on why we left the 8787 default after a v0.0.2 collision.
+  let port = Number(process.env.HIVEPLANE_HIVE_PORT ?? onDiskConfig.port ?? 4483);
   // Auto-open the browser on interactive (TTY) runs unless explicitly disabled.
   // When the Hive runs under launchd/systemd, stdout isn't a TTY, so this is
   // automatically off without needing the service unit to pass a flag.
