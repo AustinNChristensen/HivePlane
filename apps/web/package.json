@@ -1,0 +1,16 @@
+{
+  "name": "@hiveplane/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "echo 'web build placeholder'",
+    "check": "pnpm typecheck",
+    "lint": "pnpm typecheck",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
