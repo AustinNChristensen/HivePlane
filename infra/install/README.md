@@ -5,14 +5,16 @@ flags or paths.
 
 ## Bee (worker node)
 
-Two-step flow: install once, then connect with `hive login`.
+Three commands total: install, login, start.
 
 ```sh
 # 1. install (no args needed)
 curl -fsSL https://hive.your-tailnet.ts.net:8787/install/bee.sh | sh
 
-# 2. connect to a Hive
+# 2. point at a Hive
 hive login http://hive.your-tailnet.ts.net:8787
+
+# 3. start (auto-installs the service unit on first run; survives reboot)
 hive start
 ```
 
@@ -29,6 +31,19 @@ It does **not** start anything or contact a Hive — that happens via
 
 The script is idempotent. Re-running it pulls the latest `main` and reinstalls
 deps, but keeps your identity and config.
+
+### Auto-start
+
+`hive start` is smart: if no service unit exists yet, it installs one and starts it. If one is already there, it loads / kicks the existing unit. Either way, the daemon survives reboots and crashes:
+
+- **macOS**: `~/Library/LaunchAgents/com.hiveplane.bee.plist` (launchd, user-level — no sudo)
+- **Linux**: `~/.config/systemd/user/hiveplane-bee.service` (systemd user unit)
+
+Logs land in `~/.hiveplane/logs/`.
+
+`hive stop` stops the running service. `hive disable` removes the unit. `hive status` reports whether the service is loaded and running. `hive logs -f` tails the daemon output. `hive start --foreground` runs the daemon as a child process for dev.
+
+On Linux, run `loginctl enable-linger $USER` if you want the daemon to keep running after you log out.
 
 ## Hive (control plane)
 

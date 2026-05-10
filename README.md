@@ -90,14 +90,16 @@ Benefits:
 - user owns the network path;
 - HivePlane avoids becoming the mandatory relay provider.
 
-Two-step Bee setup — install once (no args), then connect:
+Three commands to set up a Bee — install once (no args), point it at a Hive, enable auto-start:
 
 ```bash
 # 1. install Bee daemon + `hive` CLI
 curl -fsSL https://hive.your-tailnet.ts.net/install/bee.sh | sh
 
-# 2. connect to a Hive
+# 2. point at a Hive
 hive login https://hive.your-tailnet.ts.net
+
+# 3. start (auto-installs the service unit on first run; survives reboot)
 hive start
 ```
 
