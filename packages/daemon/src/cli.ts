@@ -1,7 +1,10 @@
+import { sign as edSign } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { BeeConnectionManager, HttpBeeConnectionTransport } from "./connection.js";
 import { readHivePlaneConfig } from "./config.js";
 import { createDaemonState } from "./index.js";
 import { loadOrCreateBeeIdentity } from "./identity.js";
+import { isSessionExpired, readHiveSession } from "./session.js";
 
 const VERSION = "0.0.1";
 
@@ -18,15 +21,48 @@ async function main(): Promise<void> {
   const identity = await loadOrCreateBeeIdentity(
     options.configDir ? { configDir: options.configDir } : {},
   );
+
+  // If a session was created via `hive login --token <bootstrap>`, use the
+  // server-issued beeId; otherwise fall back to the public-key fingerprint
+  // (legacy unauthenticated mode).
+  const session = readHiveSession(options.configDir);
+  const sessionUsable =
+    session && session.hiveUrl === options.hiveUrl && !isSessionExpired(session);
+  if (session && !sessionUsable) {
+    if (session.hiveUrl !== options.hiveUrl) {
+      console.warn(`[bee] stored session is for ${session.hiveUrl}; ignoring`);
+    } else {
+      console.warn(`[bee] stored session expired at ${session.sessionExpiresAt}; ignoring`);
+    }
+  }
+  const beeId = sessionUsable ? session.beeId : (identity.beeId ?? identity.fingerprint);
+
   const state = createDaemonState({
-    beeId: identity.beeId ?? identity.fingerprint,
+    beeId,
     ...(options.name ? { beeName: options.name } : {}),
     hiveUrl: options.hiveUrl,
     heartbeatIntervalSeconds: options.intervalSeconds,
     labels: {},
     maxConcurrentJobs: 1,
   });
-  const transport = new HttpBeeConnectionTransport({ hiveUrl: options.hiveUrl });
+
+  // Sign every heartbeat body with the Bee's Ed25519 private key when a
+  // session exists; pass the session token so the Hive can correlate.
+  const authHeaderProvider = sessionUsable
+    ? (rawBody: Uint8Array) => {
+        const privateKeyPem = readFileSync(identity.privateKeyPath, "utf8");
+        const signature = edSign(null, Buffer.from(rawBody), privateKeyPem).toString("base64url");
+        return {
+          authorization: `Bearer ${session.sessionToken}`,
+          "x-bee-signature": signature,
+        };
+      }
+    : undefined;
+
+  const transport = new HttpBeeConnectionTransport({
+    hiveUrl: options.hiveUrl,
+    ...(authHeaderProvider ? { authHeaderProvider } : {}),
+  });
   const manager = new BeeConnectionManager({
     state,
     transport,
@@ -40,6 +76,7 @@ async function main(): Promise<void> {
 
   console.log(`[bee] id=${state.beeId}`);
   console.log(`[bee] hive=${options.hiveUrl}`);
+  console.log(`[bee] auth=${sessionUsable ? "signed (session)" : "anonymous"}`);
 
   if (options.once) {
     const response = await manager.sendHeartbeat();
