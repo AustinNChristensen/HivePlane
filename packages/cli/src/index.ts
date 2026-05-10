@@ -19,13 +19,26 @@ import {
 } from "@hiveplane/daemon";
 import { classifyCredential } from "./credentials.js";
 import {
+  generateAdminToken,
+  getHiveConfigPath,
+  readHiveOnDiskConfig,
+  writeHiveOnDiskConfig,
+} from "./hive-config.js";
+import {
   getBeeServiceStatus,
+  getDaemonLogFiles,
+  getHiveServiceStatus,
   getServicePlatform,
   installBeeService,
+  installHiveService,
   restartBeeService,
+  restartHiveService,
   startBeeService,
+  startHiveService,
   stopBeeService,
+  stopHiveService,
   uninstallBeeService,
+  uninstallHiveService,
 } from "./service.js";
 
 const VERSION = "0.0.1";
@@ -86,6 +99,9 @@ async function main(): Promise<void> {
       return;
     case "identity":
       await runIdentity(parsed);
+      return;
+    case "selfhost":
+      await runSelfhost(parsed);
       return;
     case "help":
       printHelp();
@@ -492,6 +508,248 @@ async function promptLine(question: string): Promise<string> {
   }
 }
 
+// --- selfhost (Hive control plane on this machine) ------------------------
+
+async function runSelfhost(parsed: ArgvParseResult): Promise<void> {
+  const verb = parsed.positional[0];
+  switch (verb) {
+    case "init":
+      return runSelfhostInit(parsed);
+    case "install":
+      return runSelfhostInstall(parsed);
+    case "start":
+      return runSelfhostStart(parsed);
+    case "stop":
+      return runSelfhostStop();
+    case "restart":
+      return runSelfhostRestart();
+    case "status":
+      return runSelfhostStatus(parsed);
+    case "uninstall":
+      return runSelfhostUninstall();
+    case "logs":
+      return runSelfhostLogs(parsed);
+    case "up":
+      return runSelfhostUp(parsed);
+    case undefined:
+    case "help":
+    case "--help":
+    case "-h":
+      printSelfhostHelp();
+      return;
+    default:
+      console.error(`Unknown selfhost verb: ${verb}`);
+      printSelfhostHelp();
+      process.exit(2);
+  }
+}
+
+function printSelfhostHelp(): void {
+  console.log(
+    `hive selfhost <verb>
+
+  init                  Generate hive-config.json (creates an admin token if missing).
+  install               Install the launchd/systemd unit for the Hive (no-op if present).
+  start                 Start the Hive service. Auto-installs the unit on first run.
+  stop                  Stop the Hive service.
+  restart               Stop + start.
+  status                Show install/running state, last exit code, log paths.
+  uninstall             Stop the service and remove the unit file.
+  logs [stderr] [-f]    Print or tail Hive logs (default: stdout).
+  up                    init + install + start in one shot.
+`,
+  );
+}
+
+/**
+ * Persist the on-disk Hive config. If a config already exists we preserve
+ * its admin token (and any other set fields) and only fill in defaults for
+ * what's missing. This is what `hive selfhost up` calls under the hood, and
+ * it's also safe to run on its own.
+ */
+async function runSelfhostInit(parsed: ArgvParseResult): Promise<void> {
+  const configDir = parsed.configDir ?? getDefaultHivePlaneConfigDir();
+  const existing = readHiveOnDiskConfig(configDir);
+
+  // Flag overrides — let `hive.sh` (and operators tweaking after the fact)
+  // pin host/port without hand-editing the JSON.
+  const hostFlag = stringFlag(parsed, "host");
+  const portFlag = stringFlag(parsed, "port");
+  const authRequiredFlag = boolFlag(parsed, "auth-required");
+
+  const config = {
+    adminToken: existing.adminToken ?? generateAdminToken(),
+    host: hostFlag ?? existing.host ?? "0.0.0.0",
+    port: portFlag !== undefined ? Number(portFlag) : (existing.port ?? 8787),
+    authRequired: authRequiredFlag ?? existing.authRequired ?? false,
+    openBrowser: existing.openBrowser ?? false,
+  };
+  if (!Number.isInteger(config.port) || config.port <= 0) {
+    console.error(`Invalid --port: ${portFlag}`);
+    process.exit(2);
+  }
+  const overwriteAdmin = parsed.flags.get("rotate-admin-token") === true;
+  if (overwriteAdmin) config.adminToken = generateAdminToken();
+
+  const { path } = writeHiveOnDiskConfig(config, configDir);
+  console.log(`Wrote ${path} (mode 0600).`);
+  console.log(`  host:          ${config.host}`);
+  console.log(`  port:          ${config.port}`);
+  console.log(`  authRequired:  ${config.authRequired}`);
+  console.log(`  openBrowser:   ${config.openBrowser}`);
+  if (existing.adminToken && !overwriteAdmin) {
+    console.log(`  adminToken:    (preserved — pass --rotate-admin-token to mint a fresh one)`);
+  } else {
+    console.log(`  adminToken:    ${config.adminToken}`);
+    console.log(`  ↑ save this. It's the only key for the Hive admin endpoints.`);
+  }
+}
+
+async function runSelfhostInstall(parsed: ArgvParseResult): Promise<void> {
+  ensureHiveConfigOrExit(parsed.configDir);
+  const env = resolveInstallEnvironment();
+  const result = installHiveService({
+    installDir: env.installDir,
+    pnpmBin: env.pnpmBin,
+    nodeBinDir: env.nodeBinDir,
+    configDir: parsed.configDir ?? getDefaultHivePlaneConfigDir(),
+  });
+  console.log(`Wrote unit file (${result.platform}): ${result.unitPath}`);
+  console.log(`Run \`hive selfhost start\` to launch.`);
+}
+
+async function runSelfhostStart(parsed: ArgvParseResult): Promise<void> {
+  const configDir = ensureHiveConfigOrExit(parsed.configDir);
+  if (getServicePlatform() === "unsupported") {
+    console.error(
+      `Hive auto-start is not supported on ${process.platform}. Run the Hive in the foreground:`,
+    );
+    console.error(`  pnpm --filter @hiveplane/web start -- --no-open`);
+    process.exit(2);
+  }
+  const status = await getHiveServiceStatus(configDir);
+  if (!status.installed) {
+    const env = resolveInstallEnvironment();
+    const result = installHiveService({
+      installDir: env.installDir,
+      pnpmBin: env.pnpmBin,
+      nodeBinDir: env.nodeBinDir,
+      configDir,
+    });
+    console.log(`Installed Hive service unit (${result.platform}): ${result.unitPath}`);
+  }
+  await startHiveService();
+  const cfg = readHiveOnDiskConfig(configDir);
+  const port = cfg.port ?? 8787;
+  console.log(`Hive started. Dashboard: http://localhost:${port}/`);
+  console.log(`Tail logs with \`hive selfhost logs -f\`. Stop with \`hive selfhost stop\`.`);
+  warnIfLingerOff();
+}
+
+async function runSelfhostStop(): Promise<void> {
+  await stopHiveService();
+  console.log("Hive stopped.");
+}
+
+async function runSelfhostRestart(): Promise<void> {
+  await restartHiveService();
+  console.log("Hive restarted.");
+}
+
+async function runSelfhostStatus(parsed: ArgvParseResult): Promise<void> {
+  const configDir = parsed.configDir ?? getDefaultHivePlaneConfigDir();
+  const cfg = readHiveOnDiskConfig(configDir);
+  const status = await getHiveServiceStatus(configDir);
+
+  console.log(`Config file:   ${getHiveConfigPath(configDir)}`);
+  console.log(
+    `Admin token:   ${cfg.adminToken ? "(set; run `hive selfhost init` to view/rotate)" : "(unset — admin endpoints disabled)"}`,
+  );
+  console.log(`Bind:          ${cfg.host ?? "(default 0.0.0.0)"}:${cfg.port ?? "(default 8787)"}`);
+  console.log(`authRequired:  ${cfg.authRequired ?? false}`);
+
+  const stateLabel =
+    status.platform === "unsupported"
+      ? "(unsupported on this platform)"
+      : status.installed
+        ? `installed${status.running ? ", running" : ", not running"}`
+        : "not installed (run `hive selfhost install`)";
+  console.log(`Service:       ${stateLabel}`);
+  if (status.unitPath) console.log(`Unit file:     ${status.unitPath}`);
+  console.log(`Logs:          ${status.logDir}`);
+  if (status.lastExitCode !== undefined && status.lastExitCode !== 0) {
+    console.log(`Last exit:     ${status.lastExitCode}`);
+  }
+}
+
+async function runSelfhostUninstall(): Promise<void> {
+  const result = uninstallHiveService();
+  if (result.unitRemoved) {
+    console.log(`Hive service disabled. Removed: ${result.unitPath}`);
+  } else {
+    console.log("Hive service was not installed; nothing to do.");
+  }
+}
+
+async function runSelfhostLogs(parsed: ArgvParseResult): Promise<void> {
+  const configDir = parsed.configDir ?? getDefaultHivePlaneConfigDir();
+  const status = await getHiveServiceStatus(configDir);
+  const follow = parsed.flags.get("follow") === true || parsed.flags.get("f") === true;
+  const stream = parsed.positional[1] === "stderr" ? "err" : "out";
+  const logFiles = getDaemonLogFiles("hive", configDir);
+  const logFile = stream === "err" ? logFiles.stderr : logFiles.stdout;
+
+  if (status.platform === "linux") {
+    const args = ["--user", "-u", "hiveplane-hive.service", "--no-pager"];
+    if (follow) args.push("-f");
+    const child = spawn("journalctl", args, { stdio: "inherit" });
+    // Same fallback as `hive logs` for the Bee: minimal containers / WSL1 /
+    // some systemd-less distros don't ship `journalctl`. Fall through to the
+    // file-based reader rather than dying with a confusing ENOENT.
+    let spawned = false;
+    child.on("spawn", () => {
+      spawned = true;
+    });
+    child.on("error", (err) => {
+      if (!spawned && (err as NodeJS.ErrnoException).code === "ENOENT") {
+        console.warn(`journalctl not on PATH; falling back to file logs at ${status.logDir}.`);
+        runLogsFromFile(logFile, follow);
+        return;
+      }
+      console.error(`journalctl failed: ${err.message}`);
+      process.exit(1);
+    });
+    child.on("exit", (code) => {
+      if (spawned) process.exit(code ?? 0);
+    });
+    return;
+  }
+
+  runLogsFromFile(logFile, follow);
+}
+
+async function runSelfhostUp(parsed: ArgvParseResult): Promise<void> {
+  await runSelfhostInit(parsed);
+  await runSelfhostStart(parsed);
+}
+
+/**
+ * Read the Hive config and abort with a clear error if no admin token has
+ * been set yet. Returns the resolved config dir on success so callers don't
+ * have to re-derive it.
+ */
+function ensureHiveConfigOrExit(configDirOverride: string | undefined): string {
+  const configDir = configDirOverride ?? getDefaultHivePlaneConfigDir();
+  const cfg = readHiveOnDiskConfig(configDir);
+  if (!cfg.adminToken) {
+    console.error(
+      `No Hive config at ${getHiveConfigPath(configDir)} (or no adminToken set). Run \`hive selfhost init\` first.`,
+    );
+    process.exit(2);
+  }
+  return configDir;
+}
+
 type InstallEnvironment = { installDir: string; pnpmBin: string; nodeBinDir: string };
 
 function resolveInstallEnvironment(): InstallEnvironment {
@@ -581,6 +839,10 @@ function parseArgs(args: string[]): ArgvParseResult {
       flags.set("token", requireValue(args, ++i, "--token"));
     } else if (a === "--pairing-key") {
       flags.set("pairing-key", requireValue(args, ++i, "--pairing-key"));
+    } else if (a === "--host") {
+      flags.set("host", requireValue(args, ++i, "--host"));
+    } else if (a === "--port") {
+      flags.set("port", requireValue(args, ++i, "--port"));
     } else if (a === "-f") {
       flags.set("follow", true);
     } else if (a.startsWith("--")) {
@@ -596,6 +858,21 @@ function parseArgs(args: string[]): ArgvParseResult {
   }
 
   return { ...(configDir ? { configDir } : {}), positional, flags };
+}
+
+function stringFlag(parsed: ArgvParseResult, name: string): string | undefined {
+  const value = parsed.flags.get(name);
+  return typeof value === "string" ? value : undefined;
+}
+
+function boolFlag(parsed: ArgvParseResult, name: string): boolean | undefined {
+  const value = parsed.flags.get(name);
+  if (value === true) return true;
+  if (typeof value === "string") {
+    if (value === "true" || value === "1") return true;
+    if (value === "false" || value === "0") return false;
+  }
+  return undefined;
 }
 
 function requireValue(args: string[], index: number, flag: string): string {
@@ -629,6 +906,9 @@ Usage:
   hive disable               Power-user: stop + remove the unit file
   hive logs [stderr] [-f]    Print or tail daemon logs (default stdout)
   hive identity init|show    Generate or print the Bee Ed25519 identity
+  hive selfhost <verb>       Run the Hive control plane on this machine
+                             (init|install|start|stop|restart|status|
+                              uninstall|logs|up). \`hive selfhost\` for help.
   hive --version             Print version
   hive --help                Print this help
 

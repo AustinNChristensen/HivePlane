@@ -111,18 +111,36 @@ Everything else (pnpm, the daemon binary, identity keypair, service unit) is set
 On the control-plane machine:
 
 ```bash
-# pick an admin token; save it, you'll need it to mint bootstrap tokens
-export HIVEPLANE_ADMIN_TOKEN=$(openssl rand -hex 32)
-echo "admin token: $HIVEPLANE_ADMIN_TOKEN"
-
-# enforce signed/authenticated heartbeats (recommended)
-export HIVEPLANE_AUTH_REQUIRED=true
-
-# install + run (defaults to 0.0.0.0:8787, foreground)
+# install + start as a service (default). Survives reboots, runs under
+# launchd (macOS) / systemd-user (Linux), generates an admin token for you.
 curl -fsSL https://raw.githubusercontent.com/AustinNChristensen/HivePlane/main/infra/install/hive.sh | sh
 ```
 
-The Hive runs in the foreground and logs requests to stderr. It currently does not auto-start on boot — use `tmux`/`screen` or open a terminal session you can leave running. Hive auto-start is tracked in [#46](https://github.com/AustinNChristensen/HivePlane/issues/46).
+This:
+
+- clones HivePlane to `~/.hiveplane/install` and runs `pnpm install`;
+- drops the `hive` shim into `~/.local/bin`;
+- writes `~/.hiveplane/hive-config.json` (mode 0600) with a freshly-generated `adminToken` and the bind host/port (default `0.0.0.0:8787`);
+- installs a launchd plist (`~/Library/LaunchAgents/com.hiveplane.hive.plist`) on macOS or a systemd user unit (`~/.config/systemd/user/hiveplane-hive.service`) on Linux;
+- starts the service. The Hive will come back automatically after reboots and crashes.
+
+`hive.sh` prints the admin token at the end of the run — save it. You can re-read or rotate it anytime with `hive selfhost init` (and `--rotate-admin-token` to mint a fresh one). Manage the service with:
+
+```bash
+hive selfhost status     # installed/running, log paths, bind, exit code
+hive selfhost logs -f    # tail the daemon's stdout
+hive selfhost stop       # stop without uninstalling
+hive selfhost restart
+hive selfhost uninstall  # remove the launchd/systemd unit
+```
+
+For development you can skip the service install entirely:
+
+```bash
+curl -fsSL .../hive.sh | sh -s -- --foreground   # Ctrl-C to stop
+```
+
+> **Linux only**: run `loginctl enable-linger $USER` once if you want the Hive to keep running when you log out.
 
 The Hive snapshots its state (registered Bees, signed-heartbeat sessions, bootstrap tokens, jobs) to `~/.hiveplane/hive-state.json` (mode 0600) on every mutation. Restarting the Hive reloads the snapshot, so paired Bees stay paired across reboots and crashes. Pass `--no-persist` (or set `HIVEPLANE_PERSIST=false`) to run ephemerally — useful for tests and CI. Use `--state-file <path>` / `HIVEPLANE_STATE_FILE` to override the location.
 
@@ -140,7 +158,7 @@ curl http://mac-mini.tailnet-name.ts.net:8787/healthz
 # {"ok":true,"service":"hiveplane-hive"}
 ```
 
-When the Hive starts on a TTY (i.e. you ran `hive.sh` interactively, not under a service unit), it prints the dashboard URL and auto-opens it in your default browser. Pass `--no-open` (or set `HIVEPLANE_OPEN_BROWSER=false`) to skip on a headless server. The **dashboard** shows connected Bees, jobs, the current pairing key, and a bootstrap-token minter — paste your `HIVEPLANE_ADMIN_TOKEN` into the field at the top to unlock the admin features; the Bees list works without auth. `/dashboard` and `/index.html` are aliases for `/`. `curl http://mac-mini.tailnet-name.ts.net:8787/version` confirms which build the Hive is running — useful if `/` 404s, since that usually means the Hive process is older than the source on disk and needs a restart.
+In `--foreground` mode the Hive prints the dashboard URL and auto-opens it in your default browser on a TTY; pass `--no-open` (or set `HIVEPLANE_OPEN_BROWSER=false`) to skip on a headless server. Under the launchd/systemd unit there's no TTY, so the dashboard doesn't auto-open — visit `http://<hive>:8787/` manually. The **dashboard** shows connected Bees, jobs, the current pairing key, and a bootstrap-token minter — paste your admin token (from `hive-config.json` or `hive selfhost init`) into the field at the top to unlock the admin features; the Bees list works without auth. `/dashboard` and `/index.html` are aliases for `/`. `curl http://mac-mini.tailnet-name.ts.net:8787/version` confirms which build the Hive is running — useful if `/` 404s, since that usually means the Hive process is older than the source on disk and needs a restart.
 
 ### Step 2 — Read the pairing key off the dashboard
 

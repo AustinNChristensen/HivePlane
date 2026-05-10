@@ -60,11 +60,14 @@ On Linux, run `loginctl enable-linger $USER` if you want the daemon to keep runn
 ## Hive (control plane)
 
 ```sh
-# defaults: host 0.0.0.0, port 8787
+# defaults: host 0.0.0.0, port 8787, install as a service
 curl -fsSL https://raw.githubusercontent.com/AustinNChristensen/HivePlane/main/infra/install/hive.sh | sh
 
-# or with custom host/port
+# custom host/port
 curl -fsSL .../hive.sh | sh -s -- --host 0.0.0.0 --port 9090
+
+# foreground (dev mode — no service unit, no reboot survival)
+curl -fsSL .../hive.sh | sh -s -- --foreground
 
 # install only, don't start
 curl -fsSL .../hive.sh | sh -s -- --no-start
@@ -73,30 +76,60 @@ curl -fsSL .../hive.sh | sh -s -- --no-start
 What `hive.sh` does:
 
 - same prereq + clone + install steps as `bee.sh`;
-- by default starts the Hive in the foreground on `0.0.0.0:8787` so Bees on
-  the Tailnet/LAN can reach it (Ctrl-C stops it);
-- `--no-start` skips startup and prints the manual command.
+- drops the `hive` shim into `~/.local/bin` (so `hive selfhost ...` is on PATH);
+- writes `~/.hiveplane/hive-config.json` (mode 0600) with a freshly-generated
+  `adminToken` and the chosen bind host/port;
+- installs a launchd plist (`~/Library/LaunchAgents/com.hiveplane.hive.plist`)
+  on macOS or a systemd user unit
+  (`~/.config/systemd/user/hiveplane-hive.service`) on Linux;
+- starts the service. The Hive will come back automatically after reboots and
+  crashes.
 
-Once the Hive is running, it serves these scripts itself at
-`GET /install/bee.sh` and `GET /install/hive.sh`, so other machines can do:
+Manage the service afterwards with `hive selfhost`:
+
+```sh
+hive selfhost status     # installed/running, log paths, bind, exit code
+hive selfhost logs -f    # tail the Hive's stdout (or `stderr` for stderr)
+hive selfhost stop
+hive selfhost restart
+hive selfhost uninstall  # remove the launchd/systemd unit
+hive selfhost init --rotate-admin-token   # mint a fresh admin token
+```
+
+Once the Hive is running it serves these scripts itself at `GET /install/bee.sh`
+and `GET /install/hive.sh`, so other machines can do:
 
 ```sh
 curl -fsSL http://hive.your-tailnet.ts.net:8787/install/bee.sh | sh
 ```
+
+### `hive-config.json`
+
+`hive-config.json` (default `~/.hiveplane/hive-config.json`, mode 0600) is the
+on-disk source of truth for `adminToken`, `host`, `port`, `authRequired`, and
+`openBrowser`. The Hive runtime reads it at boot. Env vars still override:
+
+- `HIVEPLANE_ADMIN_TOKEN`
+- `HIVEPLANE_AUTH_REQUIRED` (`true` / `1`)
+- `HIVEPLANE_HIVE_HOST`, `HIVEPLANE_HIVE_PORT`
+- `HIVEPLANE_OPEN_BROWSER`
+
+So an operator running the Hive interactively can `HIVEPLANE_AUTH_REQUIRED=true
+pnpm --filter @hiveplane/web start` and have it win over whatever's in the
+file, without editing JSON.
 
 ## Environment overrides
 
 Both scripts respect:
 
 - `HIVEPLANE_INSTALL_DIR` (default `~/.hiveplane/install`)
+- `HIVEPLANE_CONFIG_DIR` (default `~/.hiveplane`)
+- `HIVEPLANE_BIN_DIR` (default `~/.local/bin`)
 - `HIVEPLANE_REPO_URL` and `HIVEPLANE_REPO_REF` for installing from a fork or
   a non-`main` branch.
-- `HIVEPLANE_BIN_DIR` (Bee only, default `~/.local/bin`).
 
 ## Roadmap
 
-- generate launchd plist (macOS) and systemd user unit (linux) so the daemon
-  survives reboots;
 - pin to released tags instead of `main` once we cut releases;
 - ship as a single signed binary so `node`/`pnpm`/`git` aren't required on
   the target machine.
