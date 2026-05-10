@@ -4,6 +4,7 @@ import { BeeConnectionManager, HttpBeeConnectionTransport } from "./connection.j
 import { readHivePlaneConfig } from "./config.js";
 import { createDaemonState } from "./index.js";
 import { loadOrCreateBeeIdentity } from "./identity.js";
+import { JobExecutor } from "./jobs.js";
 import { isSessionExpired, readHiveSession } from "./session.js";
 
 const VERSION = "0.0.1";
@@ -63,13 +64,46 @@ async function main(): Promise<void> {
     hiveUrl: options.hiveUrl,
     ...(authHeaderProvider ? { authHeaderProvider } : {}),
   });
+
+  // Job execution requires a registered session — without one, the bee can't
+  // authenticate event/complete posts back to the Hive, so we just log incoming
+  // jobs as a no-op.
+  const jobExecutor =
+    sessionUsable && session
+      ? new JobExecutor({
+          hiveUrl: options.hiveUrl,
+          session,
+          identity,
+          daemonVersion: VERSION,
+          ...(options.configDir ? { configDir: options.configDir } : {}),
+        })
+      : undefined;
+
   const manager = new BeeConnectionManager({
     state,
     transport,
     daemonVersion: VERSION,
     heartbeatIntervalMs: options.intervalSeconds * 1000,
     onStatusChange: (status) => console.log(`[bee] status=${status}`),
-    onJobs: (jobs) => console.log(`[bee] received ${jobs.length} job(s)`),
+    onJobs: async (jobs) => {
+      console.log(`[bee] received ${jobs.length} job(s)`);
+      if (!jobExecutor) {
+        console.warn(
+          `[bee] no registered session — cannot execute jobs. Run \`hive login <url> --token <bootstrap>\` to register.`,
+        );
+        return;
+      }
+      // Run jobs sequentially for v0; concurrency comes when we add maxConcurrentJobs.
+      for (const job of jobs) {
+        try {
+          await jobExecutor.execute(job);
+        } catch (error) {
+          console.error(
+            `[bee] job ${job.id} failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+    },
     onError: (error) =>
       console.error(`[bee] ${error instanceof Error ? error.message : String(error)}`),
   });

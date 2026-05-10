@@ -1,0 +1,217 @@
+import { spawn } from "node:child_process";
+import { sign as edSign } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import {
+  JobCompleteRequestSchema,
+  JobEventBatchSchema,
+  type Job,
+  type JobEvent,
+  type JsonValue,
+} from "@hiveplane/protocol";
+import type { BeeIdentity } from "./identity.js";
+import type { HiveSession } from "./session.js";
+import { policyAllowsCommand, readBeePolicy, type BeePolicy } from "./policy.js";
+
+export type JobExecutorOptions = {
+  hiveUrl: string;
+  session: HiveSession;
+  identity: BeeIdentity;
+  policy?: BeePolicy;
+  configDir?: string;
+  daemonVersion: string;
+  fetchImpl?: typeof fetch;
+  /** Override for tests. Defaults to spawning a real child process. */
+  spawnImpl?: typeof spawn;
+};
+
+export type JobOutcome =
+  | { status: "succeeded"; output?: Record<string, JsonValue> }
+  | { status: "failed"; error: Record<string, JsonValue> };
+
+export class JobExecutor {
+  private readonly fetchImpl: typeof fetch;
+  private readonly spawnImpl: typeof spawn;
+  private readonly policy: BeePolicy;
+  private sequence = 0;
+
+  constructor(private readonly options: JobExecutorOptions) {
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.spawnImpl = options.spawnImpl ?? spawn;
+    this.policy = options.policy ?? readBeePolicy(options.configDir);
+  }
+
+  async execute(job: Job): Promise<void> {
+    let outcome: JobOutcome;
+    try {
+      switch (job.type) {
+        case "run_command":
+          outcome = await this.runCommand(job);
+          break;
+        case "run_healthcheck":
+          outcome = await this.runHealthcheck(job);
+          break;
+        default:
+          outcome = {
+            status: "failed",
+            error: {
+              code: "unsupported_job_type",
+              message: `Bee daemon v0.0.1 does not implement '${job.type}' yet`,
+            },
+          };
+      }
+    } catch (error) {
+      outcome = {
+        status: "failed",
+        error: {
+          code: "executor_threw",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+
+    await this.complete(job, outcome);
+  }
+
+  private async runCommand(job: Job): Promise<JobOutcome> {
+    const command = typeof job.payload.command === "string" ? job.payload.command : "";
+    const args = Array.isArray(job.payload.args)
+      ? job.payload.args.filter((a): a is string => typeof a === "string")
+      : [];
+
+    const decision = policyAllowsCommand(this.policy, command);
+    if (!decision.allowed) {
+      await this.emit(job, "info", "policy.denied", { command, reason: decision.reason });
+      return { status: "failed", error: { code: "policy_denied", message: decision.reason } };
+    }
+
+    await this.emit(job, "info", "command.start", { command, args });
+
+    const child = this.spawnImpl(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    });
+
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+
+    child.stdout?.on("data", (data: Buffer) => {
+      const text = data.toString("utf8");
+      stdoutChunks.push(text);
+      // Stream best-effort; don't await per-line (would serialize too much).
+      void this.emit(job, "debug", "command.stdout", { text });
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      const text = data.toString("utf8");
+      stderrChunks.push(text);
+      void this.emit(job, "debug", "command.stderr", { text });
+    });
+
+    return await new Promise<JobOutcome>((resolve) => {
+      child.once("error", (err) => {
+        resolve({
+          status: "failed",
+          error: { code: "spawn_error", message: err.message },
+        });
+      });
+      child.once("close", (exitCode, signal) => {
+        const ok = exitCode === 0;
+        const summary = {
+          exitCode: exitCode ?? -1,
+          signal: signal ?? null,
+          stdout: stdoutChunks.join(""),
+          stderr: stderrChunks.join(""),
+        };
+        if (ok) {
+          resolve({ status: "succeeded", output: summary as Record<string, JsonValue> });
+        } else {
+          resolve({
+            status: "failed",
+            error: {
+              code: "non_zero_exit",
+              message: `exit code ${exitCode}${signal ? ` (signal ${signal})` : ""}`,
+              ...summary,
+            } as Record<string, JsonValue>,
+          });
+        }
+      });
+    });
+  }
+
+  private async runHealthcheck(job: Job): Promise<JobOutcome> {
+    await this.emit(job, "info", "healthcheck.ok", { daemonVersion: this.options.daemonVersion });
+    return {
+      status: "succeeded",
+      output: {
+        daemonVersion: this.options.daemonVersion,
+        beeId: this.options.session.beeId,
+      },
+    };
+  }
+
+  private async emit(
+    job: Job,
+    level: JobEvent["level"],
+    type: string,
+    data: Record<string, JsonValue>,
+  ): Promise<void> {
+    this.sequence += 1;
+    const batch = JobEventBatchSchema.parse({
+      type: "job.events.append",
+      jobId: job.id,
+      beeId: this.options.session.beeId,
+      events: [
+        {
+          id: `evt_${randomBytes(6).toString("hex")}`,
+          jobId: job.id,
+          beeId: this.options.session.beeId,
+          sequence: this.sequence,
+          type,
+          level,
+          actor: "bee",
+          actorId: this.options.session.beeId,
+          data,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+    const url = new URL(`/api/jobs/${job.id}/events`, this.options.hiveUrl);
+    const rawBody = Buffer.from(JSON.stringify(batch));
+    await this.signedFetch(url, rawBody);
+  }
+
+  private async complete(job: Job, outcome: JobOutcome): Promise<void> {
+    const payload = JobCompleteRequestSchema.parse({
+      type: "job.complete",
+      jobId: job.id,
+      beeId: this.options.session.beeId,
+      status: outcome.status,
+      ...(outcome.status === "succeeded" && outcome.output ? { output: outcome.output } : {}),
+      ...(outcome.status === "failed" ? { error: outcome.error } : {}),
+      completedAt: new Date().toISOString(),
+    });
+    const url = new URL(`/api/jobs/${job.id}/complete`, this.options.hiveUrl);
+    const rawBody = Buffer.from(JSON.stringify(payload));
+    await this.signedFetch(url, rawBody);
+  }
+
+  private async signedFetch(url: URL, rawBody: Buffer): Promise<void> {
+    const privateKeyPem = readFileSync(this.options.identity.privateKeyPath, "utf8");
+    const signature = edSign(null, rawBody, privateKeyPem).toString("base64url");
+
+    const res = await this.fetchImpl(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${this.options.session.sessionToken}`,
+        "x-bee-signature": signature,
+      },
+      body: new Uint8Array(rawBody),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`POST ${url.pathname} failed: ${res.status} ${text}`);
+    }
+  }
+}

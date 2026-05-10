@@ -6,6 +6,8 @@ import {
   BeeHeartbeatSchema,
   BeeRegistrationRequestSchema,
   BootstrapTokenCreateRequestSchema,
+  JobCompleteRequestSchema,
+  JobEventBatchSchema,
   type BeeHeartbeat,
   type BeeRegistrationRequest,
   type BootstrapTokenCreateRequest,
@@ -24,6 +26,18 @@ import {
   type BootstrapTokenRecord,
   type SessionRecord,
 } from "./auth.js";
+import {
+  appendEvents,
+  claimPendingJobs,
+  completeJob,
+  CreateJobRequestSchema,
+  createJob,
+  createJobsState,
+  findJob,
+  listJobs,
+  type JobRecord,
+  type JobsState,
+} from "./jobs.js";
 
 export type HiveBeeRecord = {
   beeId: string;
@@ -43,6 +57,8 @@ export type HiveServerState = {
   bootstrapTokens: Map<string, BootstrapTokenRecord>;
   /** Sessions keyed by hash of the raw session token. */
   sessions: Map<string, SessionRecord>;
+  /** Jobs keyed by jobId (queued/assigned/running/...) — see jobs.ts. */
+  jobsState: JobsState;
 };
 
 export type CreateHiveServerOptions = {
@@ -61,6 +77,7 @@ export function createHiveServerState(): HiveServerState {
     bees: new Map(),
     bootstrapTokens: new Map(),
     sessions: new Map(),
+    jobsState: createJobsState(),
   };
 }
 
@@ -164,7 +181,101 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           return sendJson(response, 401, { error: "unauthorized", reason: authResult.reason });
         }
         const bee = upsertBeeHeartbeat(state, heartbeat, now());
-        return sendJson(response, 200, { accepted: true, bee, jobs: [] });
+        // Hand back any pending jobs and mark them as assigned.
+        const jobs = claimPendingJobs(state.jobsState, heartbeat.beeId, now());
+        return sendJson(response, 200, { accepted: true, bee, jobs });
+      }
+
+      // POST /api/bees/:beeId/jobs — admin-gated; create a job for a bee.
+      const createJobMatch = /^\/api\/bees\/([^/]+)\/jobs$/.exec(url.pathname);
+      if (request.method === "POST" && createJobMatch) {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const beeId = decodeURIComponent(createJobMatch[1] ?? "");
+        if (!state.bees.has(beeId)) {
+          return sendJson(response, 404, { error: "not_found", reason: "bee not registered" });
+        }
+        const { body } = await readJson(request);
+        const parsed = CreateJobRequestSchema.safeParse(body);
+        if (!parsed.success) {
+          return sendJson(response, 400, {
+            error: "bad_request",
+            message: parsed.error.message,
+          });
+        }
+        const job = createJob(state.jobsState, beeId, parsed.data, now());
+        return sendJson(response, 200, { job: serializeJob(job) });
+      }
+
+      // POST /api/jobs/:jobId/events — bee streams events.
+      const eventsMatch = /^\/api\/jobs\/([^/]+)\/events$/.exec(url.pathname);
+      if (request.method === "POST" && eventsMatch) {
+        const jobId = decodeURIComponent(eventsMatch[1] ?? "");
+        const job = findJob(state.jobsState, jobId);
+        if (!job) {
+          return sendJson(response, 404, { error: "not_found" });
+        }
+        const { body, raw } = await readJson(request);
+        const parsed = JobEventBatchSchema.safeParse(ensureType(body, "job.events.append"));
+        if (!parsed.success) {
+          return sendJson(response, 400, {
+            error: "bad_request",
+            message: parsed.error.message,
+          });
+        }
+        const beeAuth = authenticateBee(request, raw, parsed.data.beeId, state, authRequired);
+        if (!beeAuth.ok) {
+          return sendJson(response, 401, { error: "unauthorized", reason: beeAuth.reason });
+        }
+        if (parsed.data.beeId !== job.beeId) {
+          return sendJson(response, 403, { error: "forbidden", reason: "job is not yours" });
+        }
+        appendEvents(state.jobsState, jobId, parsed.data.events);
+        return sendJson(response, 200, { accepted: true, eventCount: job.events.length });
+      }
+
+      // POST /api/jobs/:jobId/complete — bee finalizes.
+      const completeMatch = /^\/api\/jobs\/([^/]+)\/complete$/.exec(url.pathname);
+      if (request.method === "POST" && completeMatch) {
+        const jobId = decodeURIComponent(completeMatch[1] ?? "");
+        const job = findJob(state.jobsState, jobId);
+        if (!job) {
+          return sendJson(response, 404, { error: "not_found" });
+        }
+        const { body, raw } = await readJson(request);
+        const parsed = JobCompleteRequestSchema.safeParse(ensureType(body, "job.complete"));
+        if (!parsed.success) {
+          return sendJson(response, 400, {
+            error: "bad_request",
+            message: parsed.error.message,
+          });
+        }
+        const beeAuth = authenticateBee(request, raw, parsed.data.beeId, state, authRequired);
+        if (!beeAuth.ok) {
+          return sendJson(response, 401, { error: "unauthorized", reason: beeAuth.reason });
+        }
+        if (parsed.data.beeId !== job.beeId) {
+          return sendJson(response, 403, { error: "forbidden", reason: "job is not yours" });
+        }
+        const updated = completeJob(state.jobsState, jobId, parsed.data, now());
+        return sendJson(response, 200, { job: updated ? serializeJob(updated) : null });
+      }
+
+      // GET /api/jobs/:jobId — admin-gated inspection.
+      const getJobMatch = /^\/api\/jobs\/([^/]+)$/.exec(url.pathname);
+      if (request.method === "GET" && getJobMatch) {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const jobId = decodeURIComponent(getJobMatch[1] ?? "");
+        const job = findJob(state.jobsState, jobId);
+        if (!job) return sendJson(response, 404, { error: "not_found" });
+        return sendJson(response, 200, { job: serializeJob(job) });
+      }
+
+      // GET /api/jobs?beeId=… — admin list.
+      if (request.method === "GET" && url.pathname === "/api/jobs") {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const beeId = url.searchParams.get("beeId") ?? undefined;
+        const jobs = listJobs(state.jobsState, beeId ? { beeId } : undefined).map(serializeJob);
+        return sendJson(response, 200, { jobs });
       }
 
       if (request.method === "GET" && url.pathname.startsWith("/install/")) {
@@ -366,6 +477,59 @@ function authenticateHeartbeat(
     }
   }
   return { ok: true };
+}
+
+function authenticateBee(
+  request: IncomingMessage,
+  rawBody: Buffer,
+  expectedBeeId: string,
+  state: HiveServerState,
+  authRequired: boolean,
+): AuthOutcome {
+  const sigHeader = headerString(request, "x-bee-signature");
+  const bearer = extractBearer(request);
+  const hasAuthHeaders = sigHeader !== undefined || !("error" in bearer);
+
+  // Job event/complete posts are bee→hive too; in dev mode we accept
+  // unauthenticated traffic but still verify partial auth loud rather than silent.
+  if (!authRequired && !hasAuthHeaders) return { ok: true };
+
+  if ("error" in bearer) return { ok: false, reason: bearer.error };
+  if (!looksLikeSessionToken(bearer.token)) {
+    return { ok: false, reason: "session token shape invalid" };
+  }
+  const session = state.sessions.get(sha256Hex(bearer.token));
+  if (!session) return { ok: false, reason: "session not recognized" };
+  if (session.expiresAt.getTime() < Date.now()) return { ok: false, reason: "session expired" };
+  if (session.beeId !== expectedBeeId) {
+    return { ok: false, reason: "session does not match request beeId" };
+  }
+  if (!sigHeader) return { ok: false, reason: "missing X-Bee-Signature header" };
+  const bee = state.bees.get(expectedBeeId);
+  if (!bee?.publicKey) return { ok: false, reason: "no public key on file for bee" };
+  if (!verifyBeeSignature(bee.publicKey, rawBody, sigHeader)) {
+    return { ok: false, reason: "signature did not verify" };
+  }
+  return { ok: true };
+}
+
+function serializeJob(job: JobRecord): Record<string, unknown> {
+  return {
+    id: job.id,
+    beeId: job.beeId,
+    type: job.type,
+    status: job.status,
+    payload: job.payload,
+    ...(job.timeoutSeconds !== undefined ? { timeoutSeconds: job.timeoutSeconds } : {}),
+    createdAt: job.createdAt.toISOString(),
+    ...(job.assignedAt ? { assignedAt: job.assignedAt.toISOString() } : {}),
+    ...(job.completedAt ? { completedAt: job.completedAt.toISOString() } : {}),
+    eventCount: job.events.length,
+    events: job.events,
+    ...(job.exitCode !== undefined ? { exitCode: job.exitCode } : {}),
+    ...(job.output ? { output: job.output } : {}),
+    ...(job.error ? { error: job.error } : {}),
+  };
 }
 
 function headerString(request: IncomingMessage, name: string): string | undefined {
