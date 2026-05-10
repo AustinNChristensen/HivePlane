@@ -140,7 +140,7 @@ curl http://mac-mini.tailnet-name.ts.net:8787/healthz
 # {"ok":true,"service":"hiveplane-hive"}
 ```
 
-Open `http://mac-mini.tailnet-name.ts.net:8787/` in a browser for the **dashboard** — connected Bees, jobs, and a one-click bootstrap-token mint. Paste your `HIVEPLANE_ADMIN_TOKEN` into the field at the top to unlock the Jobs and Tokens tabs; the Bees list works without auth.
+When the Hive starts on a TTY (i.e. you ran `hive.sh` interactively, not under a service unit), it prints the dashboard URL and auto-opens it in your default browser. Pass `--no-open` (or set `HIVEPLANE_OPEN_BROWSER=false`) to skip on a headless server. The **dashboard** shows connected Bees, jobs, and a one-click bootstrap-token mint — paste your `HIVEPLANE_ADMIN_TOKEN` into the field at the top to unlock the Jobs and Tokens tabs; the Bees list works without auth. `/dashboard` and `/index.html` are aliases for `/`. `curl http://mac-mini.tailnet-name.ts.net:8787/version` confirms which build the Hive is running — useful if `/` 404s, since that usually means the Hive process is older than the source on disk and needs a restart.
 
 ### Step 2 — Mint a bootstrap token
 

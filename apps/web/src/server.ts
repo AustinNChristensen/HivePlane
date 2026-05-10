@@ -122,6 +122,8 @@ const INSTALL_SCRIPT_NAMES = new Set(["bee.sh", "hive.sh"]);
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
+const HIVE_VERSION = "0.0.1";
+
 export function createHiveServer(options: CreateHiveServerOptions = {}) {
   const state = options.state ?? createHiveServerState();
   const now = options.now ?? (() => new Date());
@@ -134,8 +136,14 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
 
-      // Dashboard: GET / serves the static index.html.
-      if (request.method === "GET" && url.pathname === "/") {
+      // Dashboard: GET /, /dashboard, /index.html all serve the static index.html.
+      if (
+        request.method === "GET" &&
+        (url.pathname === "/" ||
+          url.pathname === "/dashboard" ||
+          url.pathname === "/dashboard/" ||
+          url.pathname === "/index.html")
+      ) {
         const indexPath = join(publicDir, "index.html");
         try {
           const html = readFileSync(indexPath, "utf8");
@@ -149,7 +157,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           if ((error as NodeJS.ErrnoException).code === "ENOENT") {
             return sendJson(response, 404, {
               error: "dashboard_not_built",
-              message: `dashboard index.html not found at ${indexPath}`,
+              message: `dashboard index.html not found at ${indexPath}. The Hive process may be running an older revision than the source on disk — restart it.`,
             });
           }
           throw error;
@@ -157,7 +165,15 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
       }
 
       if (request.method === "GET" && url.pathname === "/healthz") {
-        return sendJson(response, 200, { ok: true, service: "hiveplane-hive" });
+        return sendJson(response, 200, {
+          ok: true,
+          service: "hiveplane-hive",
+          version: HIVE_VERSION,
+        });
+      }
+
+      if (request.method === "GET" && url.pathname === "/version") {
+        return sendJson(response, 200, { version: HIVE_VERSION, service: "hiveplane-hive" });
       }
 
       if (request.method === "GET" && url.pathname === "/api/bees") {
