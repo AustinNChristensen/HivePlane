@@ -230,7 +230,7 @@ Either path:
 hive start
 ```
 
-On macOS this writes `~/Library/LaunchAgents/com.hiveplane.bee.plist` and bootstraps it via `launchctl`. On Linux it writes `~/.config/systemd/user/hiveplane-bee.service` and runs `systemctl --user enable --now`. Either way, the daemon now survives reboots and crashes. Logs land in `~/.hiveplane/logs/` (macOS) or the journal (Linux, queried via `hive logs -f`).
+On macOS this writes `~/Library/LaunchAgents/com.hiveplane.bee.plist` and bootstraps it via `launchctl`. On Linux it writes `~/.config/systemd/user/hiveplane-bee.service` and runs `systemctl --user enable --now`. Either way, the daemon now survives reboots and crashes. Logs land in `~/.hiveplane/logs/` on macOS, and on Linux are read from the journal via `hive logs -f` — minimal Linux environments without `journalctl` (containers, WSL1) fall through to the same `~/.hiveplane/logs/` files automatically.
 
 > **Linux only**: run `loginctl enable-linger $USER` once if you want the daemon to keep running when you log out.
 
@@ -244,7 +244,7 @@ curl http://mac-mini.tailnet-name.ts.net:8787/api/bees | jq
 
 On the Bee itself, `hive status` shows the same info plus session details and service state.
 
-Repeat steps 2–5 for each additional Bee.
+Repeat steps 3–5 for each additional Bee — the pairing-key card on the dashboard rotates automatically after every successful pair, so the next code is always already there. (Click _Rotate_ to invalidate the current key on demand.)
 
 ### Step 7 — Dispatch a test job
 
