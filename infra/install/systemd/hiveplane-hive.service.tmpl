@@ -1,0 +1,17 @@
+[Unit]
+Description=HivePlane Hive control plane
+Documentation=https://github.com/AustinNChristensen/HivePlane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__INSTALL_DIR__
+Environment="PATH=__PATH__"
+Environment="HIVEPLANE_CONFIG_DIR=__CONFIG_DIR__"
+ExecStart=__PNPM_BIN__ --silent --filter @hiveplane/web start -- --no-open
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

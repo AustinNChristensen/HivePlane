@@ -1,8 +1,23 @@
 import { spawn } from "node:child_process";
+import { readHiveOnDiskConfig } from "./config.js";
 import { attachPersistence, getDefaultHiveStatePath, loadHiveServerState } from "./persistence.js";
 import { createHiveServer } from "./server.js";
 
 const VERSION = "0.0.1";
+
+// Read the on-disk Hive config first so env vars and CLI flags can override
+// individual fields below — the precedence is: CLI flag > env var > config
+// file > built-in default. This way a service-managed Hive can keep secrets
+// in `~/.hiveplane/hive-config.json` (mode 0600) instead of embedding them
+// in its launchd plist / systemd unit, while a developer running `pnpm
+// --filter @hiveplane/web start` from a checkout can still set
+// HIVEPLANE_ADMIN_TOKEN inline and have it win.
+const onDiskConfig = readHiveOnDiskConfig();
+const resolvedAdminToken = process.env.HIVEPLANE_ADMIN_TOKEN ?? onDiskConfig.adminToken;
+const resolvedAuthRequired =
+  process.env.HIVEPLANE_AUTH_REQUIRED !== undefined
+    ? process.env.HIVEPLANE_AUTH_REQUIRED === "true" || process.env.HIVEPLANE_AUTH_REQUIRED === "1"
+    : onDiskConfig.authRequired;
 
 const { host, port, open, persist, statePath } = parseArgs(process.argv.slice(2));
 
@@ -18,6 +33,8 @@ const persistor = persist
 const server = createHiveServer({
   ...(state ? { state } : {}),
   ...(persistor ? { onMutation: persistor.markDirty } : {}),
+  ...(resolvedAdminToken ? { adminToken: resolvedAdminToken } : {}),
+  ...(resolvedAuthRequired !== undefined ? { authRequired: resolvedAuthRequired } : {}),
 });
 
 // Flush pending writes before the process exits. SIGTERM is what launchd /
@@ -67,12 +84,15 @@ function parseArgs(args: string[]): {
   persist: boolean;
   statePath: string;
 } {
-  let host = process.env.HIVEPLANE_HIVE_HOST ?? "127.0.0.1";
-  let port = Number(process.env.HIVEPLANE_HIVE_PORT ?? 8787);
+  let host = process.env.HIVEPLANE_HIVE_HOST ?? onDiskConfig.host ?? "127.0.0.1";
+  let port = Number(process.env.HIVEPLANE_HIVE_PORT ?? onDiskConfig.port ?? 8787);
   // Auto-open the browser on interactive (TTY) runs unless explicitly disabled.
   // When the Hive runs under launchd/systemd, stdout isn't a TTY, so this is
   // automatically off without needing the service unit to pass a flag.
-  let open = parseBoolEnv(process.env.HIVEPLANE_OPEN_BROWSER) ?? Boolean(process.stdout.isTTY);
+  let open =
+    parseBoolEnv(process.env.HIVEPLANE_OPEN_BROWSER) ??
+    onDiskConfig.openBrowser ??
+    Boolean(process.stdout.isTTY);
   // Default-on: a Hive restart should not wipe paired Bees / sessions /
   // tokens / jobs. `--no-persist` exists for ephemeral tests + CI.
   let persist = parseBoolEnv(process.env.HIVEPLANE_PERSIST) ?? true;

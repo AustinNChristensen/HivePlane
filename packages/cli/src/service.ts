@@ -33,8 +33,39 @@ export type InstallServiceOptions = {
   templateDir?: string;
 };
 
-const LAUNCHD_LABEL = "com.hiveplane.bee";
-const SYSTEMD_UNIT_NAME = "hiveplane-bee.service";
+/**
+ * Internal description of a HivePlane daemon for the launchd/systemctl layer.
+ * Used to drive both the Bee daemon and the Hive control plane through the
+ * same install/start/stop/status code path.
+ */
+type DaemonSpec = {
+  /** launchd label, e.g. `com.hiveplane.bee` / `com.hiveplane.hive`. */
+  launchdLabel: string;
+  /** systemd unit filename, e.g. `hiveplane-bee.service`. */
+  systemdUnitName: string;
+  /** Template basename under `infra/install/launchd`. */
+  launchdTemplate: string;
+  /** Template basename under `infra/install/systemd`. */
+  systemdTemplate: string;
+  /** Filename used for the launchd stdout/stderr logs (e.g. `bee` → bee.out.log). */
+  logFileBasename: string;
+};
+
+const BEE_DAEMON: DaemonSpec = {
+  launchdLabel: "com.hiveplane.bee",
+  systemdUnitName: "hiveplane-bee.service",
+  launchdTemplate: "com.hiveplane.bee.plist.tmpl",
+  systemdTemplate: "hiveplane-bee.service.tmpl",
+  logFileBasename: "bee",
+};
+
+const HIVE_DAEMON: DaemonSpec = {
+  launchdLabel: "com.hiveplane.hive",
+  systemdUnitName: "hiveplane-hive.service",
+  launchdTemplate: "com.hiveplane.hive.plist.tmpl",
+  systemdTemplate: "hiveplane-hive.service.tmpl",
+  logFileBasename: "hive",
+};
 
 export function getServicePlatform(): ServicePlatform | "unsupported" {
   const p = platform();
@@ -47,11 +78,25 @@ export function getDefaultLogDir(configDir: string): string {
   return join(configDir, "logs");
 }
 
-export function getUnitPath(plat: ServicePlatform): string {
+function unitPathFor(plat: ServicePlatform, spec: DaemonSpec): string {
   if (plat === "darwin") {
-    return join(homedir(), "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
+    return join(homedir(), "Library", "LaunchAgents", `${spec.launchdLabel}.plist`);
   }
-  return join(homedir(), ".config", "systemd", "user", SYSTEMD_UNIT_NAME);
+  return join(homedir(), ".config", "systemd", "user", spec.systemdUnitName);
+}
+
+export function getUnitPath(plat: ServicePlatform): string {
+  // Back-compat: original API resolves the Bee unit path. New callers should
+  // prefer `getBeeUnitPath` / `getHiveUnitPath`.
+  return unitPathFor(plat, BEE_DAEMON);
+}
+
+export function getBeeUnitPath(plat: ServicePlatform): string {
+  return unitPathFor(plat, BEE_DAEMON);
+}
+
+export function getHiveUnitPath(plat: ServicePlatform): string {
+  return unitPathFor(plat, HIVE_DAEMON);
 }
 
 function defaultTemplateDir(installDir: string): string {
@@ -68,14 +113,14 @@ function renderTemplate(template: string, vars: Record<string, string>): string 
   });
 }
 
-export function installBeeService(options: InstallServiceOptions): {
-  platform: ServicePlatform;
-  unitPath: string;
-} {
+function installServiceUnit(
+  spec: DaemonSpec,
+  options: InstallServiceOptions,
+): { platform: ServicePlatform; unitPath: string } {
   const plat = getServicePlatform();
   if (plat === "unsupported") {
     throw new Error(
-      `auto-start is not supported on this platform (got ${platform()}). Run \`hive start\` manually.`,
+      `auto-start is not supported on this platform (got ${platform()}). Run the daemon manually instead.`,
     );
   }
 
@@ -85,8 +130,8 @@ export function installBeeService(options: InstallServiceOptions): {
   const templateDir = options.templateDir ?? defaultTemplateDir(options.installDir);
   const templateFile =
     plat === "darwin"
-      ? join(templateDir, "launchd", "com.hiveplane.bee.plist.tmpl")
-      : join(templateDir, "systemd", "hiveplane-bee.service.tmpl");
+      ? join(templateDir, "launchd", spec.launchdTemplate)
+      : join(templateDir, "systemd", spec.systemdTemplate);
 
   if (!existsSync(templateFile)) {
     throw new Error(`unit template missing: ${templateFile}`);
@@ -94,7 +139,7 @@ export function installBeeService(options: InstallServiceOptions): {
 
   const template = readFileSync(templateFile, "utf8");
   const rendered = renderTemplate(template, {
-    LABEL: LAUNCHD_LABEL,
+    LABEL: spec.launchdLabel,
     PNPM_BIN: options.pnpmBin,
     INSTALL_DIR: options.installDir,
     PATH: `${options.nodeBinDir}:${dirname(options.pnpmBin)}:/usr/local/bin:/usr/bin:/bin`,
@@ -102,7 +147,7 @@ export function installBeeService(options: InstallServiceOptions): {
     LOG_DIR: logDir,
   });
 
-  const unitPath = getUnitPath(plat);
+  const unitPath = unitPathFor(plat, spec);
   mkdirSync(dirname(unitPath), { recursive: true });
   writeFileSync(unitPath, rendered, { mode: 0o644 });
 
@@ -118,18 +163,80 @@ export function installBeeService(options: InstallServiceOptions): {
   return { platform: plat, unitPath };
 }
 
-export function uninstallBeeService(): { unitRemoved: boolean; unitPath?: string } {
+async function startServiceUnit(spec: DaemonSpec): Promise<void> {
+  const plat = getServicePlatform();
+  if (plat === "unsupported") {
+    throw new Error("auto-start is not supported on this platform");
+  }
+
+  if (plat === "darwin") {
+    const uid = userInfo().uid;
+    const unitPath = unitPathFor(plat, spec);
+    if (!existsSync(unitPath)) {
+      throw new Error(`unit file missing: ${unitPath}. Run the install step first.`);
+    }
+    // Idempotent: bootstrap may fail with code 17 (already loaded), kickstart starts it.
+    await runIgnoringFamiliarFailures("launchctl", ["bootstrap", `gui/${uid}`, unitPath]);
+    await runIgnoringFamiliarFailures("launchctl", [
+      "kickstart",
+      "-k",
+      `gui/${uid}/${spec.launchdLabel}`,
+    ]);
+  } else {
+    await execFileAsync("systemctl", ["--user", "enable", "--now", spec.systemdUnitName]);
+  }
+}
+
+async function stopServiceUnit(spec: DaemonSpec): Promise<void> {
+  const plat = getServicePlatform();
+  if (plat === "unsupported") return;
+
+  if (plat === "darwin") {
+    const uid = userInfo().uid;
+    await runIgnoringFamiliarFailures("launchctl", ["bootout", `gui/${uid}/${spec.launchdLabel}`]);
+  } else {
+    await runIgnoringFamiliarFailures("systemctl", [
+      "--user",
+      "disable",
+      "--now",
+      spec.systemdUnitName,
+    ]);
+  }
+}
+
+function stopServiceUnitSync(spec: DaemonSpec): void {
+  const plat = getServicePlatform();
+  if (plat === "darwin") {
+    const uid = userInfo().uid;
+    try {
+      execFileSync("launchctl", ["bootout", `gui/${uid}/${spec.launchdLabel}`], {
+        stdio: "ignore",
+      });
+    } catch {
+      // already stopped
+    }
+  } else if (plat === "linux") {
+    try {
+      execFileSync("systemctl", ["--user", "disable", "--now", spec.systemdUnitName], {
+        stdio: "ignore",
+      });
+    } catch {
+      // already stopped
+    }
+  }
+}
+
+function uninstallServiceUnit(spec: DaemonSpec): { unitRemoved: boolean; unitPath?: string } {
   const plat = getServicePlatform();
   if (plat === "unsupported") return { unitRemoved: false };
 
-  const unitPath = getUnitPath(plat);
+  const unitPath = unitPathFor(plat, spec);
   if (!existsSync(unitPath)) {
     return { unitRemoved: false };
   }
 
-  // Stop first if running
   try {
-    stopBeeServiceSync();
+    stopServiceUnitSync(spec);
   } catch {
     // ignore
   }
@@ -147,73 +254,7 @@ export function uninstallBeeService(): { unitRemoved: boolean; unitPath?: string
   return { unitRemoved: true, unitPath };
 }
 
-export async function startBeeService(): Promise<void> {
-  const plat = getServicePlatform();
-  if (plat === "unsupported") {
-    throw new Error("auto-start is not supported on this platform");
-  }
-
-  if (plat === "darwin") {
-    const uid = userInfo().uid;
-    const unitPath = getUnitPath(plat);
-    if (!existsSync(unitPath)) {
-      throw new Error(`unit file missing: ${unitPath}. Run \`hive enable\` first.`);
-    }
-    // Idempotent: bootstrap may fail with code 17 (already loaded), kickstart starts it.
-    await runIgnoringFamiliarFailures("launchctl", ["bootstrap", `gui/${uid}`, unitPath]);
-    await runIgnoringFamiliarFailures("launchctl", [
-      "kickstart",
-      "-k",
-      `gui/${uid}/${LAUNCHD_LABEL}`,
-    ]);
-  } else {
-    await execFileAsync("systemctl", ["--user", "enable", "--now", SYSTEMD_UNIT_NAME]);
-  }
-}
-
-export async function stopBeeService(): Promise<void> {
-  const plat = getServicePlatform();
-  if (plat === "unsupported") return;
-
-  if (plat === "darwin") {
-    const uid = userInfo().uid;
-    await runIgnoringFamiliarFailures("launchctl", ["bootout", `gui/${uid}/${LAUNCHD_LABEL}`]);
-  } else {
-    await runIgnoringFamiliarFailures("systemctl", [
-      "--user",
-      "disable",
-      "--now",
-      SYSTEMD_UNIT_NAME,
-    ]);
-  }
-}
-
-function stopBeeServiceSync(): void {
-  const plat = getServicePlatform();
-  if (plat === "darwin") {
-    const uid = userInfo().uid;
-    try {
-      execFileSync("launchctl", ["bootout", `gui/${uid}/${LAUNCHD_LABEL}`], { stdio: "ignore" });
-    } catch {
-      // already stopped
-    }
-  } else if (plat === "linux") {
-    try {
-      execFileSync("systemctl", ["--user", "disable", "--now", SYSTEMD_UNIT_NAME], {
-        stdio: "ignore",
-      });
-    } catch {
-      // already stopped
-    }
-  }
-}
-
-export async function restartBeeService(): Promise<void> {
-  await stopBeeService();
-  await startBeeService();
-}
-
-export async function getBeeServiceStatus(configDir: string): Promise<ServiceStatus> {
+async function getServiceUnitStatus(spec: DaemonSpec, configDir: string): Promise<ServiceStatus> {
   const plat = getServicePlatform();
   if (plat === "unsupported") {
     return {
@@ -224,7 +265,7 @@ export async function getBeeServiceStatus(configDir: string): Promise<ServiceSta
     };
   }
 
-  const unitPath = getUnitPath(plat);
+  const unitPath = unitPathFor(plat, spec);
   const installed = existsSync(unitPath);
 
   let running = false;
@@ -236,7 +277,7 @@ export async function getBeeServiceStatus(configDir: string): Promise<ServiceSta
       try {
         const { stdout } = await execFileAsync("launchctl", [
           "print",
-          `gui/${uid}/${LAUNCHD_LABEL}`,
+          `gui/${uid}/${spec.launchdLabel}`,
         ]);
         const stateLine = stdout.match(/state\s*=\s*(\w+)/);
         if (stateLine && stateLine[1] === "running") running = true;
@@ -250,7 +291,7 @@ export async function getBeeServiceStatus(configDir: string): Promise<ServiceSta
         const { stdout } = await execFileAsync("systemctl", [
           "--user",
           "is-active",
-          SYSTEMD_UNIT_NAME,
+          spec.systemdUnitName,
         ]);
         running = stdout.trim() === "active";
       } catch (error) {
@@ -269,6 +310,89 @@ export async function getBeeServiceStatus(configDir: string): Promise<ServiceSta
     ...(lastExitCode !== undefined ? { lastExitCode } : {}),
   };
 }
+
+// --- Public Bee API (kept stable so existing CLI imports don't break) ----
+
+export function installBeeService(options: InstallServiceOptions): {
+  platform: ServicePlatform;
+  unitPath: string;
+} {
+  return installServiceUnit(BEE_DAEMON, options);
+}
+
+export function uninstallBeeService(): { unitRemoved: boolean; unitPath?: string } {
+  return uninstallServiceUnit(BEE_DAEMON);
+}
+
+export async function startBeeService(): Promise<void> {
+  await startServiceUnit(BEE_DAEMON);
+}
+
+export async function stopBeeService(): Promise<void> {
+  await stopServiceUnit(BEE_DAEMON);
+}
+
+export async function restartBeeService(): Promise<void> {
+  await stopBeeService();
+  await startBeeService();
+}
+
+export async function getBeeServiceStatus(configDir: string): Promise<ServiceStatus> {
+  return getServiceUnitStatus(BEE_DAEMON, configDir);
+}
+
+// --- Public Hive API ---------------------------------------------------------
+
+export function installHiveService(options: InstallServiceOptions): {
+  platform: ServicePlatform;
+  unitPath: string;
+} {
+  return installServiceUnit(HIVE_DAEMON, options);
+}
+
+export function uninstallHiveService(): { unitRemoved: boolean; unitPath?: string } {
+  return uninstallServiceUnit(HIVE_DAEMON);
+}
+
+export async function startHiveService(): Promise<void> {
+  await startServiceUnit(HIVE_DAEMON);
+}
+
+export async function stopHiveService(): Promise<void> {
+  await stopServiceUnit(HIVE_DAEMON);
+}
+
+export async function restartHiveService(): Promise<void> {
+  await stopHiveService();
+  await startHiveService();
+}
+
+export async function getHiveServiceStatus(configDir: string): Promise<ServiceStatus> {
+  return getServiceUnitStatus(HIVE_DAEMON, configDir);
+}
+
+/**
+ * Returns the launchd stdout/stderr log paths for the named daemon, regardless
+ * of whether the unit is currently installed. The Bee/Hive write to
+ * `<logDir>/<daemon>.out.log` and `<logDir>/<daemon>.err.log` respectively.
+ */
+export function getDaemonLogFiles(
+  daemon: "bee" | "hive",
+  configDir: string,
+): { stdout: string; stderr: string } {
+  const spec = daemon === "bee" ? BEE_DAEMON : HIVE_DAEMON;
+  const dir = getDefaultLogDir(configDir);
+  return {
+    stdout: join(dir, `${spec.logFileBasename}.out.log`),
+    stderr: join(dir, `${spec.logFileBasename}.err.log`),
+  };
+}
+
+/** Re-exported for tests; the names are stable. */
+export const BEE_LAUNCHD_LABEL = BEE_DAEMON.launchdLabel;
+export const BEE_SYSTEMD_UNIT_NAME = BEE_DAEMON.systemdUnitName;
+export const HIVE_LAUNCHD_LABEL = HIVE_DAEMON.launchdLabel;
+export const HIVE_SYSTEMD_UNIT_NAME = HIVE_DAEMON.systemdUnitName;
 
 async function runIgnoringFamiliarFailures(cmd: string, args: string[]): Promise<void> {
   try {

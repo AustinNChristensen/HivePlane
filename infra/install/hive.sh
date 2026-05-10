@@ -1,8 +1,12 @@
 #!/bin/sh
 # HivePlane Hive installer.
 #
-# Installs the Hive control plane on this machine and starts it in the
-# foreground. By default it binds to 0.0.0.0:8787 so other machines on the
+# Installs the Hive control plane on this machine. By default it writes a
+# launchd (macOS) / systemd-user (Linux) service unit so the Hive survives
+# reboots, then starts it. Pass --foreground to skip the service install and
+# run the Hive interactively instead (useful for development).
+#
+# Either way it binds to 0.0.0.0:8787 by default so other machines on the
 # Tailnet/LAN can reach it. Override with --host / --port.
 #
 # Idempotent: safe to re-run to upgrade an existing install.
@@ -10,26 +14,36 @@
 set -eu
 
 INSTALL_DIR="${HIVEPLANE_INSTALL_DIR:-$HOME/.hiveplane/install}"
+CONFIG_DIR="${HIVEPLANE_CONFIG_DIR:-$HOME/.hiveplane}"
+BIN_DIR="${HIVEPLANE_BIN_DIR:-$HOME/.local/bin}"
 REPO_URL="${HIVEPLANE_REPO_URL:-https://github.com/AustinNChristensen/HivePlane.git}"
 REPO_REF="${HIVEPLANE_REPO_REF:-main}"
 HIVE_HOST="${HIVE_HOST:-0.0.0.0}"
 HIVE_PORT="${HIVE_PORT:-8787}"
+MODE="service"   # "service" (default) or "foreground"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --host) HIVE_HOST="$2"; shift 2 ;;
     --port) HIVE_PORT="$2"; shift 2 ;;
+    --foreground) MODE="foreground"; shift ;;
     --no-start) NO_START=1; shift ;;
     -h|--help)
       cat <<USAGE
 HivePlane Hive installer
 
 Usage:
-  hive.sh [--host 0.0.0.0] [--port 8787] [--no-start]
+  hive.sh [--host 0.0.0.0] [--port 8787] [--foreground] [--no-start]
+
+By default installs a launchd / systemd-user service unit and starts it,
+so the Hive survives reboots. Use --foreground to run interactively
+without installing a service unit (useful for development).
 
 Env:
   HIVE_HOST, HIVE_PORT
   HIVEPLANE_INSTALL_DIR (default ~/.hiveplane/install)
+  HIVEPLANE_CONFIG_DIR  (default ~/.hiveplane)
+  HIVEPLANE_BIN_DIR     (default ~/.local/bin)
 USAGE
       exit 0
       ;;
@@ -76,21 +90,59 @@ fi
 log "installing dependencies..."
 (cd "$INSTALL_DIR" && pnpm install --frozen-lockfile --silent)
 
+# Drop the `hive` shim so `hive selfhost ...` is on PATH after first install.
+mkdir -p "$BIN_DIR"
+HIVE_SHIM="$BIN_DIR/hive"
+cat > "$HIVE_SHIM" <<EOF
+#!/bin/sh
+exec "$INSTALL_DIR/node_modules/.bin/tsx" "$INSTALL_DIR/packages/cli/src/index.ts" "\$@"
+EOF
+chmod +x "$HIVE_SHIM"
+
 log "Hive installed at $INSTALL_DIR"
+log "  shim: $HIVE_SHIM"
+
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *) warn "$BIN_DIR is not on PATH. Add: export PATH=\"$BIN_DIR:\$PATH\"" ;;
+esac
 
 if [ "${NO_START:-}" = "1" ]; then
   echo
-  echo "Skipping startup (--no-start). Start later with:"
-  echo "  cd $INSTALL_DIR && pnpm --filter @hiveplane/web start -- --host $HIVE_HOST --port $HIVE_PORT"
+  echo "Skipping startup (--no-start). Next steps:"
+  echo "  hive selfhost init       # generate hive-config.json + admin token"
+  echo "  hive selfhost install    # install the launchd/systemd unit"
+  echo "  hive selfhost start      # start the service"
   exit 0
 fi
 
+if [ "$MODE" = "foreground" ]; then
+  echo
+  echo "Starting Hive on $HIVE_HOST:$HIVE_PORT (Ctrl-C to stop)..."
+  echo "Foreground mode — no service unit installed; the Hive will not survive reboots."
+  echo "Connect Bees with:"
+  echo "  hive login                       # interactive prompt for URL + pairing key"
+  echo "  # or, scripted:"
+  echo "  hive login http://$(hostname):$HIVE_PORT --pairing-key <key-from-dashboard>"
+  echo
+  cd "$INSTALL_DIR"
+  exec pnpm --silent --filter @hiveplane/web start -- --host "$HIVE_HOST" --port "$HIVE_PORT"
+fi
+
+# Service mode: write config (idempotent), install unit, start it.
+log "writing $CONFIG_DIR/hive-config.json + installing service unit"
+"$HIVE_SHIM" --config-dir "$CONFIG_DIR" selfhost up \
+  --host "$HIVE_HOST" --port "$HIVE_PORT"
+
 echo
-echo "Starting Hive on $HIVE_HOST:$HIVE_PORT (Ctrl-C to stop)..."
+echo "Hive is running as a service and will survive reboots."
 echo "Connect Bees with:"
 echo "  hive login                       # interactive prompt for URL + pairing key"
 echo "  # or, scripted:"
 echo "  hive login http://$(hostname):$HIVE_PORT --pairing-key <key-from-dashboard>"
 echo
-cd "$INSTALL_DIR"
-exec pnpm --silent --filter @hiveplane/web start -- --host "$HIVE_HOST" --port "$HIVE_PORT"
+echo "Manage the Hive with:"
+echo "  hive selfhost status"
+echo "  hive selfhost logs -f"
+echo "  hive selfhost stop"
+echo "  hive selfhost uninstall"
