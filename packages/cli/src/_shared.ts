@@ -10,7 +10,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 
-export const VERSION = "0.0.5";
+export const VERSION = "0.0.6";
 
 export type ArgvParseResult = {
   configDir?: string;
