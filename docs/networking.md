@@ -109,7 +109,7 @@ A Bee should not trust a Hive only because it is reachable over a Tailnet. It sh
 Possible commands:
 
 ```bash
-hive selfhost init
+hive init
 hive network tailscale detect
 hive network tailscale recommend-url
 hive bee token create

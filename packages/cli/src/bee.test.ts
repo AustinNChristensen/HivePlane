@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 
-const cliEntry = join(fileURLToPath(import.meta.url), "..", "index.ts");
+const cliEntry = join(fileURLToPath(import.meta.url), "..", "bee.ts");
 
 async function runCli(args: string[], configDir: string) {
   return execFileAsync(
@@ -24,7 +24,7 @@ function newDir() {
   return mkdtempSync(join(tmpdir(), "hiveplane-cli-test-"));
 }
 
-describe("hive CLI", () => {
+describe("bee CLI", () => {
   it("login writes config.json with the given URL and creates an identity", async () => {
     const dir = newDir();
     const { stdout } = await runCli(["login", "http://hive.example:4483"], dir);

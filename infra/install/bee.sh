@@ -1,11 +1,11 @@
 #!/bin/sh
 # HivePlane Bee installer.
 #
-# Installs the Bee daemon + the `hive` CLI on this machine without connecting
+# Installs the Bee daemon + the `bee` CLI on this machine without connecting
 # to any Hive yet. After install, configure with:
 #
-#   hive login <hive-url>
-#   hive start
+#   bee login <hive-url>
+#   bee start
 #
 # Idempotent: safe to re-run to upgrade an existing install.
 
@@ -61,13 +61,18 @@ log "installing dependencies (this may take a minute on first run)..."
 (cd "$INSTALL_DIR" && pnpm install --frozen-lockfile --silent)
 
 # --- bin shims -------------------------------------------------------------
+# v0.0.5 split the CLI into two binaries:
+#   bee — worker-daemon operations on this machine (login/start/logs/...)
+#   hive — control-plane operations (installed by hive.sh on the Hive box)
+# A Bee install only drops the `bee` user-facing binary; the daemon entry
+# (`hiveplane-bee`) stays for launchd/systemd to exec.
 mkdir -p "$BIN_DIR"
 
-cat > "$BIN_DIR/hive" <<EOF
+cat > "$BIN_DIR/bee" <<EOF
 #!/bin/sh
-cd "$INSTALL_DIR" && exec pnpm --silent --filter @hiveplane/cli start "\$@"
+cd "$INSTALL_DIR" && exec pnpm --silent --filter @hiveplane/cli bee "\$@"
 EOF
-chmod +x "$BIN_DIR/hive"
+chmod +x "$BIN_DIR/bee"
 
 cat > "$BIN_DIR/hiveplane-bee" <<EOF
 #!/bin/sh
@@ -77,13 +82,13 @@ chmod +x "$BIN_DIR/hiveplane-bee"
 
 # --- identity --------------------------------------------------------------
 log "ensuring Bee identity exists..."
-"$BIN_DIR/hive" identity init >/dev/null
+"$BIN_DIR/bee" identity init >/dev/null
 
 # --- summary ---------------------------------------------------------------
 log "Bee installed."
 echo
 echo "  Install dir: $INSTALL_DIR"
-echo "  hive:        $BIN_DIR/hive"
+echo "  bee CLI:     $BIN_DIR/bee"
 echo "  daemon:      $BIN_DIR/hiveplane-bee"
 echo
 case ":$PATH:" in
@@ -94,12 +99,12 @@ case ":$PATH:" in
      ;;
 esac
 echo "Next:"
-echo "  hive login <hive-url>     # e.g. http://hive.your-tailnet.ts.net:4483"
-echo "  hive start                # auto-installs launchd/systemd unit + heartbeats"
-echo "  hive start --foreground   # or run as a child process for dev"
+echo "  bee login <hive-url>      # e.g. http://hive.your-tailnet.ts.net:4483"
+echo "  bee start                 # auto-installs launchd/systemd unit + heartbeats"
+echo "  bee start --foreground    # or run as a child process for dev"
 
 # Reboot survival on Linux requires user-level systemd to keep running after
-# logout. `hive start` will also warn at runtime if linger is off; mentioning
+# logout. `bee start` will also warn at runtime if linger is off; mentioning
 # it here lets the operator front-load the fix instead of being surprised
 # after their first reboot.
 if [ "$(uname -s)" = "Linux" ]; then

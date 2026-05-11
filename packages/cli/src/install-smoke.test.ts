@@ -30,14 +30,12 @@ describe("install-path smoke test", () => {
   // packages/cli/src/install-smoke.test.ts → repo root
   const repoRoot = join(here, "..", "..", "..");
   const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
-  const cliEntry = join(repoRoot, "packages", "cli", "src", "index.ts");
+  const hiveEntry = join(repoRoot, "packages", "cli", "src", "hive.ts");
+  const beeEntry = join(repoRoot, "packages", "cli", "src", "bee.ts");
 
-  it("invokes the CLI via the workspace tsx binary without ERR_MODULE_NOT_FOUND", async () => {
-    if (!existsSync(tsxBin)) {
-      // pnpm install hasn't run yet — skip rather than fail in clean checkouts.
-      return;
-    }
-    const { stdout, stderr } = await execFileAsync(tsxBin, [cliEntry, "--version"], {
+  it("hive --version runs through the install shim path", async () => {
+    if (!existsSync(tsxBin)) return;
+    const { stdout, stderr } = await execFileAsync(tsxBin, [hiveEntry, "--version"], {
       cwd: repoRoot,
     });
     expect(stderr).not.toMatch(/ERR_MODULE_NOT_FOUND/);
@@ -45,16 +43,36 @@ describe("install-path smoke test", () => {
     expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
   });
 
-  it("can dispatch `selfhost status` (exercises @hiveplane/daemon import path)", async () => {
+  it("bee --version runs through the install shim path", async () => {
     if (!existsSync(tsxBin)) return;
-    // `selfhost status` reaches into hive-config + service status. It pulls in
-    // the daemon-imported helpers (getDefaultHivePlaneConfigDir etc.), so a
-    // missing `@hiveplane/daemon` resolution is fatal for this path.
-    const { stdout, stderr } = await execFileAsync(tsxBin, [cliEntry, "selfhost", "status"], {
+    const { stdout, stderr } = await execFileAsync(tsxBin, [beeEntry, "--version"], {
+      cwd: repoRoot,
+    });
+    expect(stderr).not.toMatch(/ERR_MODULE_NOT_FOUND/);
+    expect(stderr).not.toMatch(/Cannot find package/);
+    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it("hive status (exercises @hiveplane/daemon import on the Hive entry)", async () => {
+    if (!existsSync(tsxBin)) return;
+    // `hive status` pulls in the daemon-imported helpers
+    // (getDefaultHivePlaneConfigDir etc.); a missing `@hiveplane/daemon`
+    // resolution would be fatal for this path.
+    const { stdout, stderr } = await execFileAsync(tsxBin, [hiveEntry, "status"], {
       cwd: repoRoot,
       env: { ...process.env, HIVEPLANE_CONFIG_DIR: "/tmp/hp-smoke-nonexistent" },
     });
     expect(stderr).not.toMatch(/ERR_MODULE_NOT_FOUND/);
     expect(stdout).toMatch(/Config file:/);
+  });
+
+  it("bee status (exercises @hiveplane/daemon import on the Bee entry)", async () => {
+    if (!existsSync(tsxBin)) return;
+    const { stdout, stderr } = await execFileAsync(tsxBin, [beeEntry, "status"], {
+      cwd: repoRoot,
+      env: { ...process.env, HIVEPLANE_CONFIG_DIR: "/tmp/hp-smoke-nonexistent" },
+    });
+    expect(stderr).not.toMatch(/ERR_MODULE_NOT_FOUND/);
+    expect(stdout).toMatch(/Hive URL:/);
   });
 });
