@@ -435,8 +435,8 @@
               <button class="action" id="rotatePairing">Rotate</button>
             </div>
             <div class="pairing-instructions" id="pairingInstructions">
-              On the Bee, run <code>hive login</code> and paste the key when prompted (or
-              <code>hive login &lt;hive-url&gt; --pairing-key &lt;key&gt;</code>).
+              On the Bee, run <code>bee login</code> and paste the key when prompted (or
+              <code>bee login &lt;hive-url&gt; --pairing-key &lt;key&gt;</code>).
             </div>
           </div>
         </div>
@@ -627,18 +627,50 @@
           stopPairingCountdown();
         }
       }
-      function renderPairingKey(body) {
+      async function renderPairingKey(body) {
         pairing.record = body;
         els.pairingCard.hidden = false;
         els.pairingCode.textContent = body.display || body.code;
         els.pairingCode.classList.remove("unset");
         els.copyPairing.disabled = false;
-        const hiveUrl = `${window.location.protocol}//${window.location.host}`;
+        const hiveUrl = await resolveHiveUrl();
         els.pairingInstructions.innerHTML = `
-          On the Bee, run <code>hive login</code> and paste the key when prompted, or
-          <code>hive login ${escapeHtml(hiveUrl)} --pairing-key ${escapeHtml(body.code)}</code>.
+          On the Bee, run <code>bee login</code> and paste the key when prompted, or
+          <code>bee login ${escapeHtml(hiveUrl)} --pairing-key ${escapeHtml(body.code)}</code>.
           Single-use — rotates after each successful pair.`;
         startPairingCountdown();
+      }
+
+      // Resolve the URL we'd recommend a remote Bee use. If the operator is
+      // viewing the dashboard via a real network name (Tailscale MagicDNS,
+      // LAN hostname, etc.) the address-bar URL is already correct. If they
+      // came in via localhost / 127.0.0.1 / 0.0.0.0 / ::1, that URL is
+      // useless for a Bee on another machine — ask the server for the
+      // recommended one (Tailscale-aware) instead.
+      async function resolveHiveUrl() {
+        const browserUrl = `${window.location.protocol}//${window.location.host}`;
+        const host = (window.location.hostname || "").toLowerCase();
+        const looksLikeLocal =
+          host === "localhost" ||
+          host === "127.0.0.1" ||
+          host === "0.0.0.0" ||
+          host === "::" ||
+          host === "::1" ||
+          host === "[::1]" ||
+          host === "";
+        if (!looksLikeLocal) return browserUrl;
+        try {
+          const res = await fetch("/api/hive-info");
+          if (!res.ok) return browserUrl;
+          const info = await res.json();
+          if (typeof info.recommendedUrl === "string" && info.recommendedUrl) {
+            return info.recommendedUrl;
+          }
+        } catch {
+          // Fall through to the browser URL — better to show something
+          // than to leave the operator without an example.
+        }
+        return browserUrl;
       }
       function startPairingCountdown() {
         stopPairingCountdown();
@@ -709,7 +741,7 @@
       }
       function renderBees(bees) {
         if (bees.length === 0) {
-          els.beesBody.innerHTML = `<div class="empty">No bees connected yet.<br>Run <code>curl http://&lt;hive&gt;/install/bee.sh | sh</code> on a worker, then <code>hive login</code> and paste the pairing key above.</div>`;
+          els.beesBody.innerHTML = `<div class="empty">No bees connected yet.<br>Run <code>curl http://&lt;hive&gt;/install/bee.sh | sh</code> on a worker, then <code>bee login</code> and paste the pairing key above.</div>`;
           return;
         }
         const rows = bees
@@ -864,7 +896,7 @@
             <div class="meta">id ${escapeHtml(body.tokenId)} · expires in ${escapeHtml(expiresIn)} (${escapeHtml(body.expiresAt)})</div>
             <div class="meta">
               On the Bee:
-              <code>hive login &lt;hive-url&gt; --token ${escapeHtml(body.token)}</code>
+              <code>bee login &lt;hive-url&gt; --token ${escapeHtml(body.token)}</code>
             </div>
             <div class="meta">⚠️ Single-use. Copy now — it will not be shown again.</div>
           </div>`;

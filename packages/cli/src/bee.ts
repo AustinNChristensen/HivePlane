@@ -207,7 +207,27 @@ async function runLogin(parsed: ArgvParseResult): Promise<void> {
     }
   }
 
-  // If a service unit is already installed, restart it so it picks up the new URL.
+  // Auto-start the Bee daemon after a successful registration.
+  //
+  // v0.0.6 left this as an explicit two-step (`bee login`, then `bee start`)
+  // and almost every operator forgot the second step — the heartbeat counter
+  // stays at 0 forever, the dashboard shows the Bee as `offline` despite a
+  // green pair. The right default is "you paired, you want it running".
+  //
+  // Honored escape hatches:
+  //   --no-start         — skip auto-start (provisioning scripts, dev)
+  //   --foreground       — runStart respects this and runs as a child
+  //   no credential      — we didn't actually pair, so don't start a
+  //                        daemon that has no session to heartbeat with
+  const noStart = parsed.flags.get("no-start") === true;
+  if (!noStart && credentialFlag) {
+    await runStart(parsed);
+    return;
+  }
+
+  // Fallback: didn't auto-start (either --no-start, or no credential supplied
+  // and we only updated the URL). If a unit is already installed, restart it
+  // so it picks up any new URL; otherwise nudge the operator.
   const status = await getBeeServiceStatus(parsed.configDir ?? getDefaultHivePlaneConfigDir());
   if (status.installed) {
     try {
@@ -458,12 +478,16 @@ function printHelp(): void {
     `HivePlane Bee CLI v${VERSION}
 
 Usage:
-  bee login [<url>] [--pairing-key <key>] [--token <bootstrap>]
-                             Connect this Bee to a Hive. Run with no args on a
-                             TTY for a guided prompt (URL, then pairing key).
-                             --pairing-key takes the short 8-char code shown
-                             on the Hive dashboard. --token takes a long
-                             admin-minted bootstrap token (for scripts).
+  bee login [<url>] [--pairing-key <key>] [--token <bootstrap>] [--no-start]
+                             Connect this Bee to a Hive and start the daemon.
+                             Run with no args on a TTY for a guided prompt
+                             (URL, then pairing key). --pairing-key takes
+                             the short 8-char code shown on the Hive
+                             dashboard. --token takes a long admin-minted
+                             bootstrap token (for scripts). After a
+                             successful pair, the service unit is auto-
+                             installed and started — pass --no-start to
+                             skip that (e.g. for provisioning scripts).
   bee logout                 Forget the Hive URL + session, stop the service
   bee status                 Show config, identity, session, and service state
   bee start                  Start the daemon. Auto-installs the launchd/systemd
@@ -484,7 +508,8 @@ Flags:
   --pairing-key <key>        Short pairing key from the Hive dashboard
   --token <bootstrap>        Bootstrap token (long, scripted-install form)
   --foreground               'bee start' runs as a child process, not a service
-  --no-start                 'bee enable': install unit but don't start it
+  --no-start                 'bee login' / 'bee enable': install unit but
+                             don't start the daemon (default is auto-start)
   -f, --follow               'bee logs' tails the file
 `,
   );

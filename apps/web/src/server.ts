@@ -31,6 +31,7 @@ import {
   type PairingKeyRecord,
   type SessionRecord,
 } from "./auth.js";
+import { getHiveInfo } from "./hive-info.js";
 import {
   appendEvents,
   claimPendingJobs,
@@ -111,6 +112,14 @@ export type CreateHiveServerOptions = {
    * mutation paths fire the hook, or omit it entirely.
    */
   onMutation?: () => void;
+  /**
+   * What the runtime actually bound to. Used by `GET /api/hive-info` to
+   * compute a recommended URL for the dashboard's pairing-key card; not
+   * used for binding itself (the listener is set up by cli.ts before this
+   * server runs).
+   */
+  bindHost?: string;
+  bindPort?: number;
 };
 
 export function createHiveServerState(): HiveServerState {
@@ -233,7 +242,7 @@ const INSTALL_SCRIPT_NAMES = new Set(["bee.sh", "hive.sh"]);
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
-const HIVE_VERSION = "0.0.6";
+const HIVE_VERSION = "0.0.7";
 
 export function createHiveServer(options: CreateHiveServerOptions = {}) {
   const state = options.state ?? createHiveServerState();
@@ -244,6 +253,10 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
   const authRequired = options.authRequired ?? isAuthRequired();
   // No-op when persistence isn't attached (tests, --no-persist, etc.).
   const markDirty = options.onMutation ?? (() => {});
+  // Bind info for the /api/hive-info endpoint. Defaults match the runtime
+  // fallbacks in cli.ts so tests that don't pass these still get sane output.
+  const bindHost = options.bindHost ?? "0.0.0.0";
+  const bindPort = options.bindPort ?? 4483;
 
   return createServer(async (request, response) => {
     try {
@@ -287,6 +300,16 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
 
       if (request.method === "GET" && url.pathname === "/version") {
         return sendJson(response, 200, { version: HIVE_VERSION, service: "hiveplane-hive" });
+      }
+
+      // GET /api/hive-info — recommended Hive URL for a remote Bee, plus the
+      // bind config. Tailscale-aware. The dashboard hits this when the
+      // operator's address bar shows a localhost URL — `localhost:4483`
+      // isn't useful to a Bee on another machine, so we surface the
+      // Tailscale MagicDNS name (or hostname) instead.
+      if (request.method === "GET" && url.pathname === "/api/hive-info") {
+        const info = await getHiveInfo(bindHost, bindPort);
+        return sendJson(response, 200, info);
       }
 
       if (request.method === "GET" && url.pathname === "/api/bees") {
