@@ -24,6 +24,7 @@ import {
   readHiveOnDiskConfig,
   writeHiveOnDiskConfig,
 } from "./hive-config.js";
+import { probeHiveVersion, probePortInUse } from "./port-probe.js";
 import {
   getBeeServiceStatus,
   getDaemonLogFiles,
@@ -41,7 +42,7 @@ import {
   uninstallHiveService,
 } from "./service.js";
 
-const VERSION = "0.0.3";
+const VERSION = "0.0.4";
 
 type ArgvParseResult = {
   configDir?: string;
@@ -627,7 +628,28 @@ async function runSelfhostStart(parsed: ArgvParseResult): Promise<void> {
     console.error(`  pnpm --filter @hiveplane/web start -- --no-open`);
     process.exit(2);
   }
+
+  // Defense in depth against the v0.0.2 → v0.0.3 collision: if anything is
+  // already on the configured port, refuse rather than launching a service
+  // that will silently crash-loop under launchd. `hive.sh` does the same
+  // check before getting here, but `hive selfhost start` is also reachable
+  // directly so we re-check.
+  const cfg = readHiveOnDiskConfig(configDir);
+  const port = cfg.port ?? 4483;
   const status = await getHiveServiceStatus(configDir);
+  // Only refuse if the unit ISN'T already running — kickstart-on-already-
+  // running is fine, the existing process owns the port legitimately.
+  if (!status.running) {
+    const probe = probePortInUse(port);
+    if (probe.listening === true) {
+      console.error(
+        `Refusing to start: port ${port} is already in use:\n\n${probe.details}\n\n` +
+          `Pick a different port with \`hive selfhost init --port <n>\`, or stop the conflicting process first.`,
+      );
+      process.exit(2);
+    }
+  }
+
   if (!status.installed) {
     const env = resolveInstallEnvironment();
     const result = installHiveService({
@@ -639,8 +661,6 @@ async function runSelfhostStart(parsed: ArgvParseResult): Promise<void> {
     console.log(`Installed Hive service unit (${result.platform}): ${result.unitPath}`);
   }
   await startHiveService();
-  const cfg = readHiveOnDiskConfig(configDir);
-  const port = cfg.port ?? 4483;
   console.log(`Hive started. Dashboard: http://localhost:${port}/`);
   console.log(`Tail logs with \`hive selfhost logs -f\`. Stop with \`hive selfhost stop\`.`);
   warnIfLingerOff();
@@ -679,6 +699,33 @@ async function runSelfhostStatus(parsed: ArgvParseResult): Promise<void> {
   console.log(`Logs:          ${status.logDir}`);
   if (status.lastExitCode !== undefined && status.lastExitCode !== 0) {
     console.log(`Last exit:     ${status.lastExitCode}`);
+  }
+
+  // /version probe — surfaces the v0.0.2 → v0.0.3 collision symptom
+  // (launchd reports "running" but a different process is what's actually
+  // answering on the bound port). Skipped when the service is known not to
+  // be running; otherwise we'd be reporting noise about an inert port.
+  if (status.installed && status.running) {
+    const port = cfg.port ?? 4483;
+    const host = cfg.host ?? "127.0.0.1";
+    const result = await probeHiveVersion(host, port);
+    switch (result.kind) {
+      case "hive":
+        console.log(`Health probe:  /version → hiveplane-hive ${result.version} ✓`);
+        break;
+      case "stranger":
+        console.log(
+          `Health probe:  /version → ⚠️  another process answered on port ${port}.\n` +
+            `               The Hive launchd unit is "running" but is being shadowed; check\n` +
+            `               \`lsof -nP -iTCP:${port} -sTCP:LISTEN\` for the squatter.`,
+        );
+        break;
+      case "unreachable":
+        console.log(
+          `Health probe:  /version → unreachable (${result.reason}). Check \`hive selfhost logs -f\`.`,
+        );
+        break;
+    }
   }
 }
 

@@ -113,6 +113,46 @@ case ":$PATH:" in
   *) warn "$BIN_DIR is not on PATH. Add: export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
 
+# --- port pre-flight -------------------------------------------------------
+#
+# v0.0.2 shipped with default port 8787, which collided with another local dev
+# server on a real install. The Hive bound to *:8787 successfully but was
+# shadowed by 127.0.0.1:8787 — kernel routing prefers the more-specific bind,
+# so localhost requests reached the squatter and the operator chased a 404.
+# v0.0.3 changed the default to 4483 to make collisions less likely; this
+# pre-flight check is the actual fix — refuse to install if anything is
+# already listening on the chosen port, with a clear pointer to whatever
+# process is squatting it.
+#
+# Skipped silently when neither lsof nor ss is available (Windows/WSL1/some
+# minimal containers); in that case the existing post-install crash-loop is
+# still better than nothing, and the operator can always re-run with --port.
+check_port_in_use() {
+  port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null
+    return $?
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnH "sport = :$port" 2>/dev/null
+    return $?
+  fi
+  return 1
+}
+
+if [ "$MODE" = "service" ] && [ "${NO_START:-}" != "1" ]; then
+  conflict=$(check_port_in_use "$HIVE_PORT" || true)
+  if [ -n "$conflict" ]; then
+    err "port $HIVE_PORT is already in use:
+
+$conflict
+
+Pick a different port with --port, or stop the conflicting process first.
+The Hive cannot start on an already-bound port (and binding to 0.0.0.0 would
+still be shadowed for localhost requests by the more-specific bind above)."
+  fi
+fi
+
 if [ "${NO_START:-}" = "1" ]; then
   echo
   echo "Skipping startup (--no-start). Next steps:"
