@@ -233,7 +233,7 @@ const INSTALL_SCRIPT_NAMES = new Set(["bee.sh", "hive.sh"]);
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
-const HIVE_VERSION = "0.0.3";
+const HIVE_VERSION = "0.0.4";
 
 export function createHiveServer(options: CreateHiveServerOptions = {}) {
   const state = options.state ?? createHiveServerState();
