@@ -49,17 +49,17 @@ The Hive coordinates. Bees execute. Local policy remains the trust boundary.
 - **Bee** — a worker node daemon running on a machine.
 - **Swarm** — a group of Bees.
 - **HivePlane Cloud** — managed hosted control plane. Coming soon.
-- **CLI** — `hive`.
+- **CLI** — `hive` for control-plane operations on a Hive machine; `bee` for worker-daemon operations on a Bee machine.
 
 Example CLI shape:
 
 ```bash
-hive selfhost init
-hive network tailscale detect
-hive bee token create
-hive bee install-command
-hive bee status
-hive job list
+hive init             # generate hive-config.json + admin token
+hive up               # init + install service unit + start
+hive status           # /version health probe + log paths
+bee login             # pair a Bee with a Hive
+bee start             # start the worker daemon as a service
+bee status            # config + identity + session + service state
 ```
 
 ## Self-Hosted Networking Model
@@ -124,14 +124,14 @@ This:
 - installs a launchd plist (`~/Library/LaunchAgents/com.hiveplane.hive.plist`) on macOS or a systemd user unit (`~/.config/systemd/user/hiveplane-hive.service`) on Linux;
 - starts the service. The Hive will come back automatically after reboots and crashes.
 
-`hive.sh` prints the admin token at the end of the run — save it. You can re-read or rotate it anytime with `hive selfhost init` (and `--rotate-admin-token` to mint a fresh one). Manage the service with:
+`hive.sh` prints the admin token at the end of the run — save it. You can re-read or rotate it anytime with `hive init` (and `--rotate-admin-token` to mint a fresh one). Manage the service with:
 
 ```bash
-hive selfhost status     # installed/running, log paths, bind, exit code
-hive selfhost logs -f    # tail the daemon's stdout
-hive selfhost stop       # stop without uninstalling
-hive selfhost restart
-hive selfhost uninstall  # remove the launchd/systemd unit
+hive status     # installed/running, log paths, bind, /version health probe
+hive logs -f    # tail the daemon's stdout
+hive stop       # stop without uninstalling
+hive restart
+hive uninstall  # remove the launchd/systemd unit
 ```
 
 For development you can skip the service install entirely:
@@ -158,7 +158,7 @@ curl http://mac-mini.tailnet-name.ts.net:4483/healthz
 # {"ok":true,"service":"hiveplane-hive"}
 ```
 
-In `--foreground` mode the Hive prints the dashboard URL and auto-opens it in your default browser on a TTY; pass `--no-open` (or set `HIVEPLANE_OPEN_BROWSER=false`) to skip on a headless server. Under the launchd/systemd unit there's no TTY, so the dashboard doesn't auto-open — visit `http://<hive>:4483/` manually. The **dashboard** shows connected Bees, jobs, the current pairing key, and a bootstrap-token minter — paste your admin token (from `hive-config.json` or `hive selfhost init`) into the field at the top to unlock the admin features; the Bees list works without auth. `/dashboard` and `/index.html` are aliases for `/`. `curl http://mac-mini.tailnet-name.ts.net:4483/version` confirms which build the Hive is running — useful if `/` 404s, since that usually means the Hive process is older than the source on disk and needs a restart.
+In `--foreground` mode the Hive prints the dashboard URL and auto-opens it in your default browser on a TTY; pass `--no-open` (or set `HIVEPLANE_OPEN_BROWSER=false`) to skip on a headless server. Under the launchd/systemd unit there's no TTY, so the dashboard doesn't auto-open — visit `http://<hive>:4483/` manually. The **dashboard** shows connected Bees, jobs, the current pairing key, and a bootstrap-token minter — paste your admin token (from `hive-config.json` or `hive init`) into the field at the top to unlock the admin features; the Bees list works without auth. `/dashboard` and `/index.html` are aliases for `/`. `curl http://mac-mini.tailnet-name.ts.net:4483/version` confirms which build the Hive is running — useful if `/` 404s, since that usually means the Hive process is older than the source on disk and needs a restart.
 
 ### Step 2 — Read the pairing key off the dashboard
 
@@ -185,35 +185,35 @@ On each Bee machine:
 curl -fsSL http://mac-mini.tailnet-name.ts.net:4483/install/bee.sh | sh
 ```
 
-This clones HivePlane to `~/.hiveplane/install`, runs `pnpm install`, drops `hive` and `hiveplane-bee` shims into `~/.local/bin`, and generates a persistent Ed25519 identity under `~/.hiveplane`. It does **not** start anything yet.
+This clones HivePlane to `~/.hiveplane/install`, runs `pnpm install`, drops `bee` and `hiveplane-bee` shims into `~/.local/bin`, and generates a persistent Ed25519 identity under `~/.hiveplane`. It does **not** start anything yet.
 
 If `~/.local/bin` isn't on your shell's PATH, the installer prints the line you need to add to your shell rc.
 
 ### Step 4 — Connect the Bee to the Hive
 
-Still on the Bee machine, run `hive login` with no arguments — it'll prompt you for the Hive URL and the pairing key from Step 2:
+Still on the Bee machine, run `bee login` with no arguments — it'll prompt you for the Hive URL and the pairing key from Step 2:
 
 ```text
-$ hive login
+$ bee login
 Hive URL: http://mac-mini.tailnet-name.ts.net:4483
 Pairing key (or bootstrap token, blank to skip): K7RQ-2P9X
 Bee name [laptop-1]:
 Logged into http://mac-mini.tailnet-name.ts.net:4483/
 Bee identity: sha256:...
 Registered with Hive as bee_xxxxxxxx (signed-heartbeat mode).
-Run `hive start` to begin heartbeating.
+Run `bee start` to begin heartbeating.
 ```
 
 For scripted/unattended installs you can pass everything on the command line:
 
 ```bash
 # pairing key (short form, from the dashboard):
-hive login http://mac-mini.tailnet-name.ts.net:4483 \
+bee login http://mac-mini.tailnet-name.ts.net:4483 \
   --name laptop-1 \
   --pairing-key K7RQ-2P9X
 
 # or bootstrap token (long form):
-hive login http://mac-mini.tailnet-name.ts.net:4483 \
+bee login http://mac-mini.tailnet-name.ts.net:4483 \
   --name laptop-1 \
   --token hp_boot_xxxxxxxxxxxxxxxxxxx
 ```
@@ -227,10 +227,10 @@ Either path:
 ### Step 5 — Start the Bee
 
 ```bash
-hive start
+bee start
 ```
 
-On macOS this writes `~/Library/LaunchAgents/com.hiveplane.bee.plist` and bootstraps it via `launchctl`. On Linux it writes `~/.config/systemd/user/hiveplane-bee.service` and runs `systemctl --user enable --now`. Either way, the daemon now survives reboots and crashes. Logs land in `~/.hiveplane/logs/` on macOS, and on Linux are read from the journal via `hive logs -f` — minimal Linux environments without `journalctl` (containers, WSL1) fall through to the same `~/.hiveplane/logs/` files automatically.
+On macOS this writes `~/Library/LaunchAgents/com.hiveplane.bee.plist` and bootstraps it via `launchctl`. On Linux it writes `~/.config/systemd/user/hiveplane-bee.service` and runs `systemctl --user enable --now`. Either way, the daemon now survives reboots and crashes. Logs land in `~/.hiveplane/logs/` on macOS, and on Linux are read from the journal via `bee logs -f` — minimal Linux environments without `journalctl` (containers, WSL1) fall through to the same `~/.hiveplane/logs/` files automatically.
 
 > **Linux only**: run `loginctl enable-linger $USER` once if you want the daemon to keep running when you log out.
 
@@ -242,7 +242,7 @@ Open the dashboard's **Bees** tab in a browser — your new Bee should appear wi
 curl http://mac-mini.tailnet-name.ts.net:4483/api/bees | jq
 ```
 
-On the Bee itself, `hive status` shows the same info plus session details and service state.
+On the Bee itself, `bee status` shows the same info plus session details and service state.
 
 Repeat steps 3–5 for each additional Bee — the pairing-key card on the dashboard rotates automatically after every successful pair, so the next code is always already there. (Click _Rotate_ to invalidate the current key on demand.)
 
@@ -296,11 +296,21 @@ Inspect the result the same way as Step 7. Failed `run_command` jobs include the
 ### Day-2 commands on the Bee
 
 ```bash
-hive status                # config + identity + session + service state
-hive logs -f               # follow daemon output
-hive stop / hive restart   # control the running service
-hive logout                # forget Hive URL + session, stop the service
-hive disable               # remove the service unit (use `hive start` to reinstall)
+bee status                # config + identity + session + service state
+bee logs -f               # follow daemon output
+bee stop / bee restart    # control the running service
+bee logout                # forget Hive URL + session, stop the service
+bee disable               # remove the service unit (use `bee start` to reinstall)
+```
+
+### Day-2 commands on the Hive
+
+```bash
+hive status               # config + service state + /version health probe
+hive logs -f              # tail the Hive service
+hive stop / hive restart  # control the running service
+hive init --rotate-admin-token   # mint a fresh admin bearer token
+hive uninstall            # remove the service unit (use `hive up` to reinstall)
 ```
 
 ### Known limitations to track

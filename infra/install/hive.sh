@@ -96,12 +96,14 @@ fi
 log "installing dependencies..."
 (cd "$INSTALL_DIR" && pnpm install --frozen-lockfile --silent)
 
-# Drop the `hive` shim so `hive selfhost ...` is on PATH after first install.
+# Drop the `hive` shim so `hive <verb>` is on PATH after first install.
+# v0.0.5 split the CLI into two binaries — this shim points at the Hive
+# entry point. (bee.sh writes a separate `bee` shim on Bee machines.)
 mkdir -p "$BIN_DIR"
 HIVE_SHIM="$BIN_DIR/hive"
 cat > "$HIVE_SHIM" <<EOF
 #!/bin/sh
-exec "$INSTALL_DIR/node_modules/.bin/tsx" "$INSTALL_DIR/packages/cli/src/index.ts" "\$@"
+exec "$INSTALL_DIR/node_modules/.bin/tsx" "$INSTALL_DIR/packages/cli/src/hive.ts" "\$@"
 EOF
 chmod +x "$HIVE_SHIM"
 
@@ -156,9 +158,9 @@ fi
 if [ "${NO_START:-}" = "1" ]; then
   echo
   echo "Skipping startup (--no-start). Next steps:"
-  echo "  hive selfhost init       # generate hive-config.json + admin token"
-  echo "  hive selfhost install    # install the launchd/systemd unit"
-  echo "  hive selfhost start      # start the service"
+  echo "  hive init       # generate hive-config.json + admin token"
+  echo "  hive install    # install the launchd/systemd unit"
+  echo "  hive start      # start the service"
   exit 0
 fi
 
@@ -167,9 +169,9 @@ if [ "$MODE" = "foreground" ]; then
   echo "Starting Hive on $HIVE_HOST:$HIVE_PORT (Ctrl-C to stop)..."
   echo "Foreground mode — no service unit installed; the Hive will not survive reboots."
   echo "Connect Bees with:"
-  echo "  hive login                       # interactive prompt for URL + pairing key"
+  echo "  bee login                        # interactive prompt for URL + pairing key"
   echo "  # or, scripted:"
-  echo "  hive login http://$(hostname):$HIVE_PORT --pairing-key <key-from-dashboard>"
+  echo "  bee login http://$(hostname):$HIVE_PORT --pairing-key <key-from-dashboard>"
   echo
   cd "$INSTALL_DIR"
   exec pnpm --silent --filter @hiveplane/web start -- --host "$HIVE_HOST" --port "$HIVE_PORT"
@@ -177,18 +179,18 @@ fi
 
 # Service mode: write config (idempotent), install unit, start it.
 log "writing $CONFIG_DIR/hive-config.json + installing service unit"
-"$HIVE_SHIM" --config-dir "$CONFIG_DIR" selfhost up \
+"$HIVE_SHIM" --config-dir "$CONFIG_DIR" up \
   --host "$HIVE_HOST" --port "$HIVE_PORT"
 
 echo
 echo "Hive is running as a service and will survive reboots."
 echo "Connect Bees with:"
-echo "  hive login                       # interactive prompt for URL + pairing key"
+echo "  bee login                        # interactive prompt for URL + pairing key"
 echo "  # or, scripted:"
-echo "  hive login http://$(hostname):$HIVE_PORT --pairing-key <key-from-dashboard>"
+echo "  bee login http://$(hostname):$HIVE_PORT --pairing-key <key-from-dashboard>"
 echo
 echo "Manage the Hive with:"
-echo "  hive selfhost status"
-echo "  hive selfhost logs -f"
-echo "  hive selfhost stop"
-echo "  hive selfhost uninstall"
+echo "  hive status"
+echo "  hive logs -f"
+echo "  hive stop"
+echo "  hive uninstall"
