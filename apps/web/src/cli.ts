@@ -3,7 +3,7 @@ import { readHiveOnDiskConfig } from "./config.js";
 import { attachPersistence, getDefaultHiveStatePath, loadHiveServerState } from "./persistence.js";
 import { createHiveServer } from "./server.js";
 
-const VERSION = "0.0.6";
+const VERSION = "0.0.7";
 
 // Read the on-disk Hive config first so env vars and CLI flags can override
 // individual fields below — the precedence is: CLI flag > env var > config
@@ -35,6 +35,10 @@ const server = createHiveServer({
   ...(persistor ? { onMutation: persistor.markDirty } : {}),
   ...(resolvedAdminToken ? { adminToken: resolvedAdminToken } : {}),
   ...(resolvedAuthRequired !== undefined ? { authRequired: resolvedAuthRequired } : {}),
+  // Surfaced via GET /api/hive-info so the dashboard can recommend a
+  // sensible URL for remote Bees without the operator having to guess.
+  bindHost: host,
+  bindPort: port,
 });
 
 // Flush pending writes before the process exits. SIGTERM is what launchd /

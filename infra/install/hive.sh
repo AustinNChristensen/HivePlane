@@ -142,6 +142,40 @@ check_port_in_use() {
   return 1
 }
 
+# Try to derive a Tailscale-aware URL for the post-install banner. If the
+# Tailscale CLI is installed AND the node is logged in, this returns the
+# MagicDNS-based URL a remote Bee should use. Empty string otherwise — the
+# fallback in that case is the LAN hostname.
+#
+# We prefer parsing `tailscale status --json` over scraping the text output;
+# the JSON shape is stable across Tailscale versions and gives us the DNS
+# name directly. Best-effort everywhere — any failure falls through.
+detect_tailscale_url() {
+  port="$1"
+  if ! command -v tailscale >/dev/null 2>&1; then
+    return 0
+  fi
+  raw=$(tailscale status --json 2>/dev/null) || return 0
+  # The Tailscale JSON puts the node's MagicDNS name in `.Self.DNSName` with
+  # a trailing dot. sed strips the dot; awk pulls the value out of the
+  # key=value-ish JSON without a real JSON parser (we don't want to require
+  # `jq` on the install path).
+  dns=$(printf '%s' "$raw" | tr -d '\n' \
+    | sed -n 's/.*"Self"[^{]*{[^}]*"DNSName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    | sed 's/\.$//')
+  if [ -n "$dns" ]; then
+    printf 'http://%s:%s\n' "$dns" "$port"
+    return 0
+  fi
+  # Fallback: Tailscale IPv4 if DNSName isn't set (rare on a non-tailnet
+  # node, but worth a shot).
+  ip=$(printf '%s' "$raw" | tr -d '\n' \
+    | sed -n 's/.*"Self"[^{]*{[^}]*"TailscaleIPs"[[:space:]]*:[[:space:]]*\[[[:space:]]*"\([^"]*\)".*/\1/p')
+  if [ -n "$ip" ]; then
+    printf 'http://%s:%s\n' "$ip" "$port"
+  fi
+}
+
 if [ "$MODE" = "service" ] && [ "${NO_START:-}" != "1" ]; then
   conflict=$(check_port_in_use "$HIVE_PORT" || true)
   if [ -n "$conflict" ]; then
@@ -164,16 +198,35 @@ if [ "${NO_START:-}" = "1" ]; then
   exit 0
 fi
 
+# Compute the URL we'll suggest in the post-install banner. Tailscale is the
+# recommended HivePlane transport (see README's networking model) so if a
+# tailnet is detected we lead with the MagicDNS URL. Otherwise fall back to
+# the LAN hostname.
+HIVE_URL_TAILSCALE=$(detect_tailscale_url "$HIVE_PORT" || true)
+HIVE_URL_LAN="http://$(hostname):$HIVE_PORT"
+if [ -n "$HIVE_URL_TAILSCALE" ]; then
+  HIVE_URL_PRIMARY="$HIVE_URL_TAILSCALE"
+  HIVE_URL_NOTE="(via Tailscale MagicDNS — works across networks; recommended)"
+  HIVE_URL_SECONDARY_LINE="  $HIVE_URL_LAN     # LAN-only fallback"
+else
+  HIVE_URL_PRIMARY="$HIVE_URL_LAN"
+  HIVE_URL_NOTE="(LAN hostname — only works for Bees on the same network)"
+  HIVE_URL_SECONDARY_LINE=""
+fi
+
 if [ "$MODE" = "foreground" ]; then
   echo
   echo "Starting Hive on $HIVE_HOST:$HIVE_PORT (Ctrl-C to stop)..."
   echo "Foreground mode — no service unit installed; the Hive will not survive reboots."
   echo
+  echo "Hive URL for Bees: $HIVE_URL_PRIMARY  $HIVE_URL_NOTE"
+  [ -n "$HIVE_URL_SECONDARY_LINE" ] && echo "$HIVE_URL_SECONDARY_LINE"
+  echo
   echo "To pair a Bee, on each Bee machine:"
-  echo "  curl -fsSL http://$(hostname):$HIVE_PORT/install/bee.sh | sh"
+  echo "  curl -fsSL $HIVE_URL_PRIMARY/install/bee.sh | sh"
   echo "  bee login                        # interactive prompt for URL + pairing key"
   echo "  # or, scripted:"
-  echo "  bee login http://$(hostname):$HIVE_PORT --pairing-key <key-from-dashboard>"
+  echo "  bee login $HIVE_URL_PRIMARY --pairing-key <key-from-dashboard>"
   echo
   echo "To pair THIS machine as a Bee (end-to-end local test), run the bee.sh"
   echo "command above on this same box — it drops a 'bee' CLI alongside 'hive'."
@@ -190,6 +243,9 @@ log "writing $CONFIG_DIR/hive-config.json + installing service unit"
 echo
 echo "Hive is running as a service and will survive reboots."
 echo
+echo "Hive URL for Bees: $HIVE_URL_PRIMARY  $HIVE_URL_NOTE"
+[ -n "$HIVE_URL_SECONDARY_LINE" ] && echo "$HIVE_URL_SECONDARY_LINE"
+echo
 echo "Manage the Hive (on this machine) with:"
 echo "  hive status                  # /version health probe + config + service state"
 echo "  hive logs -f                 # tail Hive service logs"
@@ -197,10 +253,10 @@ echo "  hive stop                    # stop without uninstalling"
 echo "  hive uninstall               # remove the launchd/systemd unit"
 echo
 echo "To pair a Bee, on each Bee machine:"
-echo "  curl -fsSL http://$(hostname):$HIVE_PORT/install/bee.sh | sh"
+echo "  curl -fsSL $HIVE_URL_PRIMARY/install/bee.sh | sh"
 echo "  bee login                    # interactive prompt for URL + pairing key"
 echo "  # or, scripted:"
-echo "  bee login http://$(hostname):$HIVE_PORT --pairing-key <key-from-dashboard>"
+echo "  bee login $HIVE_URL_PRIMARY --pairing-key <key-from-dashboard>"
 echo
 echo "To pair THIS machine as a Bee (end-to-end local test), run the bee.sh"
 echo "command above on this same box — it drops a 'bee' CLI alongside 'hive'."
