@@ -168,10 +168,15 @@ if [ "$MODE" = "foreground" ]; then
   echo
   echo "Starting Hive on $HIVE_HOST:$HIVE_PORT (Ctrl-C to stop)..."
   echo "Foreground mode — no service unit installed; the Hive will not survive reboots."
-  echo "Connect Bees with:"
+  echo
+  echo "To pair a Bee, on each Bee machine:"
+  echo "  curl -fsSL http://$(hostname):$HIVE_PORT/install/bee.sh | sh"
   echo "  bee login                        # interactive prompt for URL + pairing key"
   echo "  # or, scripted:"
   echo "  bee login http://$(hostname):$HIVE_PORT --pairing-key <key-from-dashboard>"
+  echo
+  echo "To pair THIS machine as a Bee (end-to-end local test), run the bee.sh"
+  echo "command above on this same box — it drops a 'bee' CLI alongside 'hive'."
   echo
   cd "$INSTALL_DIR"
   exec pnpm --silent --filter @hiveplane/web start -- --host "$HIVE_HOST" --port "$HIVE_PORT"
@@ -184,13 +189,18 @@ log "writing $CONFIG_DIR/hive-config.json + installing service unit"
 
 echo
 echo "Hive is running as a service and will survive reboots."
-echo "Connect Bees with:"
-echo "  bee login                        # interactive prompt for URL + pairing key"
+echo
+echo "Manage the Hive (on this machine) with:"
+echo "  hive status                  # /version health probe + config + service state"
+echo "  hive logs -f                 # tail Hive service logs"
+echo "  hive stop                    # stop without uninstalling"
+echo "  hive uninstall               # remove the launchd/systemd unit"
+echo
+echo "To pair a Bee, on each Bee machine:"
+echo "  curl -fsSL http://$(hostname):$HIVE_PORT/install/bee.sh | sh"
+echo "  bee login                    # interactive prompt for URL + pairing key"
 echo "  # or, scripted:"
 echo "  bee login http://$(hostname):$HIVE_PORT --pairing-key <key-from-dashboard>"
 echo
-echo "Manage the Hive with:"
-echo "  hive status"
-echo "  hive logs -f"
-echo "  hive stop"
-echo "  hive uninstall"
+echo "To pair THIS machine as a Bee (end-to-end local test), run the bee.sh"
+echo "command above on this same box — it drops a 'bee' CLI alongside 'hive'."
