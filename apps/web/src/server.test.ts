@@ -16,6 +16,7 @@ describe("Hive heartbeat state", () => {
       daemonVersion: "0.0.1",
       status: "online",
       activeJobs: 0,
+      healthChecks: [],
     });
     const latest = upsertBeeHeartbeat(state, {
       type: "bee.heartbeat",
@@ -24,6 +25,14 @@ describe("Hive heartbeat state", () => {
       daemonVersion: "0.0.1",
       status: "degraded",
       activeJobs: 1,
+      healthChecks: [
+        {
+          name: "openclaw-gateway",
+          status: "failing",
+          checkedAt: "2026-05-09T20:01:00.000Z",
+          message: "gateway stopped",
+        },
+      ],
     });
 
     expect(latest).toMatchObject({
@@ -33,6 +42,7 @@ describe("Hive heartbeat state", () => {
       heartbeatCount: 2,
       status: "degraded",
       activeJobs: 1,
+      healthChecks: [expect.objectContaining({ name: "openclaw-gateway", status: "failing" })],
     });
   });
 });

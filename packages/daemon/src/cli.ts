@@ -2,6 +2,7 @@ import { sign as edSign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { BeeConnectionManager, HttpBeeConnectionTransport } from "./connection.js";
 import { readHivePlaneConfig } from "./config.js";
+import { collectBeeHealthChecks, statusFromHealthChecks } from "./health.js";
 import { createDaemonState } from "./index.js";
 import { loadOrCreateBeeIdentity } from "./identity.js";
 import { JobExecutor } from "./jobs.js";
@@ -84,6 +85,10 @@ async function main(): Promise<void> {
     transport,
     daemonVersion: VERSION,
     heartbeatIntervalMs: options.intervalSeconds * 1000,
+    beforeHeartbeat: async () => {
+      state.healthChecks = await collectBeeHealthChecks();
+      state.status = statusFromHealthChecks(state.healthChecks);
+    },
     onStatusChange: (status) => console.log(`[bee] status=${status}`),
     onJobs: async (jobs) => {
       console.log(`[bee] received ${jobs.length} job(s)`);
@@ -111,6 +116,7 @@ async function main(): Promise<void> {
   console.log(`[bee] id=${state.beeId}`);
   console.log(`[bee] hive=${options.hiveUrl}`);
   console.log(`[bee] auth=${sessionUsable ? "signed (session)" : "anonymous"}`);
+  console.log("[bee] health checks=enabled");
 
   if (options.once) {
     const response = await manager.sendHeartbeat();

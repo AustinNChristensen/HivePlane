@@ -373,6 +373,12 @@
       details[open] > summary {
         margin-bottom: 6px;
       }
+      .check-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        max-width: 360px;
+      }
       pre.snippet {
         margin: 0;
         background: var(--panel-2);
@@ -583,12 +589,13 @@
         if (h < 24) return `${h}h ago`;
         return `${Math.round(h / 24)}d ago`;
       }
-      function pill(value, extraClass = "") {
-        const cls = String(value)
+      function pill(value, extraClass = "", title = "") {
+        const statusClass = extraClass || value;
+        const cls = String(statusClass)
           .replace(/[^a-z_]/gi, "_")
           .toLowerCase();
         const text = String(value).replace(/_/g, " ");
-        return `<span class="pill ${cls} ${extraClass}"><span class="dot"></span>${escapeHtml(text)}</span>`;
+        return `<span class="pill ${cls}" title="${escapeHtml(title)}"><span class="dot"></span>${escapeHtml(text)}</span>`;
       }
       function escapeHtml(s) {
         return String(s).replace(
@@ -754,8 +761,10 @@
                 <td>${escapeHtml(b.daemonVersion || "—")}</td>
                 <td>${escapeHtml(b.activeJobs ?? 0)}</td>
                 <td title="${escapeHtml(b.lastSeenAt || "")}">${relativeTime(b.lastSeenAt)}</td>
+                <td>${renderHealthChecks(b.healthChecks || [])}</td>
                 <td>${escapeHtml(b.heartbeatCount ?? 0)}</td>
                 <td title="${escapeHtml(b.firstSeenAt || "")}">${relativeTime(b.firstSeenAt)}</td>
+                <td><button class="ghost" data-action="healthcheck" data-bee-id="${escapeHtml(b.beeId)}">Healthcheck</button></td>
               </tr>
             `,
           )
@@ -770,12 +779,46 @@
                 <th>Version</th>
                 <th>Active jobs</th>
                 <th>Last heartbeat</th>
+                <th>Health</th>
                 <th>Heartbeats</th>
                 <th>First seen</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
           </table>`;
+        els.beesBody.querySelectorAll("[data-action='healthcheck']").forEach((button) => {
+          button.addEventListener("click", () => queueHealthcheck(button.dataset.beeId, button));
+        });
+      }
+      function renderHealthChecks(checks) {
+        if (!checks.length) return '<span class="mono">—</span>';
+        return `<div class="check-list">${checks
+          .map((check) =>
+            pill(check.name, check.status || "unknown", check.message || check.checkedAt || ""),
+          )
+          .join("")}</div>`;
+      }
+      async function queueHealthcheck(beeId, button) {
+        if (!state.adminToken) {
+          els.beesMeta.textContent = "set an admin token (top right) to queue jobs";
+          return;
+        }
+        button.disabled = true;
+        try {
+          const res = await fetch(`/api/bees/${encodeURIComponent(beeId)}/jobs`, {
+            method: "POST",
+            headers: { ...authHeaders(), "content-type": "application/json" },
+            body: JSON.stringify({ type: "run_healthcheck", payload: {} }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+          els.beesMeta.textContent = "healthcheck queued";
+          refreshJobs();
+        } catch (err) {
+          els.beesMeta.textContent = `healthcheck failed: ${err.message}`;
+        } finally {
+          button.disabled = false;
+        }
       }
 
       // --- jobs view -----------------------------------------------------------

@@ -33,6 +33,13 @@ export const BeeCapabilitiesSchema = z.object({
   hardware: BeeHardwareSchema,
 });
 
+export const BeeHealthCheckSchema = z.object({
+  name: z.string().min(1),
+  status: z.enum(["passing", "failing", "unknown"]),
+  checkedAt: IsoDateTimeSchema,
+  message: z.string().max(500).optional(),
+});
+
 /**
  * Plain object form of the registration request. Kept as a `ZodObject` so it
  * can participate in `BeeToHiveMessageSchema`'s discriminated union.
@@ -89,6 +96,7 @@ export const BeeHeartbeatSchema = z.object({
   status: BeeStatusSchema,
   activeJobs: z.number().int().nonnegative(),
   capabilities: BeeCapabilitiesSchema.optional(),
+  healthChecks: z.array(BeeHealthCheckSchema).default([]),
 });
 
 export const BootstrapTokenCreateRequestSchema = z.object({
@@ -260,6 +268,7 @@ export type BeePlatform = z.infer<typeof BeePlatformSchema>;
 export type BeeStatus = z.infer<typeof BeeStatusSchema>;
 export type BeeHardware = z.infer<typeof BeeHardwareSchema>;
 export type BeeCapabilities = z.infer<typeof BeeCapabilitiesSchema>;
+export type BeeHealthCheck = z.infer<typeof BeeHealthCheckSchema>;
 export type BeeRegistrationRequest = z.infer<typeof BeeRegistrationRequestSchema>;
 export type BeeRegistrationResponse = z.infer<typeof BeeRegistrationResponseSchema>;
 export type BeeHeartbeat = z.infer<typeof BeeHeartbeatSchema>;

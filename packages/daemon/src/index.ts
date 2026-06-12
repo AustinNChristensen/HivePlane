@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { hostname, platform, arch, totalmem, cpus } from "node:os";
 import { z } from "zod";
-import { BeeHeartbeatSchema, type BeeHeartbeat, type BeePlatform } from "@hiveplane/protocol";
+import {
+  BeeHeartbeatSchema,
+  type BeeHeartbeat,
+  type BeeHealthCheck,
+  type BeePlatform,
+} from "@hiveplane/protocol";
 
 export const DaemonConfigSchema = z.object({
   beeId: z.string().min(1).optional(),
@@ -28,6 +33,7 @@ export type DaemonState = {
   activeJobs: number;
   startedAt: Date;
   hardware: BeeHardwareSnapshot;
+  healthChecks: BeeHealthCheck[];
 };
 
 export function detectBeePlatform(): BeeHardwareSnapshot["platform"] {
@@ -61,6 +67,7 @@ export function createDaemonState(config: DaemonConfig): DaemonState {
     activeJobs: 0,
     startedAt: new Date(),
     hardware: getHardwareSnapshot(),
+    healthChecks: [],
   };
 }
 
@@ -72,6 +79,7 @@ export function createHeartbeat(state: DaemonState, daemonVersion: string): BeeH
     daemonVersion,
     status: state.status,
     activeJobs: state.activeJobs,
+    healthChecks: state.healthChecks,
   });
 }
 

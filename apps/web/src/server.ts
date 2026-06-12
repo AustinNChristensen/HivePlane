@@ -52,6 +52,7 @@ export type HiveBeeRecord = {
   daemonVersion: string;
   status: BeeHeartbeat["status"];
   activeJobs: number;
+  healthChecks: BeeHeartbeat["healthChecks"];
   firstSeenAt: string;
   lastSeenAt: string;
   heartbeatCount: number;
@@ -217,6 +218,7 @@ export function upsertBeeHeartbeat(
     daemonVersion: heartbeat.daemonVersion,
     status: heartbeat.status,
     activeJobs: heartbeat.activeJobs,
+    healthChecks: heartbeat.healthChecks,
     firstSeenAt: existing?.firstSeenAt ?? timestamp,
     lastSeenAt: timestamp,
     heartbeatCount: (existing?.heartbeatCount ?? 0) + 1,
@@ -241,6 +243,7 @@ function defaultPublicDir(): string {
 const INSTALL_SCRIPT_NAMES = new Set(["bee.sh", "hive.sh"]);
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
+const OFFLINE_AFTER_MS = 2 * 60 * 1000;
 
 const HIVE_VERSION = "0.0.7";
 
@@ -313,7 +316,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
       }
 
       if (request.method === "GET" && url.pathname === "/api/bees") {
-        return sendJson(response, 200, { bees: [...state.bees.values()] });
+        return sendJson(response, 200, { bees: serializeBees(state, now()) });
       }
 
       if (request.method === "POST" && url.pathname === "/api/bootstrap-tokens") {
@@ -711,6 +714,7 @@ function finalizeRegistration(
     daemonVersion: request.daemonVersion,
     status: "offline",
     activeJobs: 0,
+    healthChecks: [],
     firstSeenAt: existing?.firstSeenAt ?? now.toISOString(),
     lastSeenAt: existing?.lastSeenAt ?? now.toISOString(),
     heartbeatCount: existing?.heartbeatCount ?? 0,
@@ -879,6 +883,16 @@ function serializeJob(job: JobRecord): Record<string, unknown> {
     ...(job.output ? { output: job.output } : {}),
     ...(job.error ? { error: job.error } : {}),
   };
+}
+
+function serializeBees(state: HiveServerState, now: Date): HiveBeeRecord[] {
+  return [...state.bees.values()].map((bee) => {
+    const lastSeenMs = new Date(bee.lastSeenAt).getTime();
+    if (Number.isFinite(lastSeenMs) && now.getTime() - lastSeenMs > OFFLINE_AFTER_MS) {
+      return { ...bee, status: "offline" };
+    }
+    return bee;
+  });
 }
 
 function headerString(request: IncomingMessage, name: string): string | undefined {

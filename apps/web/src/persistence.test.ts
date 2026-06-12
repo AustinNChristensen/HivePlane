@@ -43,6 +43,7 @@ function buildPopulatedState(): HiveServerState {
       daemonVersion: "0.0.1-test",
       status: "online",
       activeJobs: 0,
+      healthChecks: [],
     },
     new Date("2026-05-09T20:00:00.000Z"),
   );

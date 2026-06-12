@@ -98,6 +98,7 @@ describe("HttpBeeConnectionTransport", () => {
       daemonVersion: "0.0.0-test",
       status: "online",
       activeJobs: 0,
+      healthChecks: [],
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -123,6 +124,7 @@ describe("HttpBeeConnectionTransport", () => {
         daemonVersion: "0.0.0-test",
         status: "online",
         activeJobs: 0,
+        healthChecks: [],
       }),
     ).rejects.toThrow("Hive heartbeat failed: 503 Unavailable");
   });

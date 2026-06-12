@@ -190,7 +190,7 @@ function serialize(state: HiveServerState): PersistedSnapshot {
 
 function rehydrate(snapshot: PersistedSnapshot): HiveServerState {
   const state = createHiveServerState();
-  for (const [k, v] of snapshot.bees) state.bees.set(k, v);
+  for (const [k, v] of snapshot.bees) state.bees.set(k, { ...v, healthChecks: v.healthChecks ?? [] });
   for (const [k, v] of snapshot.bootstrapTokens) state.bootstrapTokens.set(k, deserializeToken(v));
   for (const [k, v] of snapshot.sessions) state.sessions.set(k, deserializeSession(v));
   state.jobsState = createJobsState();

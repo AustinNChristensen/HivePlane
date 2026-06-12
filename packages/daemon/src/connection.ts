@@ -16,6 +16,7 @@ export type BeeConnectionManagerOptions = {
   heartbeatIntervalMs?: number;
   retryPolicy?: Partial<BeeRetryPolicy>;
   onStatusChange?: (status: BeeConnectionStatus) => void;
+  beforeHeartbeat?: () => Promise<void> | void;
   onJobs?: (jobs: Job[]) => Promise<void> | void;
   onError?: (error: unknown) => void;
 };
@@ -77,6 +78,7 @@ export class BeeConnectionManager {
 
   async sendHeartbeat(): Promise<BeeHeartbeatResponse> {
     this.setStatus(this.consecutiveFailures === 0 ? "connecting" : "backing_off");
+    await this.options.beforeHeartbeat?.();
     const heartbeat = createHeartbeat(this.options.state, this.options.daemonVersion);
     const response = BeeHeartbeatResponseSchema.parse(
       await this.options.transport.postHeartbeat(heartbeat, this.abortController.signal),

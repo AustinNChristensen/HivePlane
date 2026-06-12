@@ -7,7 +7,7 @@
 // live under `hive selfhost <verb>` now live on the `hive` binary at the
 // top level, installed by `hive.sh`.)
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { hostname as osHostname } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -229,7 +229,7 @@ async function runLogin(parsed: ArgvParseResult): Promise<void> {
   // and we only updated the URL). If a unit is already installed, restart it
   // so it picks up any new URL; otherwise nudge the operator.
   const status = await getBeeServiceStatus(parsed.configDir ?? getDefaultHivePlaneConfigDir());
-  if (status.installed) {
+  if (status.installed && serviceUnitUsesConfigDir(status.unitPath, parsed.configDir)) {
     try {
       await restartBeeService();
       console.log(`Service restarted (${status.platform}). Heartbeating now.`);
@@ -241,6 +241,15 @@ async function runLogin(parsed: ArgvParseResult): Promise<void> {
     }
   } else {
     console.log(`Run \`bee start\` to begin heartbeating.`);
+  }
+}
+
+function serviceUnitUsesConfigDir(unitPath: string | undefined, configDir: string | undefined): boolean {
+  if (!unitPath || !configDir) return true;
+  try {
+    return readFileSync(unitPath, "utf8").includes(configDir);
+  } catch {
+    return true;
   }
 }
 
