@@ -131,6 +131,9 @@
         border-radius: 10px;
         overflow: hidden;
       }
+      .incidents-panel {
+        margin-top: 16px;
+      }
       .panel-header {
         padding: 14px 18px;
         border-bottom: 1px solid var(--border);
@@ -144,6 +147,10 @@
         font-size: 12px;
         color: var(--muted);
         font-weight: 400;
+      }
+      .meta {
+        color: var(--muted);
+        font-size: 12px;
       }
       table {
         width: 100%;
@@ -199,19 +206,30 @@
       }
       .pill.online .dot,
       .pill.succeeded .dot,
-      .pill.running .dot {
+      .pill.running .dot,
+      .pill.healthy .dot,
+      .pill.expected_offline .dot,
+      .pill.resolved .dot,
+      .pill.info .dot {
         background: var(--good);
       }
       .pill.degraded .dot,
       .pill.queued .dot,
       .pill.assigned .dot,
-      .pill.waiting_for_approval .dot {
+      .pill.waiting_for_approval .dot,
+      .pill.stale_watching .dot,
+      .pill.recovering .dot,
+      .pill.needs_approval .dot,
+      .pill.warning .dot {
         background: var(--warn);
       }
       .pill.offline .dot,
       .pill.failed .dot,
       .pill.cancelled .dot,
-      .pill.timed_out .dot {
+      .pill.timed_out .dot,
+      .pill.unresolved_incident .dot,
+      .pill.unresolved .dot,
+      .pill.critical .dot {
         background: var(--bad);
       }
       .empty {
@@ -568,6 +586,13 @@
           </div>
           <div id="beesBody"></div>
         </div>
+        <div class="panel incidents-panel">
+          <div class="panel-header">
+            <span>Incidents</span>
+            <span class="meta" id="incidentsMeta">—</span>
+          </div>
+          <div id="incidentsBody"></div>
+        </div>
       </section>
 
       <section data-view="jobs" hidden>
@@ -614,6 +639,7 @@
         selectedJobId: "",
         selectedBeeId: "",
         bees: [],
+        incidents: [],
         jobs: [],
         selectedJob: null,
       };
@@ -624,6 +650,8 @@
         authStatus: document.getElementById("authStatus"),
         beesMeta: document.getElementById("beesMeta"),
         beesBody: document.getElementById("beesBody"),
+        incidentsMeta: document.getElementById("incidentsMeta"),
+        incidentsBody: document.getElementById("incidentsBody"),
         jobsMeta: document.getElementById("jobsMeta"),
         jobsBody: document.getElementById("jobsBody"),
         tokenBeeName: document.getElementById("tokenBeeName"),
@@ -894,13 +922,16 @@
         try {
           const res = await fetch("/api/bees");
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const { bees } = await res.json();
+          const { bees, incidents } = await res.json();
           state.bees = bees ?? [];
+          state.incidents = incidents ?? [];
           ensureSelectedBee(bees ?? []);
           renderBees(bees ?? []);
+          renderIncidents(incidents ?? []);
           els.beesMeta.textContent = `${bees.length} connected · updated ${new Date().toLocaleTimeString()}`;
         } catch (err) {
           els.beesBody.innerHTML = `<div class="empty">Failed to load bees: ${escapeHtml(err.message)}</div>`;
+          els.incidentsBody.innerHTML = `<div class="empty">Failed to load incidents.</div>`;
         }
       }
       function ensureSelectedBee(bees) {
@@ -922,8 +953,10 @@
             return `
               <tr class="${b.beeId === state.selectedBeeId ? "selected" : ""}" data-action="select-bee" data-bee-id="${escapeHtml(b.beeId)}">
                 <td>${pill(b.status || "unknown")}</td>
+                <td>${pill(b.operationalState || "healthy")}</td>
                 <td><span class="mono truncate" title="${escapeHtml(b.beeId)}">${escapeHtml(b.beeName || shortId(b.beeId))}</span></td>
                 <td><span class="mono truncate" title="${escapeHtml(b.beeId)}">${escapeHtml(shortId(b.beeId))}</span></td>
+                <td>${renderProfileSummary(b.profile)}</td>
                 <td>${escapeHtml(b.daemonVersion || "—")}</td>
                 <td>${renderRescueStatus(b.rescue)}</td>
                 <td>${escapeHtml(b.activeJobs ?? 0)}</td>
@@ -937,6 +970,9 @@
                     <button class="ghost" data-action="healthcheck" data-bee-id="${escapeHtml(b.beeId)}">Healthcheck</button>
                     <button class="ghost" data-action="adapter-job" data-job-type="restart_bee" data-bee-id="${escapeHtml(b.beeId)}">Recover</button>
                     <button class="ghost" data-action="adapter-job" data-job-type="openclaw_status" data-bee-id="${escapeHtml(b.beeId)}">OpenClaw</button>
+                    <button class="ghost" data-action="adapter-job" data-job-type="restart_openclaw_gateway" data-bee-id="${escapeHtml(b.beeId)}">Fix OC</button>
+                    <button class="ghost" data-action="adapter-job" data-job-type="restart_hermes_gateway" data-bee-id="${escapeHtml(b.beeId)}">Fix Hermes</button>
+                    <button class="ghost" data-action="adapter-job" data-job-type="repair_imessage_bridge" data-bee-id="${escapeHtml(b.beeId)}">Fix iMessage</button>
                     <button class="ghost" data-action="adapter-job" data-job-type="ollama_status" data-bee-id="${escapeHtml(b.beeId)}">Ollama</button>
                     <button class="ghost" data-action="adapter-job" data-job-type="update_bee" data-bee-id="${escapeHtml(b.beeId)}">Update</button>
                     <button class="ghost" data-action="adapter-job" data-job-type="collect_bee_logs" data-bee-id="${escapeHtml(b.beeId)}">Logs</button>
@@ -949,7 +985,7 @@
               </tr>
               ${
                 selected
-                  ? `<tr class="detail-row"><td colspan="11"><div class="inline-detail bee-detail">${renderBeeDetail(b)}</div></td></tr>`
+                  ? `<tr class="detail-row"><td colspan="13"><div class="inline-detail bee-detail">${renderBeeDetail(b)}</div></td></tr>`
                   : ""
               }
             `;
@@ -960,8 +996,10 @@
             <thead>
               <tr>
                 <th>Status</th>
+                <th>State</th>
                 <th>Name</th>
                 <th>Bee ID</th>
+                <th>Profile</th>
                 <th>Version</th>
                 <th>Rescue</th>
                 <th>Active jobs</th>
@@ -1007,6 +1045,50 @@
           });
         });
       }
+      function renderIncidents(incidents) {
+        const active = incidents.filter((incident) => incident.status !== "resolved");
+        els.incidentsMeta.textContent = `${active.length} active · ${incidents.length} total`;
+        if (!incidents.length) {
+          els.incidentsBody.innerHTML = `<div class="empty">No incidents yet.</div>`;
+          return;
+        }
+        els.incidentsBody.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Severity</th>
+                <th>Bee</th>
+                <th>Kind</th>
+                <th>Summary</th>
+                <th>Next action</th>
+                <th>Attempts</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${incidents
+                .map(
+                  (incident) => `
+                    <tr>
+                      <td>${pill(incident.status || "open")}</td>
+                      <td>${pill(incident.severity || "warning")}</td>
+                      <td>${renderBeeName(incident.beeId)}</td>
+                      <td><span class="mono">${escapeHtml(incident.kind || "—")}</span></td>
+                      <td>
+                        <div>${escapeHtml(incident.summary || "—")}</div>
+                        <div class="meta">${escapeHtml(incident.lastDiagnosis || "")}</div>
+                      </td>
+                      <td><span class="mono">${escapeHtml(incident.nextAction || "—")}</span></td>
+                      <td>${escapeHtml(incident.attempts?.length ?? 0)}</td>
+                      <td title="${escapeHtml(incident.updatedAt || "")}">${relativeTime(incident.updatedAt)}</td>
+                    </tr>
+                  `,
+                )
+                .join("")}
+            </tbody>
+          </table>`;
+      }
       function renderHealthChecks(checks) {
         if (!checks.length) return '<span class="mono">—</span>';
         return `<div class="check-list">${checks
@@ -1019,15 +1101,20 @@
         if (!rescue) return '<span class="mono">—</span>';
         return `${pill(rescue.status || "unknown")} <span title="${escapeHtml(rescue.lastSeenAt || "")}">${relativeTime(rescue.lastSeenAt)}</span>`;
       }
+      function renderProfileSummary(profile) {
+        if (!profile) return '<span class="mono">—</span>';
+        return `${pill(profile.availabilityClass || "always_on")} <span class="mono">${escapeHtml(profile.offlineGraceSeconds || "—")}s</span>`;
+      }
       function renderBeeDetail(bee) {
         const capabilities = bee.capabilities || {};
         const hardware = capabilities.hardware || {};
         const permissions = bee.permissions || { runCommand: { allow: [], unsafeAllowAll: false } };
         const allow = permissions.runCommand?.allow || [];
         const rescue = bee.rescue || null;
+        const profile = bee.profile || {};
 
         return `
-          <div>${pill(bee.status || "unknown")} <span class="mono">${escapeHtml(bee.beeName || shortId(bee.beeId))}</span></div>
+          <div>${pill(bee.status || "unknown")} ${pill(bee.operationalState || "healthy")} <span class="mono">${escapeHtml(bee.beeName || shortId(bee.beeId))}</span></div>
           <div class="detail-section">
             <h3>Identity</h3>
             <div class="kv-list">
@@ -1036,6 +1123,17 @@
               ${kv("Last heartbeat", `${relativeTime(bee.lastSeenAt)} <span class="mono">(${escapeHtml(bee.lastSeenAt || "—")})</span>`)}
               ${kv("First seen", `${relativeTime(bee.firstSeenAt)} <span class="mono">(${escapeHtml(bee.firstSeenAt || "—")})</span>`)}
               ${kv("Heartbeats", escapeHtml(bee.heartbeatCount ?? 0))}
+            </div>
+          </div>
+          <div class="detail-section">
+            <h3>Availability</h3>
+            <div class="kv-list">
+              ${kv("Class", pill(profile.availabilityClass || "always_on"))}
+              ${kv("Offline grace", `${escapeHtml(profile.offlineGraceSeconds || "—")}s`)}
+              ${kv("Active jobs", escapeHtml(profile.activeJobPolicy || "escalate"))}
+              ${kv("Auto repair", profile.autoRepairWhenOnline === false ? pill("off", "failed") : pill("on", "online"))}
+              ${kv("Critical checks", capList(profile.criticalServices || []))}
+              ${kv("Expected windows", capList(profile.expectedWindows || []))}
             </div>
           </div>
           <div class="detail-section">

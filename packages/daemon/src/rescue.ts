@@ -19,7 +19,15 @@ import { loadOrCreateBeeIdentity, type BeeIdentity } from "./identity.js";
 import { isSessionExpired, readHiveSession, type HiveSession } from "./session.js";
 
 const VERSION = "0.0.7";
-const RESCUE_ACTIONS = ["restart_bee", "update_bee", "collect_bee_logs"] as const;
+const RESCUE_ACTIONS = [
+  "restart_bee",
+  "update_bee",
+  "collect_bee_logs",
+  "diagnose_incident",
+  "restart_openclaw_gateway",
+  "restart_hermes_gateway",
+  "repair_imessage_bridge",
+] as const;
 
 type RescueCliOptions = {
   hiveUrl: string;
@@ -167,6 +175,38 @@ class RescueExecutor {
         await this.complete(job, { status: "succeeded", output: logs });
         return;
       }
+      if (job.type === "diagnose_incident") {
+        await this.emit(job, "info", "rescue.diagnose_incident.start", {
+          incidentId: typeof job.payload.incidentId === "string" ? job.payload.incidentId : "",
+        });
+        const diagnosis = await diagnoseIncident(job, this.options.configDir);
+        await this.complete(job, { status: "succeeded", output: diagnosis });
+        return;
+      }
+      if (job.type === "restart_openclaw_gateway") {
+        await this.emit(job, "info", "rescue.restart_openclaw_gateway.start", {});
+        const output = await repairLaunchdService({
+          label: "ai.openclaw.gateway",
+          plistName: "ai.openclaw.gateway.plist",
+        });
+        await this.complete(job, { status: "succeeded", output });
+        return;
+      }
+      if (job.type === "restart_hermes_gateway") {
+        await this.emit(job, "info", "rescue.restart_hermes_gateway.start", {});
+        const output = await repairLaunchdService({
+          label: "ai.hermes.gateway",
+          plistName: "ai.hermes.gateway.plist",
+        });
+        await this.complete(job, { status: "succeeded", output });
+        return;
+      }
+      if (job.type === "repair_imessage_bridge") {
+        await this.emit(job, "info", "rescue.repair_imessage_bridge.start", {});
+        const output = await repairImessageBridge();
+        await this.complete(job, { status: "succeeded", output });
+        return;
+      }
       await this.complete(job, {
         status: "failed",
         error: { code: "unsupported_rescue_job", message: `${job.type} is not a rescue action` },
@@ -262,31 +302,10 @@ async function signedFetch(options: {
 
 async function restartBeeService(): Promise<void> {
   if (process.platform === "darwin") {
-    const uid = userInfo().uid;
-    const target = `gui/${uid}/com.hiveplane.bee`;
-    const kickstart = await runProcess("launchctl", ["kickstart", "-k", target]);
-    if (kickstart.exitCode === 0) return;
-
-    const plistPath = join(homedir(), "Library/LaunchAgents/com.hiveplane.bee.plist");
-    if (!existsSync(plistPath)) {
-      throw new Error(`Bee launch agent missing: ${plistPath}`);
-    }
-
-    const bootstrap = await runProcess("launchctl", ["bootstrap", `gui/${uid}`, plistPath]);
-    const bootstrapAlreadyLoaded =
-      bootstrap.exitCode !== 0 && /already/i.test(`${bootstrap.stdout}\n${bootstrap.stderr}`);
-    if (bootstrap.exitCode !== 0 && !bootstrapAlreadyLoaded) {
-      throw new Error(
-        `launchctl bootstrap failed (${bootstrap.exitCode}): ${bootstrap.stderr || bootstrap.stdout}`,
-      );
-    }
-
-    const retry = await runProcess("launchctl", ["kickstart", "-k", target]);
-    if (retry.exitCode !== 0) {
-      throw new Error(
-        `launchctl kickstart failed (${retry.exitCode}): ${retry.stderr || retry.stdout}`,
-      );
-    }
+    await repairLaunchdService({
+      label: "com.hiveplane.bee",
+      plistName: "com.hiveplane.bee.plist",
+    });
     return;
   }
 
@@ -301,6 +320,122 @@ async function restartBeeService(): Promise<void> {
   }
 
   throw new Error(`unsupported platform: ${process.platform}`);
+}
+
+async function repairLaunchdService(options: {
+  label: string;
+  plistName: string;
+}): Promise<Record<string, JsonValue>> {
+  if (process.platform !== "darwin") {
+    throw new Error(`launchd repair unsupported on ${process.platform}`);
+  }
+
+  const uid = userInfo().uid;
+  const target = `gui/${uid}/${options.label}`;
+  const plistPath = join(homedir(), "Library/LaunchAgents", options.plistName);
+
+  const steps: Record<string, JsonValue>[] = [];
+  const kickstart = await runProcess("launchctl", ["kickstart", "-k", target]);
+  steps.push(processSummary("kickstart", kickstart));
+  if (kickstart.exitCode === 0) {
+    return { service: options.label, plistPath, steps };
+  }
+
+  if (!existsSync(plistPath)) {
+    throw new Error(`launch agent missing: ${plistPath}`);
+  }
+
+  const bootstrap = await runProcess("launchctl", ["bootstrap", `gui/${uid}`, plistPath]);
+  steps.push(processSummary("bootstrap", bootstrap));
+  const bootstrapAlreadyLoaded =
+    bootstrap.exitCode !== 0 && /already/i.test(`${bootstrap.stdout}\n${bootstrap.stderr}`);
+  if (bootstrap.exitCode !== 0 && !bootstrapAlreadyLoaded) {
+    throw new Error(
+      `launchctl bootstrap ${options.label} failed (${bootstrap.exitCode}): ${
+        bootstrap.stderr || bootstrap.stdout
+      }`,
+    );
+  }
+
+  const retry = await runProcess("launchctl", ["kickstart", "-k", target]);
+  steps.push(processSummary("kickstart_after_bootstrap", retry));
+  if (retry.exitCode !== 0) {
+    throw new Error(
+      `launchctl kickstart ${options.label} failed (${retry.exitCode}): ${
+        retry.stderr || retry.stdout
+      }`,
+    );
+  }
+  return { service: options.label, plistPath, steps };
+}
+
+async function repairImessageBridge(): Promise<Record<string, JsonValue>> {
+  if (process.platform !== "darwin") {
+    throw new Error(`iMessage bridge repair unsupported on ${process.platform}`);
+  }
+
+  const steps: Record<string, JsonValue>[] = [];
+  const blueBubbles = await stopLaunchdServiceIfPresent("com.bluebubbles.server");
+  steps.push({ step: "stop_bluebubbles", ...blueBubbles });
+
+  if (!existsSync("/opt/homebrew/bin/imsg")) {
+    const install = await runProcess("brew", ["install", "steipete/tap/imsg"]);
+    steps.push(processSummary("install_imsg", install));
+    if (install.exitCode !== 0) {
+      throw new Error(
+        `brew install imsg failed (${install.exitCode}): ${install.stderr || install.stdout}`,
+      );
+    }
+  } else {
+    steps.push({ step: "imsg_present", path: "/opt/homebrew/bin/imsg" });
+  }
+
+  const openclaw = await repairLaunchdService({
+    label: "ai.openclaw.gateway",
+    plistName: "ai.openclaw.gateway.plist",
+  });
+  steps.push({ step: "repair_openclaw_gateway", ...openclaw });
+
+  if (existsSync("/opt/homebrew/bin/openclaw")) {
+    const probe = await runProcess("/opt/homebrew/bin/openclaw", [
+      "channels",
+      "status",
+      "--probe",
+      "--channel",
+      "imessage",
+    ]);
+    steps.push(processSummary("probe_imessage", probe));
+    if (probe.exitCode !== 0) {
+      throw new Error(
+        `OpenClaw iMessage probe failed (${probe.exitCode}): ${probe.stderr || probe.stdout}`,
+      );
+    }
+  } else {
+    steps.push({ step: "probe_imessage", skipped: true, reason: "openclaw CLI not found" });
+  }
+
+  return { repaired: true, bridge: "imessage", steps };
+}
+
+async function stopLaunchdServiceIfPresent(label: string): Promise<Record<string, JsonValue>> {
+  const uid = userInfo().uid;
+  const print = await runProcess("launchctl", ["print", `gui/${uid}/${label}`]);
+  if (print.exitCode !== 0) return { label, present: false };
+  const bootout = await runProcess("launchctl", ["bootout", `gui/${uid}/${label}`]);
+  return { label, present: true, ...processSummary("bootout", bootout) };
+}
+
+function processSummary(
+  step: string,
+  result: { exitCode: number; signal: string | null; stdout: string; stderr: string },
+): Record<string, JsonValue> {
+  return {
+    step,
+    exitCode: result.exitCode,
+    signal: result.signal,
+    stdout: result.stdout.slice(0, 4_000),
+    stderr: result.stderr.slice(0, 4_000),
+  };
 }
 
 function beeServiceName(): string {
@@ -369,6 +504,8 @@ function collectBeeLogs(configDir = join(homedir(), ".hiveplane")): Record<strin
   return {
     stdout: tailFile(join(logDir, "bee.out.log")),
     stderr: tailFile(join(logDir, "bee.err.log")),
+    rescueStdout: tailFile(join(logDir, "rescue.out.log")),
+    rescueStderr: tailFile(join(logDir, "rescue.err.log")),
   };
 }
 
@@ -376,6 +513,101 @@ function tailFile(path: string): string {
   if (!existsSync(path)) return "";
   const text = readFileSync(path, "utf8");
   return text.slice(-20_000);
+}
+
+async function diagnoseIncident(
+  job: Job,
+  configDir = join(homedir(), ".hiveplane"),
+): Promise<Record<string, JsonValue>> {
+  const logs = collectBeeLogs(configDir);
+  const prompt = [
+    "You are HivePlane's local incident diagnostician.",
+    "You may inspect the bounded context below, classify the likely failure, and recommend the safest allowlisted next step.",
+    "Do not suggest arbitrary shell.",
+    "If you recommend a tool, copy exactly one of these names: restart_bee, restart_openclaw_gateway, restart_hermes_gateway, collect_bee_logs, run_healthcheck.",
+    "If none fits, say approval_required instead of inventing a tool name.",
+    "Return concise plain English with: classification, likely cause, exact tool or approval_required, verification check, approval-needed risks.",
+    "",
+    "Incident payload:",
+    JSON.stringify(job.payload, null, 2).slice(0, 8_000),
+    "",
+    "Bee stdout tail:",
+    String(logs.stdout).slice(-6_000),
+    "",
+    "Bee stderr tail:",
+    String(logs.stderr).slice(-6_000),
+    "",
+    "Rescue stderr tail:",
+    String(logs.rescueStderr).slice(-4_000),
+  ].join("\n");
+
+  const ai = await askLocalOllama(prompt);
+  return {
+    incidentId: typeof job.payload.incidentId === "string" ? job.payload.incidentId : "",
+    ai,
+    logTailBytes: {
+      stdout: String(logs.stdout).length,
+      stderr: String(logs.stderr).length,
+      rescueStdout: String(logs.rescueStdout).length,
+      rescueStderr: String(logs.rescueStderr).length,
+    },
+  };
+}
+
+async function askLocalOllama(prompt: string): Promise<Record<string, JsonValue>> {
+  const model = process.env.HIVEPLANE_LOCAL_AI_MODEL ?? "gemma4:12b";
+  const baseUrl = process.env.HIVEPLANE_OLLAMA_URL ?? "http://127.0.0.1:11434";
+  const timeoutMs = parsePositiveInt(process.env.HIVEPLANE_AI_TIMEOUT_MS) ?? 90_000;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(new URL("/api/chat", baseUrl), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        stream: false,
+        think: false,
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      }),
+    });
+    const body = (await response.json().catch(() => ({}))) as {
+      message?: { content?: string };
+      error?: string;
+    };
+    if (!response.ok) {
+      return {
+        available: false,
+        model,
+        error: body.error ?? `Ollama returned HTTP ${response.status}`,
+      };
+    }
+    return {
+      available: true,
+      model,
+      diagnosis: (body.message?.content ?? "").slice(0, 12_000),
+    };
+  } catch (error) {
+    return {
+      available: false,
+      model,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parsePositiveInt(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function parseArgs(args: string[]): RescueCliOptions {

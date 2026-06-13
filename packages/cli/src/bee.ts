@@ -250,7 +250,10 @@ async function runLogin(parsed: ArgvParseResult): Promise<void> {
   }
 }
 
-function serviceUnitUsesConfigDir(unitPath: string | undefined, configDir: string | undefined): boolean {
+function serviceUnitUsesConfigDir(
+  unitPath: string | undefined,
+  configDir: string | undefined,
+): boolean {
   if (!unitPath || !configDir) return true;
   try {
     return readFileSync(unitPath, "utf8").includes(configDir);
@@ -260,16 +263,24 @@ function serviceUnitUsesConfigDir(unitPath: string | undefined, configDir: strin
 }
 
 async function runLogout(parsed: ArgvParseResult): Promise<void> {
-  // Stop the service so the daemon doesn't keep heartbeating to the old Hive.
-  try {
-    await stopBeeService();
-  } catch {
-    // not installed or not running — fine
+  // Stop only units that point at this config dir. Tests and custom config
+  // dirs must not boot out the operator's real Bee/Rescue services.
+  const configDir = parsed.configDir ?? getDefaultHivePlaneConfigDir();
+  const beeStatus = await getBeeServiceStatus(configDir);
+  if (serviceUnitUsesConfigDir(beeStatus.unitPath, configDir)) {
+    try {
+      await stopBeeService();
+    } catch {
+      // not installed or not running — fine
+    }
   }
-  try {
-    await stopRescueService();
-  } catch {
-    // not installed or not running — fine
+  const rescueStatus = await getRescueServiceStatus(configDir);
+  if (serviceUnitUsesConfigDir(rescueStatus.unitPath, configDir)) {
+    try {
+      await stopRescueService();
+    } catch {
+      // not installed or not running — fine
+    }
   }
   clearHiveUrl(parsed.configDir);
   clearHiveSession(parsed.configDir);

@@ -4,7 +4,12 @@ import { dirname, join } from "node:path";
 import type { JobEvent, JsonValue } from "@hiveplane/protocol";
 import type { BootstrapTokenRecord, SessionRecord } from "./auth.js";
 import { createJobsState, type JobRecord } from "./jobs.js";
-import { createHiveServerState, type HiveBeeRecord, type HiveServerState } from "./server.js";
+import {
+  createHiveServerState,
+  type HiveBeeRecord,
+  type HiveServerState,
+  type IncidentRecord,
+} from "./server.js";
 
 /**
  * Filesystem-backed persistence for HiveServerState.
@@ -159,6 +164,7 @@ type PersistedSnapshot = {
   bootstrapTokens: Array<[string, PersistedBootstrapToken]>;
   sessions: Array<[string, PersistedSession]>;
   jobs: Array<[string, PersistedJob]>;
+  incidents?: Array<[string, IncidentRecord]>;
 };
 
 type PersistedBootstrapToken = Omit<BootstrapTokenRecord, "expiresAt" | "consumedAt"> & {
@@ -185,16 +191,31 @@ function serialize(state: HiveServerState): PersistedSnapshot {
     bootstrapTokens: [...state.bootstrapTokens.entries()].map(([k, v]) => [k, serializeToken(v)]),
     sessions: [...state.sessions.entries()].map(([k, v]) => [k, serializeSession(v)]),
     jobs: [...state.jobsState.jobs.entries()].map(([k, v]) => [k, serializeJob(v)]),
+    incidents: [...state.incidents.entries()],
   };
 }
 
 function rehydrate(snapshot: PersistedSnapshot): HiveServerState {
   const state = createHiveServerState();
-  for (const [k, v] of snapshot.bees) state.bees.set(k, { ...v, healthChecks: v.healthChecks ?? [] });
+  for (const [k, v] of snapshot.bees) {
+    state.bees.set(k, {
+      ...v,
+      healthChecks: v.healthChecks ?? [],
+      profile: v.profile ?? {
+        availabilityClass: "always_on",
+        offlineGraceSeconds: 120,
+        expectedWindows: [],
+        criticalServices: [],
+        activeJobPolicy: "escalate",
+        autoRepairWhenOnline: true,
+      },
+    });
+  }
   for (const [k, v] of snapshot.bootstrapTokens) state.bootstrapTokens.set(k, deserializeToken(v));
   for (const [k, v] of snapshot.sessions) state.sessions.set(k, deserializeSession(v));
   state.jobsState = createJobsState();
   for (const [k, v] of snapshot.jobs) state.jobsState.jobs.set(k, deserializeJob(v));
+  for (const [k, v] of snapshot.incidents ?? []) state.incidents.set(k, v);
   return state;
 }
 

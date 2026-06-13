@@ -128,7 +128,15 @@ describe("heartbeat", () => {
       rescueVersion: "0.1.0",
       status: "online",
       capabilities: {
-        actions: ["restart_bee", "update_bee", "collect_bee_logs"],
+        actions: [
+          "restart_bee",
+          "update_bee",
+          "collect_bee_logs",
+          "diagnose_incident",
+          "restart_openclaw_gateway",
+          "restart_hermes_gateway",
+          "repair_imessage_bridge",
+        ],
         hardware: capabilities.hardware,
       },
     });
@@ -178,6 +186,10 @@ describe("jobs and events", () => {
       "update_bee",
       "restart_bee",
       "collect_bee_logs",
+      "diagnose_incident",
+      "restart_openclaw_gateway",
+      "restart_hermes_gateway",
+      "repair_imessage_bridge",
     ]) {
       const job = JobSchema.parse({
         id: `job_${type}`,

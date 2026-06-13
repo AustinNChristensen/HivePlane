@@ -140,61 +140,213 @@ describe("Hive server", () => {
       new Date("2026-05-09T20:02:02.000Z"),
     );
 
-    await withServer({ state, now: () => new Date("2026-05-09T20:02:04.000Z") }, async (baseUrl) => {
-      const response = await fetch(`${baseUrl}/api/rescue/heartbeat`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          type: "rescue.heartbeat",
-          beeId: "bee_rescue",
-          timestamp: "2026-05-09T20:02:03.000Z",
-          rescueVersion: "0.0.7",
-          status: "online",
-          capabilities: {
-            actions: ["restart_bee", "update_bee", "collect_bee_logs"],
-            hardware: {
-              platform: "darwin-arm64",
-              hostname: "bee-rescue",
-              cpuCores: 10,
-              memoryGb: 32,
+    await withServer(
+      { state, now: () => new Date("2026-05-09T20:02:04.000Z") },
+      async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/rescue/heartbeat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            type: "rescue.heartbeat",
+            beeId: "bee_rescue",
+            timestamp: "2026-05-09T20:02:03.000Z",
+            rescueVersion: "0.0.7",
+            status: "online",
+            capabilities: {
+              actions: ["restart_bee", "update_bee", "collect_bee_logs"],
+              hardware: {
+                platform: "darwin-arm64",
+                hostname: "bee-rescue",
+                cpuCores: 10,
+                memoryGb: 32,
+              },
             },
-          },
-        }),
-      });
-      expect(response.status).toBe(200);
-      const body = (await response.json()) as { jobs: Array<{ id: string; type: string }> };
-      expect(body.jobs).toEqual([expect.objectContaining({ id: restartJob.id })]);
-      expect(state.jobsState.jobs.get(restartJob.id)?.status).toBe("assigned");
-      expect(state.jobsState.jobs.get(shellJob.id)?.status).toBe("queued");
+          }),
+        });
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as { jobs: Array<{ id: string; type: string }> };
+        expect(body.jobs).toEqual([expect.objectContaining({ id: restartJob.id })]);
+        expect(state.jobsState.jobs.get(restartJob.id)?.status).toBe("assigned");
+        expect(state.jobsState.jobs.get(shellJob.id)?.status).toBe("queued");
 
-      const bees = (await (await fetch(`${baseUrl}/api/bees`)).json()) as {
-        bees: Array<{ beeId: string; rescue?: { status: string; rescueVersion: string } }>;
-      };
-      expect(bees.bees[0]).toMatchObject({
-        beeId: "bee_rescue",
-        rescue: { status: "online", rescueVersion: "0.0.7" },
-      });
-
-      const beeHeartbeat = await fetch(`${baseUrl}/api/bees/heartbeat`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          type: "bee.heartbeat",
+        const bees = (await (await fetch(`${baseUrl}/api/bees`)).json()) as {
+          bees: Array<{ beeId: string; rescue?: { status: string; rescueVersion: string } }>;
+        };
+        expect(bees.bees[0]).toMatchObject({
           beeId: "bee_rescue",
-          timestamp: "2026-05-09T20:02:05.000Z",
-          daemonVersion: "0.0.7",
+          rescue: { status: "online", rescueVersion: "0.0.7" },
+        });
+
+        const beeHeartbeat = await fetch(`${baseUrl}/api/bees/heartbeat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            type: "bee.heartbeat",
+            beeId: "bee_rescue",
+            timestamp: "2026-05-09T20:02:05.000Z",
+            daemonVersion: "0.0.7",
+            status: "online",
+            activeJobs: 0,
+            healthChecks: [],
+          }),
+        });
+        expect(beeHeartbeat.status).toBe(200);
+        const afterBeeHeartbeat = (await (await fetch(`${baseUrl}/api/bees`)).json()) as {
+          bees: Array<{ beeId: string; rescue?: { status: string; rescueVersion: string } }>;
+        };
+        expect(afterBeeHeartbeat.bees[0]?.rescue).toMatchObject({
           status: "online",
-          activeJobs: 0,
-          healthChecks: [],
+          rescueVersion: "0.0.7",
+        });
+      },
+    );
+  });
+
+  it("classifies intermittent Bees as expected offline during their grace window", async () => {
+    const state = createHiveServerState();
+    const bee = upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_laptop",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      healthChecks: [],
+    });
+    bee.profile = {
+      availabilityClass: "intermittent",
+      offlineGraceSeconds: 12 * 60 * 60,
+      expectedWindows: [],
+      criticalServices: [],
+      activeJobPolicy: "escalate",
+      autoRepairWhenOnline: true,
+    };
+
+    await withServer(
+      { state, now: () => new Date("2026-05-09T12:00:00.000Z") },
+      async (baseUrl) => {
+        const body = (await (await fetch(`${baseUrl}/api/bees`)).json()) as {
+          bees: Array<{ beeId: string; status: string; operationalState: string }>;
+          incidents: unknown[];
+        };
+
+        expect(body.bees).toEqual([
+          expect.objectContaining({
+            beeId: "bee_laptop",
+            status: "offline",
+            operationalState: "expected_offline",
+          }),
+        ]);
+        expect(body.incidents).toEqual([]);
+      },
+    );
+  });
+
+  it("queues a safe Rescue recovery job when an always-on Bee is stale", async () => {
+    const state = createHiveServerState();
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_server",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      healthChecks: [],
+    });
+
+    await withServer(
+      { state, now: () => new Date("2026-05-09T08:10:00.000Z") },
+      async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/rescue/heartbeat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            type: "rescue.heartbeat",
+            beeId: "bee_server",
+            timestamp: "2026-05-09T08:10:00.000Z",
+            rescueVersion: "0.0.7",
+            status: "online",
+            capabilities: {
+              actions: ["restart_bee", "collect_bee_logs"],
+              hardware: {
+                platform: "darwin-arm64",
+                hostname: "bee-server",
+                cpuCores: 10,
+                memoryGb: 32,
+              },
+            },
+          }),
+        });
+
+        expect(response.status).toBe(200);
+        const rescueBody = (await response.json()) as {
+          jobs: Array<{ id: string; type: string; payload: { incidentId?: string } }>;
+        };
+        expect(rescueBody.jobs).toEqual([
+          expect.objectContaining({
+            type: "diagnose_incident",
+            payload: expect.objectContaining({ incidentId: "bee_server:bee_offline" }),
+          }),
+          expect.objectContaining({
+            type: "restart_bee",
+            payload: { incidentId: "bee_server:bee_offline" },
+          }),
+        ]);
+
+        const body = (await (await fetch(`${baseUrl}/api/bees`)).json()) as {
+          bees: Array<{ beeId: string; operationalState: string }>;
+          incidents: Array<{ id: string; status: string; attempts: unknown[] }>;
+        };
+        expect(body.bees[0]).toMatchObject({
+          beeId: "bee_server",
+          operationalState: "recovering",
+        });
+        expect(body.incidents[0]).toMatchObject({
+          id: "bee_server:bee_offline",
+          status: "recovering",
+        });
+        expect(body.incidents[0]?.attempts).toHaveLength(1);
+      },
+    );
+  });
+
+  it("lets an admin update a Bee availability profile", async () => {
+    const state = createHiveServerState();
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_profile",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      healthChecks: [],
+    });
+
+    await withServer({ state, adminToken: "secret" }, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/bees/bee_profile/profile`, {
+        method: "PATCH",
+        headers: { authorization: "Bearer secret", "content-type": "application/json" },
+        body: JSON.stringify({
+          availabilityClass: "critical",
+          offlineGraceSeconds: 60,
+          criticalServices: ["openclaw-gateway"],
         }),
       });
-      expect(beeHeartbeat.status).toBe(200);
-      const afterBeeHeartbeat = (await (await fetch(`${baseUrl}/api/bees`)).json()) as {
-        bees: Array<{ beeId: string; rescue?: { status: string; rescueVersion: string } }>;
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        bee: {
+          profile: {
+            availabilityClass: string;
+            offlineGraceSeconds: number;
+            criticalServices: string[];
+          };
+        };
       };
-      expect(afterBeeHeartbeat.bees[0]?.rescue).toMatchObject({
-        status: "online",
-        rescueVersion: "0.0.7",
+      expect(body.bee.profile).toMatchObject({
+        availabilityClass: "critical",
+        offlineGraceSeconds: 60,
+        criticalServices: ["openclaw-gateway"],
       });
     });
   });

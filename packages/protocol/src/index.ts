@@ -171,6 +171,10 @@ export const JobTypeSchema = z.enum([
   "update_bee",
   "restart_bee",
   "collect_bee_logs",
+  "diagnose_incident",
+  "restart_openclaw_gateway",
+  "restart_hermes_gateway",
+  "repair_imessage_bridge",
 ]);
 
 export const JobSchema = z.object({

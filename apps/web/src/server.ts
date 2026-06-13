@@ -15,6 +15,7 @@ import {
   type BeePermissions,
   type BootstrapTokenCreateRequest,
   type JobType,
+  type JobStatus,
   type RescueHeartbeat,
 } from "@hiveplane/protocol";
 import {
@@ -57,8 +58,11 @@ export type HiveBeeRecord = {
   beeId: string;
   beeName?: string;
   publicKey?: string;
+  labels?: Record<string, string>;
   daemonVersion: string;
   status: BeeHeartbeat["status"];
+  operationalState?: BeeOperationalState;
+  profile: BeeDeviceProfile;
   activeJobs: number;
   capabilities?: BeeCapabilities;
   permissions?: BeePermissions;
@@ -73,6 +77,49 @@ export type HiveBeeRecord = {
   firstSeenAt: string;
   lastSeenAt: string;
   heartbeatCount: number;
+};
+
+export type BeeAvailabilityClass = "always_on" | "intermittent" | "ephemeral" | "critical";
+export type BeeOperationalState =
+  | "healthy"
+  | "expected_offline"
+  | "stale_watching"
+  | "degraded"
+  | "recovering"
+  | "needs_approval"
+  | "unresolved_incident";
+
+export type BeeDeviceProfile = {
+  availabilityClass: BeeAvailabilityClass;
+  offlineGraceSeconds: number;
+  expectedWindows: string[];
+  criticalServices: string[];
+  activeJobPolicy: "watch" | "escalate";
+  autoRepairWhenOnline: boolean;
+};
+
+export type IncidentStatus = "open" | "recovering" | "needs_approval" | "resolved" | "unresolved";
+export type IncidentSeverity = "info" | "warning" | "critical";
+
+export type IncidentAttempt = {
+  jobId: string;
+  action: JobType;
+  queuedAt: string;
+};
+
+export type IncidentRecord = {
+  id: string;
+  beeId: string;
+  kind: string;
+  status: IncidentStatus;
+  severity: IncidentSeverity;
+  summary: string;
+  detectedAt: string;
+  updatedAt: string;
+  resolvedAt?: string;
+  nextAction?: JobType;
+  attempts: IncidentAttempt[];
+  lastDiagnosis?: string;
 };
 
 /**
@@ -110,6 +157,8 @@ export type HiveServerState = {
   pairingAttempts: Map<string, PairingAttemptRecord>;
   /** Jobs keyed by jobId (queued/assigned/running/...) — see jobs.ts. */
   jobsState: JobsState;
+  /** Incidents keyed by deterministic bee/kind IDs. */
+  incidents: Map<string, IncidentRecord>;
 };
 
 export type CreateHiveServerOptions = {
@@ -148,6 +197,7 @@ export function createHiveServerState(): HiveServerState {
     retiredPairingKeys: [],
     pairingAttempts: new Map(),
     jobsState: createJobsState(),
+    incidents: new Map(),
   };
 }
 
@@ -234,8 +284,10 @@ export function upsertBeeHeartbeat(
     beeId: heartbeat.beeId,
     ...(existing?.beeName ? { beeName: existing.beeName } : {}),
     ...(existing?.publicKey ? { publicKey: existing.publicKey } : {}),
+    ...(existing?.labels ? { labels: existing.labels } : {}),
     daemonVersion: heartbeat.daemonVersion,
     status: heartbeat.status,
+    profile: existing?.profile ?? defaultDeviceProfile(existing?.labels),
     activeJobs: heartbeat.activeJobs,
     healthChecks: heartbeat.healthChecks,
     firstSeenAt: existing?.firstSeenAt ?? timestamp,
@@ -263,6 +315,7 @@ export function upsertRescueHeartbeat(
         beeId: heartbeat.beeId,
         daemonVersion: "unknown",
         status: "offline",
+        profile: defaultDeviceProfile(),
         activeJobs: 0,
         healthChecks: [],
         firstSeenAt: timestamp,
@@ -315,9 +368,35 @@ const INSTALL_SCRIPT_NAMES = new Set(["bee.sh", "hive.sh"]);
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 const OFFLINE_AFTER_MS = 2 * 60 * 1000;
+const INCIDENT_ATTEMPT_COOLDOWN_MS = 5 * 60 * 1000;
+const INCIDENT_MAX_ATTEMPTS = 3;
 
 const HIVE_VERSION = "0.0.7";
-const RESCUE_JOB_TYPES: readonly JobType[] = ["restart_bee", "update_bee", "collect_bee_logs"];
+const RESCUE_JOB_TYPES: readonly JobType[] = [
+  "restart_bee",
+  "update_bee",
+  "collect_bee_logs",
+  "diagnose_incident",
+  "restart_openclaw_gateway",
+  "restart_hermes_gateway",
+  "repair_imessage_bridge",
+];
+const AUTO_APPROVED_JOB_TYPES = new Set<JobType>([
+  "run_healthcheck",
+  "openclaw_status",
+  "ollama_status",
+  "ollama_list_models",
+  "diagnose_incident",
+  "restart_bee",
+  "collect_bee_logs",
+  "restart_openclaw_gateway",
+  "restart_hermes_gateway",
+]);
+const HEALTHCHECK_RUNBOOKS: Record<string, JobType> = {
+  "openclaw-gateway": "restart_openclaw_gateway",
+  "hermes-gateway": "restart_hermes_gateway",
+  "hiveplane-bee": "restart_bee",
+};
 
 export function createHiveServer(options: CreateHiveServerOptions = {}) {
   const state = options.state ?? createHiveServerState();
@@ -388,7 +467,11 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
       }
 
       if (request.method === "GET" && url.pathname === "/api/bees") {
-        return sendJson(response, 200, { bees: serializeBees(state, now()) });
+        const current = now();
+        return sendJson(response, 200, {
+          bees: serializeBees(state, current),
+          incidents: serializeIncidents(state, current),
+        });
       }
 
       const deleteBeeMatch = /^\/api\/bees\/([^/]+)$/.exec(url.pathname);
@@ -400,6 +483,20 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         }
         markDirty();
         return sendJson(response, 200, { deleted: true, beeId });
+      }
+
+      const patchBeeProfileMatch = /^\/api\/bees\/([^/]+)\/profile$/.exec(url.pathname);
+      if (request.method === "PATCH" && patchBeeProfileMatch) {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const beeId = decodeURIComponent(patchBeeProfileMatch[1] ?? "");
+        const bee = state.bees.get(beeId);
+        if (!bee) {
+          return sendJson(response, 404, { error: "not_found", reason: "bee not registered" });
+        }
+        const { body } = await readJson(request);
+        bee.profile = parseDeviceProfilePatch(body, bee.profile);
+        markDirty();
+        return sendJson(response, 200, { bee: serializeBee(bee, now()) });
       }
 
       if (request.method === "POST" && url.pathname === "/api/bootstrap-tokens") {
@@ -478,6 +575,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           return sendJson(response, 401, { error: "unauthorized", reason: authResult.reason });
         }
         const bee = upsertBeeHeartbeat(state, heartbeat, now());
+        evaluateBeeAutomation(state, heartbeat.beeId, now());
         // Hand back any pending jobs and mark them as assigned.
         const jobs = claimPendingJobs(state.jobsState, heartbeat.beeId, now(), {
           excludeTypes: RESCUE_JOB_TYPES,
@@ -501,6 +599,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           return sendJson(response, 401, { error: "unauthorized", reason: authResult.reason });
         }
         const bee = upsertRescueHeartbeat(state, heartbeat, now());
+        evaluateBeeAutomation(state, heartbeat.beeId, now());
         const jobs = claimPendingJobs(state.jobsState, heartbeat.beeId, now(), {
           types: RESCUE_JOB_TYPES,
         });
@@ -622,6 +721,11 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         const beeId = url.searchParams.get("beeId") ?? undefined;
         const jobs = listJobs(state.jobsState, beeId ? { beeId } : undefined).map(serializeJob);
         return sendJson(response, 200, { jobs });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/incidents") {
+        if (!checkAdmin(request, response, adminToken)) return;
+        return sendJson(response, 200, { incidents: serializeIncidents(state, now()) });
       }
 
       if (request.method === "GET" && url.pathname.startsWith("/install/")) {
@@ -839,15 +943,19 @@ function finalizeRegistration(
   const sessionExpiresAt = new Date(now.getTime() + SESSION_TTL_SECONDS * 1000);
 
   const existing = state.bees.get(beeId);
+  const labels = request.labels;
   state.bees.set(beeId, {
     beeId,
     beeName: request.beeName,
     publicKey: request.publicKey,
+    labels,
     daemonVersion: request.daemonVersion,
     status: "offline",
+    profile: existing?.profile ?? defaultDeviceProfile(labels, request.beeName),
     activeJobs: 0,
     capabilities: request.capabilities,
     ...(existing?.permissions ? { permissions: existing.permissions } : {}),
+    ...(existing?.rescue ? { rescue: existing.rescue } : {}),
     healthChecks: [],
     firstSeenAt: existing?.firstSeenAt ?? now.toISOString(),
     lastSeenAt: existing?.lastSeenAt ?? now.toISOString(),
@@ -1020,10 +1128,7 @@ function serializeJob(job: JobRecord): Record<string, unknown> {
 }
 
 function jobNeedsApproval(job: JobRecord): boolean {
-  if (job.type === "run_healthcheck") return false;
-  if (job.type === "openclaw_status") return false;
-  if (job.type === "ollama_status") return false;
-  if (job.type === "ollama_list_models") return false;
+  if (AUTO_APPROVED_JOB_TYPES.has(job.type)) return false;
   if (job.type === "run_command") {
     const command = typeof job.payload.command === "string" ? job.payload.command : "";
     const basename = command.trim().split("/").pop() ?? command.trim();
@@ -1033,22 +1138,404 @@ function jobNeedsApproval(job: JobRecord): boolean {
 }
 
 function serializeBees(state: HiveServerState, now: Date): HiveBeeRecord[] {
-  return [...state.bees.values()].map((bee) => {
-    const rescue = bee.rescue
-      ? {
-          ...bee.rescue,
-          status:
-            now.getTime() - new Date(bee.rescue.lastSeenAt).getTime() > OFFLINE_AFTER_MS
-              ? "offline"
-              : bee.rescue.status,
-        }
-      : undefined;
-    const lastSeenMs = new Date(bee.lastSeenAt).getTime();
-    if (Number.isFinite(lastSeenMs) && now.getTime() - lastSeenMs > OFFLINE_AFTER_MS) {
-      return rescue ? { ...bee, status: "offline", rescue } : { ...bee, status: "offline" };
+  return [...state.bees.values()].map((bee) => serializeBee(bee, now, state));
+}
+
+function serializeBee(bee: HiveBeeRecord, now: Date, state?: HiveServerState): HiveBeeRecord {
+  const rescue = bee.rescue
+    ? {
+        ...bee.rescue,
+        status:
+          now.getTime() - new Date(bee.rescue.lastSeenAt).getTime() > OFFLINE_AFTER_MS
+            ? "offline"
+            : bee.rescue.status,
+      }
+    : undefined;
+  const lastSeenMs = new Date(bee.lastSeenAt).getTime();
+  const status =
+    Number.isFinite(lastSeenMs) && now.getTime() - lastSeenMs > OFFLINE_AFTER_MS
+      ? "offline"
+      : bee.status;
+  const withStatus = rescue ? { ...bee, status, rescue } : { ...bee, status };
+  return { ...withStatus, operationalState: computeOperationalState(withStatus, now, state) };
+}
+
+function serializeIncidents(state: HiveServerState, _now: Date): IncidentRecord[] {
+  return [...state.incidents.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+function defaultDeviceProfile(labels: Record<string, string> = {}, beeName = ""): BeeDeviceProfile {
+  const rawClass =
+    labels.availability_class ??
+    labels.availabilityClass ??
+    labels.availability ??
+    inferAvailabilityClass(beeName);
+  const availabilityClass = parseAvailabilityClass(rawClass) ?? "always_on";
+  const offlineGraceSeconds =
+    parsePositiveInt(labels.offline_grace_seconds ?? labels.offlineGraceSeconds) ??
+    defaultOfflineGraceSeconds(availabilityClass);
+  const criticalServices = parseCsv(labels.critical_services ?? labels.criticalServices);
+
+  return {
+    availabilityClass,
+    offlineGraceSeconds,
+    expectedWindows: parseCsv(labels.expected_windows ?? labels.expectedWindows),
+    criticalServices,
+    activeJobPolicy: labels.active_job_policy === "watch" ? "watch" : "escalate",
+    autoRepairWhenOnline: labels.auto_repair_when_online !== "false",
+  };
+}
+
+function parseDeviceProfilePatch(body: unknown, existing: BeeDeviceProfile): BeeDeviceProfile {
+  if (!body || typeof body !== "object") return existing;
+  const input = body as Record<string, unknown>;
+  const availabilityClass =
+    typeof input.availabilityClass === "string"
+      ? (parseAvailabilityClass(input.availabilityClass) ?? existing.availabilityClass)
+      : existing.availabilityClass;
+  const offlineGraceSeconds =
+    typeof input.offlineGraceSeconds === "number" &&
+    Number.isInteger(input.offlineGraceSeconds) &&
+    input.offlineGraceSeconds > 0
+      ? input.offlineGraceSeconds
+      : existing.offlineGraceSeconds;
+  const expectedWindows = Array.isArray(input.expectedWindows)
+    ? input.expectedWindows.filter((value): value is string => typeof value === "string")
+    : existing.expectedWindows;
+  const criticalServices = Array.isArray(input.criticalServices)
+    ? input.criticalServices.filter((value): value is string => typeof value === "string")
+    : existing.criticalServices;
+  const activeJobPolicy =
+    input.activeJobPolicy === "watch" || input.activeJobPolicy === "escalate"
+      ? input.activeJobPolicy
+      : existing.activeJobPolicy;
+
+  return {
+    availabilityClass,
+    offlineGraceSeconds,
+    expectedWindows,
+    criticalServices,
+    activeJobPolicy,
+    autoRepairWhenOnline:
+      typeof input.autoRepairWhenOnline === "boolean"
+        ? input.autoRepairWhenOnline
+        : existing.autoRepairWhenOnline,
+  };
+}
+
+function parseAvailabilityClass(value: string | undefined): BeeAvailabilityClass | undefined {
+  if (
+    value === "always_on" ||
+    value === "intermittent" ||
+    value === "ephemeral" ||
+    value === "critical"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function inferAvailabilityClass(beeName: string): BeeAvailabilityClass {
+  return /macbook|laptop|mbp/i.test(beeName) ? "intermittent" : "always_on";
+}
+
+function defaultOfflineGraceSeconds(availabilityClass: BeeAvailabilityClass): number {
+  if (availabilityClass === "critical") return 60;
+  if (availabilityClass === "always_on") return 120;
+  if (availabilityClass === "intermittent") return 12 * 60 * 60;
+  return 24 * 60 * 60;
+}
+
+function parsePositiveInt(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function parseCsv(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function computeOperationalState(
+  bee: HiveBeeRecord,
+  now: Date,
+  state?: HiveServerState,
+): BeeOperationalState {
+  const activeIncident = state
+    ? [...state.incidents.values()].find(
+        (incident) =>
+          incident.beeId === bee.beeId &&
+          (incident.status === "open" ||
+            incident.status === "recovering" ||
+            incident.status === "needs_approval" ||
+            incident.status === "unresolved"),
+      )
+    : undefined;
+  if (activeIncident?.status === "recovering") return "recovering";
+  if (activeIncident?.status === "needs_approval") return "needs_approval";
+  if (activeIncident?.status === "unresolved") return "unresolved_incident";
+
+  if (bee.status === "offline") {
+    const staleMs = now.getTime() - new Date(bee.lastSeenAt).getTime();
+    const graceMs = bee.profile.offlineGraceSeconds * 1000;
+    if (bee.activeJobs > 0 && bee.profile.activeJobPolicy === "escalate") return "degraded";
+    if (staleMs <= OFFLINE_AFTER_MS) return "healthy";
+    if (staleMs <= graceMs) return "expected_offline";
+    return bee.profile.availabilityClass === "intermittent" ||
+      bee.profile.availabilityClass === "ephemeral"
+      ? "stale_watching"
+      : "unresolved_incident";
+  }
+
+  if (bee.status === "degraded" || bee.healthChecks.some((check) => check.status === "failing")) {
+    return "degraded";
+  }
+  return "healthy";
+}
+
+function evaluateBeeAutomation(state: HiveServerState, beeId: string, now: Date): void {
+  const bee = serializeBee(state.bees.get(beeId)!, now);
+  closeResolvedIncidents(state, bee, now);
+  evaluateOfflineIncident(state, bee, now);
+  evaluateHealthIncidents(state, bee, now);
+}
+
+function closeResolvedIncidents(state: HiveServerState, bee: HiveBeeRecord, now: Date): void {
+  for (const incident of state.incidents.values()) {
+    if (incident.beeId !== bee.beeId) continue;
+    if (incident.status === "resolved") continue;
+    if (incident.kind === "bee_offline" && bee.status !== "offline") {
+      resolveIncident(incident, now, "Bee heartbeat recovered.");
+      continue;
     }
-    return rescue ? { ...bee, rescue } : bee;
+    if (incident.kind.startsWith("health:")) {
+      const checkName = incident.kind.slice("health:".length);
+      const check = bee.healthChecks.find((candidate) => candidate.name === checkName);
+      if (check?.status === "passing") {
+        resolveIncident(incident, now, `${checkName} health check recovered.`);
+      }
+    }
+  }
+}
+
+function evaluateOfflineIncident(state: HiveServerState, bee: HiveBeeRecord, now: Date): void {
+  if (bee.status !== "offline") return;
+
+  const staleMs = now.getTime() - new Date(bee.lastSeenAt).getTime();
+  const graceMs =
+    bee.activeJobs > 0 && bee.profile.activeJobPolicy === "escalate"
+      ? Math.min(5 * 60 * 1000, bee.profile.offlineGraceSeconds * 1000)
+      : bee.profile.offlineGraceSeconds * 1000;
+  if (staleMs <= graceMs) return;
+
+  const incident = ensureIncident(state, {
+    beeId: bee.beeId,
+    kind: "bee_offline",
+    severity:
+      bee.profile.availabilityClass === "critical" || bee.profile.availabilityClass === "always_on"
+        ? "critical"
+        : "warning",
+    summary: `${bee.beeName ?? bee.beeId} is offline outside its expected availability policy.`,
+    now,
   });
+  incident.lastDiagnosis =
+    "Hive classified this as a Bee availability incident using the device profile, last heartbeat, active job count, and Rescue status.";
+
+  if (bee.rescue?.status === "online") {
+    queueAutoRecovery(state, incident, bee, "restart_bee", now);
+  } else {
+    markUnresolved(
+      incident,
+      now,
+      "Rescue is not online, so HivePlane cannot safely repair this Bee automatically.",
+    );
+  }
+}
+
+function evaluateHealthIncidents(state: HiveServerState, bee: HiveBeeRecord, now: Date): void {
+  if (bee.status === "offline") return;
+  for (const check of bee.healthChecks) {
+    if (check.status !== "failing") continue;
+    const kind = `health:${check.name}`;
+    const action = HEALTHCHECK_RUNBOOKS[check.name];
+    const incident = ensureIncident(state, {
+      beeId: bee.beeId,
+      kind,
+      severity: bee.profile.criticalServices.includes(check.name) ? "critical" : "warning",
+      summary: `${bee.beeName ?? bee.beeId} has a failing ${check.name} health check.`,
+      now,
+    });
+    incident.lastDiagnosis = `Hive classified ${check.name} as a failing service from the Bee health report. ${
+      action ? `The safest known runbook is ${action}.` : "No safe automatic runbook is known yet."
+    }`;
+    if (!action) {
+      if (bee.rescue?.status === "online") queueAiDiagnosis(state, incident, bee, now);
+      markNeedsApproval(incident, now, "No allowlisted auto-repair action exists for this check.");
+      continue;
+    }
+    if (bee.rescue?.status === "online") {
+      queueAutoRecovery(state, incident, bee, action, now);
+    } else {
+      markUnresolved(
+        incident,
+        now,
+        "Rescue is not online, so the known runbook cannot be executed automatically.",
+      );
+    }
+  }
+}
+
+function ensureIncident(
+  state: HiveServerState,
+  input: {
+    beeId: string;
+    kind: string;
+    severity: IncidentSeverity;
+    summary: string;
+    now: Date;
+  },
+): IncidentRecord {
+  const id = `${input.beeId}:${input.kind}`;
+  const existing = state.incidents.get(id);
+  if (existing && existing.status !== "resolved") {
+    existing.updatedAt = input.now.toISOString();
+    existing.summary = input.summary;
+    existing.severity = input.severity;
+    return existing;
+  }
+  const incident: IncidentRecord = {
+    id,
+    beeId: input.beeId,
+    kind: input.kind,
+    status: "open",
+    severity: input.severity,
+    summary: input.summary,
+    detectedAt: input.now.toISOString(),
+    updatedAt: input.now.toISOString(),
+    attempts: [],
+  };
+  state.incidents.set(id, incident);
+  return incident;
+}
+
+function resolveIncident(incident: IncidentRecord, now: Date, diagnosis: string): void {
+  incident.status = "resolved";
+  incident.updatedAt = now.toISOString();
+  incident.resolvedAt = now.toISOString();
+  incident.lastDiagnosis = diagnosis;
+  delete incident.nextAction;
+}
+
+function markNeedsApproval(incident: IncidentRecord, now: Date, diagnosis: string): void {
+  incident.status = "needs_approval";
+  incident.updatedAt = now.toISOString();
+  incident.lastDiagnosis = diagnosis;
+}
+
+function markUnresolved(incident: IncidentRecord, now: Date, diagnosis: string): void {
+  incident.status = "unresolved";
+  incident.updatedAt = now.toISOString();
+  incident.lastDiagnosis = diagnosis;
+}
+
+function queueAutoRecovery(
+  state: HiveServerState,
+  incident: IncidentRecord,
+  bee: HiveBeeRecord,
+  action: JobType,
+  now: Date,
+): void {
+  if (!bee.profile.autoRepairWhenOnline && bee.status !== "offline") {
+    markNeedsApproval(incident, now, "Auto-repair is disabled for this Bee profile.");
+    return;
+  }
+  if (!AUTO_APPROVED_JOB_TYPES.has(action)) {
+    queueAiDiagnosis(state, incident, bee, now);
+    incident.nextAction = action;
+    markNeedsApproval(incident, now, `${action} requires operator approval.`);
+    return;
+  }
+  if (incident.attempts.length >= INCIDENT_MAX_ATTEMPTS) {
+    markUnresolved(incident, now, `${action} already reached the automatic retry limit.`);
+    return;
+  }
+  const lastAttempt = incident.attempts.at(-1);
+  if (
+    lastAttempt &&
+    now.getTime() - new Date(lastAttempt.queuedAt).getTime() < INCIDENT_ATTEMPT_COOLDOWN_MS
+  ) {
+    incident.status = "recovering";
+    incident.updatedAt = now.toISOString();
+    incident.nextAction = action;
+    return;
+  }
+  if (hasActiveJob(state, bee.beeId, action)) {
+    queueAiDiagnosis(state, incident, bee, now);
+    incident.status = "recovering";
+    incident.updatedAt = now.toISOString();
+    incident.nextAction = action;
+    return;
+  }
+
+  queueAiDiagnosis(state, incident, bee, now);
+  const job = createJob(
+    state.jobsState,
+    bee.beeId,
+    { type: action, payload: { incidentId: incident.id } },
+    now,
+  );
+  incident.status = "recovering";
+  incident.updatedAt = now.toISOString();
+  incident.nextAction = action;
+  incident.attempts.push({ jobId: job.id, action, queuedAt: now.toISOString() });
+}
+
+function queueAiDiagnosis(
+  state: HiveServerState,
+  incident: IncidentRecord,
+  bee: HiveBeeRecord,
+  now: Date,
+): void {
+  if (incident.attempts.length > 0) return;
+  if (hasActiveJob(state, bee.beeId, "diagnose_incident")) return;
+  createJob(
+    state.jobsState,
+    bee.beeId,
+    {
+      type: "diagnose_incident",
+      payload: {
+        incidentId: incident.id,
+        kind: incident.kind,
+        severity: incident.severity,
+        summary: incident.summary,
+        detectedAt: incident.detectedAt,
+        healthChecks: bee.healthChecks,
+        profile: bee.profile,
+        lastSeenAt: bee.lastSeenAt,
+        status: bee.status,
+        queuedAt: now.toISOString(),
+      },
+    },
+    now,
+  );
+}
+
+function hasActiveJob(state: HiveServerState, beeId: string, action: JobType): boolean {
+  const activeStatuses = new Set<JobStatus>([
+    "created",
+    "queued",
+    "assigned",
+    "accepted_by_bee",
+    "running",
+    "waiting_for_approval",
+  ]);
+  return [...state.jobsState.jobs.values()].some(
+    (job) => job.beeId === beeId && job.type === action && activeStatuses.has(job.status),
+  );
 }
 
 function headerString(request: IncomingMessage, name: string): string | undefined {
