@@ -64,5 +64,10 @@ Goal: HivePlane should operate AI agent machines with an AI brain and constraine
 - [x] Auto-recovery evaluator queues safe runbook jobs.
 - [x] Dashboard shows profile, operational state, incidents, and recovery history.
 - [x] Local AI diagnosis/planner can produce a bounded repair recommendation.
-- [ ] Verification closes incidents only after health checks recover.
-- [ ] Notifications fire only for unresolved/approval-needed incidents.
+- [x] Verification closes incidents only after health checks recover.
+- [x] Notifications fire only for unresolved/approval-needed incidents.
+
+## Remaining Follow-up
+
+- Wire queued incident notifications to the eventual delivery channel (dashboard badge, iMessage, email, or webhook). The incident model now dedupes `needs_approval` and `unresolved` notifications, but delivery is intentionally separate.
+- Add a dashboard profile editor so operators can change Bee profiles without calling the API directly.

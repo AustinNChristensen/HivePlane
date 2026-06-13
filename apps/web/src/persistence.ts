@@ -215,7 +215,9 @@ function rehydrate(snapshot: PersistedSnapshot): HiveServerState {
   for (const [k, v] of snapshot.sessions) state.sessions.set(k, deserializeSession(v));
   state.jobsState = createJobsState();
   for (const [k, v] of snapshot.jobs) state.jobsState.jobs.set(k, deserializeJob(v));
-  for (const [k, v] of snapshot.incidents ?? []) state.incidents.set(k, v);
+  for (const [k, v] of snapshot.incidents ?? []) {
+    state.incidents.set(k, { ...v, notifications: v.notifications ?? [] });
+  }
   return state;
 }
 

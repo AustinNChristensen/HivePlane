@@ -1063,6 +1063,7 @@
                 <th>Summary</th>
                 <th>Next action</th>
                 <th>Attempts</th>
+                <th>Alerts</th>
                 <th>Updated</th>
               </tr>
             </thead>
@@ -1081,6 +1082,7 @@
                       </td>
                       <td><span class="mono">${escapeHtml(incident.nextAction || "—")}</span></td>
                       <td>${escapeHtml(incident.attempts?.length ?? 0)}</td>
+                      <td>${renderIncidentNotifications(incident.notifications || [])}</td>
                       <td title="${escapeHtml(incident.updatedAt || "")}">${relativeTime(incident.updatedAt)}</td>
                     </tr>
                   `,
@@ -1088,6 +1090,15 @@
                 .join("")}
             </tbody>
           </table>`;
+      }
+
+      function renderIncidentNotifications(notifications) {
+        if (!notifications.length) return '<span class="mono">—</span>';
+        return notifications
+          .map((notification) =>
+            pill(notification.status || "queued", notification.status || "warning"),
+          )
+          .join(" ");
       }
       function renderHealthChecks(checks) {
         if (!checks.length) return '<span class="mono">—</span>';

@@ -310,6 +310,177 @@ describe("Hive server", () => {
     );
   });
 
+  it("verifies a successful repair before resolving an incident", async () => {
+    const state = createHiveServerState();
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_verify",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      healthChecks: [],
+    });
+
+    await withServer(
+      { state, now: () => new Date("2026-05-09T08:10:00.000Z") },
+      async (baseUrl) => {
+        const rescueResponse = await fetch(`${baseUrl}/api/rescue/heartbeat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            type: "rescue.heartbeat",
+            beeId: "bee_verify",
+            timestamp: "2026-05-09T08:10:00.000Z",
+            rescueVersion: "0.0.7",
+            status: "online",
+            capabilities: {
+              actions: ["restart_bee", "collect_bee_logs"],
+              hardware: {
+                platform: "darwin-arm64",
+                hostname: "bee-verify",
+                cpuCores: 10,
+                memoryGb: 32,
+              },
+            },
+          }),
+        });
+        const rescueBody = (await rescueResponse.json()) as {
+          jobs: Array<{ id: string; type: string }>;
+        };
+        const repairJob = rescueBody.jobs.find((job) => job.type === "restart_bee");
+        expect(repairJob).toBeDefined();
+
+        const repairComplete = await fetch(`${baseUrl}/api/jobs/${repairJob?.id}/complete`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            type: "job.complete",
+            jobId: repairJob?.id,
+            beeId: "bee_verify",
+            status: "succeeded",
+            output: { restarted: true },
+            completedAt: "2026-05-09T08:10:05.000Z",
+          }),
+        });
+        expect(repairComplete.status).toBe(200);
+
+        let body = (await (await fetch(`${baseUrl}/api/bees`)).json()) as {
+          incidents: Array<{
+            status: string;
+            verification?: { jobId: string; status?: string };
+          }>;
+        };
+        expect(body.incidents[0]).toMatchObject({
+          status: "recovering",
+          verification: expect.objectContaining({ jobId: expect.any(String) }),
+        });
+        expect(body.incidents[0]?.verification?.status).toBeUndefined();
+
+        const beeHeartbeat = await fetch(`${baseUrl}/api/bees/heartbeat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            type: "bee.heartbeat",
+            beeId: "bee_verify",
+            timestamp: "2026-05-09T08:10:10.000Z",
+            daemonVersion: "0.0.7",
+            status: "online",
+            activeJobs: 0,
+            healthChecks: [],
+          }),
+        });
+        const beeBody = (await beeHeartbeat.json()) as {
+          jobs: Array<{ id: string; type: string; payload: { incidentId?: string } }>;
+        };
+        const verificationJob = beeBody.jobs.find((job) => job.type === "run_healthcheck");
+        expect(verificationJob).toBeDefined();
+        body = (await (await fetch(`${baseUrl}/api/bees`)).json()) as typeof body;
+        expect(body.incidents[0]?.status).toBe("recovering");
+
+        const verificationComplete = await fetch(
+          `${baseUrl}/api/jobs/${verificationJob?.id}/complete`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              type: "job.complete",
+              jobId: verificationJob?.id,
+              beeId: "bee_verify",
+              status: "succeeded",
+              output: { ok: true },
+              completedAt: "2026-05-09T08:10:15.000Z",
+            }),
+          },
+        );
+        expect(verificationComplete.status).toBe(200);
+
+        await fetch(`${baseUrl}/api/bees/heartbeat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            type: "bee.heartbeat",
+            beeId: "bee_verify",
+            timestamp: "2026-05-09T08:10:20.000Z",
+            daemonVersion: "0.0.7",
+            status: "online",
+            activeJobs: 0,
+            healthChecks: [],
+          }),
+        });
+
+        body = (await (await fetch(`${baseUrl}/api/bees`)).json()) as typeof body;
+        expect(body.incidents[0]).toMatchObject({
+          status: "resolved",
+          verification: expect.objectContaining({ status: "succeeded" }),
+        });
+      },
+    );
+  });
+
+  it("dedupes incident notifications for approval-required failures", async () => {
+    const state = createHiveServerState();
+
+    await withServer(
+      { state, now: () => new Date("2026-05-09T08:00:00.000Z") },
+      async (baseUrl) => {
+        const heartbeat = {
+          type: "bee.heartbeat",
+          beeId: "bee_notify",
+          timestamp: "2026-05-09T08:00:00.000Z",
+          daemonVersion: "0.0.7",
+          status: "degraded",
+          activeJobs: 0,
+          healthChecks: [
+            {
+              name: "unknown-ai-runtime",
+              status: "failing",
+              checkedAt: "2026-05-09T08:00:00.000Z",
+              message: "runtime not responding",
+            },
+          ],
+        };
+
+        for (let i = 0; i < 2; i += 1) {
+          const response = await fetch(`${baseUrl}/api/bees/heartbeat`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(heartbeat),
+          });
+          expect(response.status).toBe(200);
+        }
+
+        const body = (await (await fetch(`${baseUrl}/api/bees`)).json()) as {
+          incidents: Array<{ status: string; notifications: Array<{ status: string }> }>;
+        };
+        expect(body.incidents[0]).toMatchObject({
+          status: "needs_approval",
+          notifications: [{ status: "needs_approval" }],
+        });
+      },
+    );
+  });
+
   it("lets an admin update a Bee availability profile", async () => {
     const state = createHiveServerState();
     upsertBeeHeartbeat(state, {

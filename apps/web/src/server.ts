@@ -105,6 +105,21 @@ export type IncidentAttempt = {
   jobId: string;
   action: JobType;
   queuedAt: string;
+  completedAt?: string;
+  status?: JobStatus;
+};
+
+export type IncidentVerification = {
+  jobId: string;
+  queuedAt: string;
+  completedAt?: string;
+  status?: JobStatus;
+};
+
+export type IncidentNotification = {
+  status: Extract<IncidentStatus, "needs_approval" | "unresolved">;
+  queuedAt: string;
+  message: string;
 };
 
 export type IncidentRecord = {
@@ -119,6 +134,8 @@ export type IncidentRecord = {
   resolvedAt?: string;
   nextAction?: JobType;
   attempts: IncidentAttempt[];
+  verification?: IncidentVerification;
+  notifications: IncidentNotification[];
   lastDiagnosis?: string;
 };
 
@@ -701,6 +718,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           return sendJson(response, 403, { error: "forbidden", reason: "job is not yours" });
         }
         const updated = completeJob(state.jobsState, jobId, parsed.data, now());
+        if (updated) onJobCompleted(state, updated, now());
         markDirty();
         return sendJson(response, 200, { job: updated ? serializeJob(updated) : null });
       }
@@ -1308,15 +1326,16 @@ function closeResolvedIncidents(state: HiveServerState, bee: HiveBeeRecord, now:
   for (const incident of state.incidents.values()) {
     if (incident.beeId !== bee.beeId) continue;
     if (incident.status === "resolved") continue;
+    if (!incidentHasSuccessfulVerification(incident)) continue;
     if (incident.kind === "bee_offline" && bee.status !== "offline") {
-      resolveIncident(incident, now, "Bee heartbeat recovered.");
+      resolveIncident(incident, now, "Bee heartbeat recovered after verification.");
       continue;
     }
     if (incident.kind.startsWith("health:")) {
       const checkName = incident.kind.slice("health:".length);
       const check = bee.healthChecks.find((candidate) => candidate.name === checkName);
       if (check?.status === "passing") {
-        resolveIncident(incident, now, `${checkName} health check recovered.`);
+        resolveIncident(incident, now, `${checkName} health check recovered after verification.`);
       }
     }
   }
@@ -1417,6 +1436,7 @@ function ensureIncident(
     detectedAt: input.now.toISOString(),
     updatedAt: input.now.toISOString(),
     attempts: [],
+    notifications: [],
   };
   state.incidents.set(id, incident);
   return incident;
@@ -1434,12 +1454,14 @@ function markNeedsApproval(incident: IncidentRecord, now: Date, diagnosis: strin
   incident.status = "needs_approval";
   incident.updatedAt = now.toISOString();
   incident.lastDiagnosis = diagnosis;
+  queueIncidentNotification(incident, "needs_approval", now);
 }
 
 function markUnresolved(incident: IncidentRecord, now: Date, diagnosis: string): void {
   incident.status = "unresolved";
   incident.updatedAt = now.toISOString();
   incident.lastDiagnosis = diagnosis;
+  queueIncidentNotification(incident, "unresolved", now);
 }
 
 function queueAutoRecovery(
@@ -1492,6 +1514,114 @@ function queueAutoRecovery(
   incident.updatedAt = now.toISOString();
   incident.nextAction = action;
   incident.attempts.push({ jobId: job.id, action, queuedAt: now.toISOString() });
+}
+
+function onJobCompleted(state: HiveServerState, job: JobRecord, now: Date): void {
+  const incidentId = typeof job.payload.incidentId === "string" ? job.payload.incidentId : "";
+  if (!incidentId) return;
+  const incident = state.incidents.get(incidentId);
+  if (!incident || incident.status === "resolved") return;
+
+  const attempt = incident.attempts.find((candidate) => candidate.jobId === job.id);
+  if (attempt) {
+    attempt.completedAt = now.toISOString();
+    attempt.status = job.status;
+  }
+
+  if (incident.verification?.jobId === job.id) {
+    incident.verification.completedAt = now.toISOString();
+    incident.verification.status = job.status;
+    incident.updatedAt = now.toISOString();
+    if (job.status !== "succeeded") {
+      markUnresolved(incident, now, "Post-repair verification job failed.");
+    }
+    return;
+  }
+
+  if (job.type === "diagnose_incident") {
+    if (job.status === "succeeded") {
+      updateIncidentFromAiDiagnosis(incident, job, now);
+    }
+    return;
+  }
+
+  if (job.type === "run_healthcheck") return;
+  if (!attempt) return;
+
+  if (job.status === "succeeded") {
+    queueVerificationJob(state, incident, job.beeId, now);
+  } else {
+    markUnresolved(incident, now, `${job.type} failed before recovery could be verified.`);
+  }
+}
+
+function updateIncidentFromAiDiagnosis(incident: IncidentRecord, job: JobRecord, now: Date): void {
+  const summary =
+    typeof job.output?.summary === "string"
+      ? job.output.summary
+      : typeof job.output?.recommendation === "string"
+        ? job.output.recommendation
+        : undefined;
+  const nextAction =
+    typeof job.output?.recommendedAction === "string" &&
+    AUTO_APPROVED_JOB_TYPES.has(job.output.recommendedAction as JobType)
+      ? (job.output.recommendedAction as JobType)
+      : undefined;
+
+  if (summary) incident.lastDiagnosis = summary;
+  if (nextAction) incident.nextAction = nextAction;
+  incident.updatedAt = now.toISOString();
+}
+
+function queueVerificationJob(
+  state: HiveServerState,
+  incident: IncidentRecord,
+  beeId: string,
+  now: Date,
+): void {
+  if (incident.verification && incident.verification.status !== "failed") {
+    incident.status = "recovering";
+    incident.updatedAt = now.toISOString();
+    incident.nextAction = "run_healthcheck";
+    return;
+  }
+  if (hasActiveJob(state, beeId, "run_healthcheck")) {
+    incident.status = "recovering";
+    incident.updatedAt = now.toISOString();
+    incident.nextAction = "run_healthcheck";
+    return;
+  }
+  const job = createJob(
+    state.jobsState,
+    beeId,
+    { type: "run_healthcheck", payload: { incidentId: incident.id } },
+    now,
+  );
+  incident.verification = {
+    jobId: job.id,
+    queuedAt: now.toISOString(),
+  };
+  incident.status = "recovering";
+  incident.updatedAt = now.toISOString();
+  incident.nextAction = "run_healthcheck";
+}
+
+function incidentHasSuccessfulVerification(incident: IncidentRecord): boolean {
+  if (incident.attempts.length === 0) return true;
+  return incident.verification?.status === "succeeded";
+}
+
+function queueIncidentNotification(
+  incident: IncidentRecord,
+  status: Extract<IncidentStatus, "needs_approval" | "unresolved">,
+  now: Date,
+): void {
+  if (incident.notifications.some((notification) => notification.status === status)) return;
+  incident.notifications.push({
+    status,
+    queuedAt: now.toISOString(),
+    message: `${incident.summary} (${status.replace("_", " ")})`,
+  });
 }
 
 function queueAiDiagnosis(
