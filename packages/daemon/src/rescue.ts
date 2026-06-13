@@ -260,15 +260,47 @@ async function signedFetch(options: {
   });
 }
 
-function restartBeeService(): Promise<void> {
-  const args =
-    process.platform === "darwin"
-      ? ["launchctl", ["kickstart", "-k", `gui/${userInfo().uid}/com.hiveplane.bee`]]
-      : process.platform === "linux"
-        ? ["systemctl", ["--user", "restart", "hiveplane-bee.service"]]
-        : [];
-  if (args.length === 0) throw new Error(`unsupported platform: ${process.platform}`);
-  return runProcess(args[0] as string, args[1] as string[]).then(() => undefined);
+async function restartBeeService(): Promise<void> {
+  if (process.platform === "darwin") {
+    const uid = userInfo().uid;
+    const target = `gui/${uid}/com.hiveplane.bee`;
+    const kickstart = await runProcess("launchctl", ["kickstart", "-k", target]);
+    if (kickstart.exitCode === 0) return;
+
+    const plistPath = join(homedir(), "Library/LaunchAgents/com.hiveplane.bee.plist");
+    if (!existsSync(plistPath)) {
+      throw new Error(`Bee launch agent missing: ${plistPath}`);
+    }
+
+    const bootstrap = await runProcess("launchctl", ["bootstrap", `gui/${uid}`, plistPath]);
+    const bootstrapAlreadyLoaded =
+      bootstrap.exitCode !== 0 && /already/i.test(`${bootstrap.stdout}\n${bootstrap.stderr}`);
+    if (bootstrap.exitCode !== 0 && !bootstrapAlreadyLoaded) {
+      throw new Error(
+        `launchctl bootstrap failed (${bootstrap.exitCode}): ${bootstrap.stderr || bootstrap.stdout}`,
+      );
+    }
+
+    const retry = await runProcess("launchctl", ["kickstart", "-k", target]);
+    if (retry.exitCode !== 0) {
+      throw new Error(
+        `launchctl kickstart failed (${retry.exitCode}): ${retry.stderr || retry.stdout}`,
+      );
+    }
+    return;
+  }
+
+  if (process.platform === "linux") {
+    const restart = await runProcess("systemctl", ["--user", "restart", "hiveplane-bee.service"]);
+    if (restart.exitCode !== 0) {
+      throw new Error(
+        `systemctl restart failed (${restart.exitCode}): ${restart.stderr || restart.stdout}`,
+      );
+    }
+    return;
+  }
+
+  throw new Error(`unsupported platform: ${process.platform}`);
 }
 
 function beeServiceName(): string {
@@ -283,8 +315,7 @@ async function runFixedCommand(
   cwd: string,
   onStdout: (text: string) => Promise<void>,
 ): Promise<
-  | { ok: true; summary: Record<string, JsonValue> }
-  | { ok: false; error: Record<string, JsonValue> }
+  { ok: true; summary: Record<string, JsonValue> } | { ok: false; error: Record<string, JsonValue> }
 > {
   const result = await runProcess(command, args, cwd, onStdout);
   const summary: Record<string, JsonValue> = { command, args, ...result };
