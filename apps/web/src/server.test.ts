@@ -33,6 +33,20 @@ describe("Hive heartbeat state", () => {
       daemonVersion: "0.0.1",
       status: "online",
       activeJobs: 0,
+      capabilities: {
+        runtimes: ["openclaw"],
+        modelBackends: ["ollama"],
+        models: ["gemma4:12b"],
+        tools: ["openclaw"],
+        networking: ["tailscale"],
+        hardware: {
+          platform: "darwin-arm64",
+          hostname: "bee-one",
+          cpuCores: 10,
+          memoryGb: 32,
+        },
+      },
+      permissions: { runCommand: { allow: ["hostname"], unsafeAllowAll: false } },
       healthChecks: [],
     });
     const latest = upsertBeeHeartbeat(state, {
@@ -42,6 +56,7 @@ describe("Hive heartbeat state", () => {
       daemonVersion: "0.0.1",
       status: "degraded",
       activeJobs: 1,
+      permissions: { runCommand: { allow: ["hostname", "df"], unsafeAllowAll: false } },
       healthChecks: [
         {
           name: "openclaw-gateway",
@@ -59,6 +74,8 @@ describe("Hive heartbeat state", () => {
       heartbeatCount: 2,
       status: "degraded",
       activeJobs: 1,
+      capabilities: expect.objectContaining({ runtimes: ["openclaw"] }),
+      permissions: { runCommand: { allow: ["hostname", "df"], unsafeAllowAll: false } },
       healthChecks: [expect.objectContaining({ name: "openclaw-gateway", status: "failing" })],
     });
   });

@@ -468,6 +468,48 @@
         max-height: 200px;
         overflow: auto;
       }
+      tr.selected {
+        background: var(--accent-soft);
+      }
+      .bee-detail {
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+      }
+      .detail-section {
+        display: grid;
+        gap: 8px;
+      }
+      .detail-section h3 {
+        margin: 0;
+        font-size: 12px;
+        color: var(--muted);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .kv-list {
+        display: grid;
+        gap: 6px;
+      }
+      .kv-row {
+        display: grid;
+        grid-template-columns: 120px minmax(0, 1fr);
+        gap: 10px;
+        padding: 6px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .kv-row:last-child {
+        border-bottom: none;
+      }
+      .kv-row span:first-child {
+        color: var(--muted);
+      }
+      .cap-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
       .footer {
         padding: 16px 24px;
         border-top: 1px solid var(--border);
@@ -523,12 +565,25 @@
             </div>
           </div>
         </div>
-        <div class="panel">
-          <div class="panel-header">
-            <span>Connected Bees</span>
-            <span class="meta" id="beesMeta">—</span>
+        <div class="split">
+          <div class="panel">
+            <div class="panel-header">
+              <span>Connected Bees</span>
+              <span class="meta" id="beesMeta">—</span>
+            </div>
+            <div id="beesBody"></div>
           </div>
-          <div id="beesBody"></div>
+          <div class="panel">
+            <div class="panel-header">
+              <span>Bee detail</span>
+              <span class="meta" id="beeDetailMeta">select a Bee</span>
+            </div>
+            <div id="beeDetailBody" class="bee-detail">
+              <div class="empty">
+                Select a Bee to inspect health, capabilities, and permissions.
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -585,6 +640,7 @@
         activeTab: "bees",
         adminToken: localStorage.getItem(ADMIN_KEY) || "",
         selectedJobId: "",
+        selectedBeeId: "",
       };
 
       const els = {
@@ -593,6 +649,8 @@
         authStatus: document.getElementById("authStatus"),
         beesMeta: document.getElementById("beesMeta"),
         beesBody: document.getElementById("beesBody"),
+        beeDetailMeta: document.getElementById("beeDetailMeta"),
+        beeDetailBody: document.getElementById("beeDetailBody"),
         jobsMeta: document.getElementById("jobsMeta"),
         jobsBody: document.getElementById("jobsBody"),
         jobDetailMeta: document.getElementById("jobDetailMeta"),
@@ -857,6 +915,7 @@
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const { bees } = await res.json();
           renderBees(bees ?? []);
+          renderSelectedBee(bees ?? []);
           els.beesMeta.textContent = `${bees.length} connected · updated ${new Date().toLocaleTimeString()}`;
         } catch (err) {
           els.beesBody.innerHTML = `<div class="empty">Failed to load bees: ${escapeHtml(err.message)}</div>`;
@@ -870,7 +929,7 @@
         const rows = bees
           .map(
             (b) => `
-              <tr>
+              <tr class="${b.beeId === state.selectedBeeId ? "selected" : ""}" data-action="select-bee" data-bee-id="${escapeHtml(b.beeId)}">
                 <td>${pill(b.status || "unknown")}</td>
                 <td><span class="mono truncate" title="${escapeHtml(b.beeId)}">${escapeHtml(b.beeName || shortId(b.beeId))}</span></td>
                 <td><span class="mono truncate" title="${escapeHtml(b.beeId)}">${escapeHtml(shortId(b.beeId))}</span></td>
@@ -882,7 +941,10 @@
                 <td title="${escapeHtml(b.firstSeenAt || "")}">${relativeTime(b.firstSeenAt)}</td>
                 <td>
                   <div class="actions">
+                    <button class="ghost" data-action="select-bee-button" data-bee-id="${escapeHtml(b.beeId)}">Detail</button>
                     <button class="ghost" data-action="healthcheck" data-bee-id="${escapeHtml(b.beeId)}">Healthcheck</button>
+                    <button class="ghost" data-action="adapter-job" data-job-type="openclaw_status" data-bee-id="${escapeHtml(b.beeId)}">OpenClaw</button>
+                    <button class="ghost" data-action="adapter-job" data-job-type="ollama_status" data-bee-id="${escapeHtml(b.beeId)}">Ollama</button>
                     <button class="ghost" data-action="safe-command" data-command="hostname" data-args="[]" data-bee-id="${escapeHtml(b.beeId)}">Hostname</button>
                     <button class="ghost" data-action="safe-command" data-command="df" data-args='["-h","/"]' data-bee-id="${escapeHtml(b.beeId)}">Disk</button>
                     <button class="ghost" data-action="safe-command" data-command="uptime" data-args="[]" data-bee-id="${escapeHtml(b.beeId)}">Uptime</button>
@@ -914,6 +976,11 @@
         els.beesBody.querySelectorAll("[data-action='healthcheck']").forEach((button) => {
           button.addEventListener("click", () => queueHealthcheck(button.dataset.beeId, button));
         });
+        els.beesBody.querySelectorAll("[data-action='adapter-job']").forEach((button) => {
+          button.addEventListener("click", () =>
+            queueAdapterJob(button.dataset.beeId, button.dataset.jobType, button),
+          );
+        });
         els.beesBody.querySelectorAll("[data-action='safe-command']").forEach((button) => {
           button.addEventListener("click", () => {
             const args = JSON.parse(button.dataset.args || "[]");
@@ -925,12 +992,106 @@
             deleteBee(button.dataset.beeId, button.dataset.beeName, button),
           );
         });
+        els.beesBody.querySelectorAll("[data-action='select-bee']").forEach((row) => {
+          row.addEventListener("click", (event) => {
+            if (event.target.closest("button")) return;
+            state.selectedBeeId = row.dataset.beeId;
+            renderBees(bees);
+            renderSelectedBee(bees);
+          });
+        });
+        els.beesBody.querySelectorAll("[data-action='select-bee-button']").forEach((button) => {
+          button.addEventListener("click", () => {
+            state.selectedBeeId = button.dataset.beeId;
+            renderBees(bees);
+            renderSelectedBee(bees);
+          });
+        });
       }
       function renderHealthChecks(checks) {
         if (!checks.length) return '<span class="mono">—</span>';
         return `<div class="check-list">${checks
           .map((check) =>
             pill(check.name, check.status || "unknown", check.message || check.checkedAt || ""),
+          )
+          .join("")}</div>`;
+      }
+      function renderSelectedBee(bees) {
+        if (!state.selectedBeeId && bees.length > 0) {
+          state.selectedBeeId = bees.find((b) => b.status === "online")?.beeId || bees[0].beeId;
+        }
+        const bee = bees.find((b) => b.beeId === state.selectedBeeId);
+        if (!bee) {
+          els.beeDetailMeta.textContent = "select a Bee";
+          els.beeDetailBody.innerHTML = `<div class="empty">Select a Bee to inspect health, capabilities, and permissions.</div>`;
+          return;
+        }
+
+        els.beeDetailMeta.textContent = `${bee.beeName || shortId(bee.beeId)} · ${bee.status}`;
+        const capabilities = bee.capabilities || {};
+        const hardware = capabilities.hardware || {};
+        const permissions = bee.permissions || { runCommand: { allow: [], unsafeAllowAll: false } };
+        const allow = permissions.runCommand?.allow || [];
+
+        els.beeDetailBody.innerHTML = `
+          <div>${pill(bee.status || "unknown")} <span class="mono">${escapeHtml(bee.beeName || shortId(bee.beeId))}</span></div>
+          <div class="detail-section">
+            <h3>Identity</h3>
+            <div class="kv-list">
+              ${kv("Bee ID", `<span class="mono">${escapeHtml(bee.beeId)}</span>`)}
+              ${kv("Version", escapeHtml(bee.daemonVersion || "—"))}
+              ${kv("Last heartbeat", `${relativeTime(bee.lastSeenAt)} <span class="mono">(${escapeHtml(bee.lastSeenAt || "—")})</span>`)}
+              ${kv("First seen", `${relativeTime(bee.firstSeenAt)} <span class="mono">(${escapeHtml(bee.firstSeenAt || "—")})</span>`)}
+              ${kv("Heartbeats", escapeHtml(bee.heartbeatCount ?? 0))}
+            </div>
+          </div>
+          <div class="detail-section">
+            <h3>Hardware</h3>
+            <div class="kv-list">
+              ${kv("Hostname", escapeHtml(hardware.hostname || "—"))}
+              ${kv("Platform", escapeHtml(hardware.platform || "—"))}
+              ${kv("CPU", escapeHtml(hardware.cpuCores ?? "—"))}
+              ${kv("Memory", hardware.memoryGb ? `${escapeHtml(hardware.memoryGb)} GB` : "—")}
+            </div>
+          </div>
+          <div class="detail-section">
+            <h3>Capabilities</h3>
+            ${capGroup("Runtimes", capabilities.runtimes)}
+            ${capGroup("Model backends", capabilities.modelBackends)}
+            ${capGroup("Models", capabilities.models)}
+            ${capGroup("Tools", capabilities.tools)}
+            ${capGroup("Networking", capabilities.networking)}
+          </div>
+          <div class="detail-section">
+            <h3>Permissions</h3>
+            <div class="kv-list">
+              ${kv("Commands", permissions.runCommand?.unsafeAllowAll ? pill("unsafe allow all", "failed") : capList(allow))}
+            </div>
+          </div>
+          <div class="detail-section">
+            <h3>Health</h3>
+            ${renderHealthDetail(bee.healthChecks || [])}
+          </div>
+        `;
+      }
+      function kv(label, value) {
+        return `<div class="kv-row"><span>${escapeHtml(label)}</span><div>${value}</div></div>`;
+      }
+      function capGroup(label, values) {
+        return `<div class="kv-list">${kv(label, capList(values || []))}</div>`;
+      }
+      function capList(values) {
+        if (!values.length) return '<span class="mono">—</span>';
+        return `<div class="cap-list">${values.map((value) => `<span class="pill">${escapeHtml(value)}</span>`).join("")}</div>`;
+      }
+      function renderHealthDetail(checks) {
+        if (!checks.length) return `<div class="empty">No health checks reported yet.</div>`;
+        return `<div class="kv-list">${checks
+          .map((check) =>
+            kv(
+              check.name,
+              `${pill(check.status || "unknown")} <span title="${escapeHtml(check.checkedAt || "")}">${escapeHtml(check.message || "—")}</span>`,
+            ),
           )
           .join("")}</div>`;
       }
@@ -959,6 +1120,35 @@
           refreshJobs();
         } catch (err) {
           els.beesMeta.textContent = `healthcheck failed: ${err.message}`;
+        } finally {
+          button.disabled = false;
+        }
+      }
+      async function queueAdapterJob(beeId, jobType, button) {
+        if (!state.adminToken) {
+          els.beesMeta.textContent = "set an admin token (top right) to queue jobs";
+          return;
+        }
+        button.disabled = true;
+        try {
+          const res = await fetch(`/api/bees/${encodeURIComponent(beeId)}/jobs`, {
+            method: "POST",
+            headers: { ...authHeaders(), "content-type": "application/json" },
+            body: JSON.stringify({ type: jobType, payload: {} }),
+          });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            els.beesMeta.textContent = "admin token rejected — paste the current token";
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+          const body = await res.json();
+          state.selectedJobId = body.job?.id || state.selectedJobId;
+          els.beesMeta.textContent = `${jobType.replace(/_/g, " ")} queued`;
+          showJobsTab();
+          refreshJobs();
+        } catch (err) {
+          els.beesMeta.textContent = `${jobType} failed: ${err.message}`;
         } finally {
           button.disabled = false;
         }
@@ -1181,6 +1371,14 @@
             <pre class="snippet">${escapeHtml(payload)}</pre>
           </details>
           ${result ? `<details open><summary>${job.error ? "error" : "output"}</summary><pre class="snippet">${escapeHtml(JSON.stringify(result, null, 2))}</pre></details>` : ""}
+          ${
+            job.status === "waiting_for_approval"
+              ? `<div class="actions">
+                  <button class="action" data-action="approve-job" data-job-id="${escapeHtml(job.id)}">Approve</button>
+                  <button class="ghost danger" data-action="deny-job" data-job-id="${escapeHtml(job.id)}">Deny</button>
+                </div>`
+              : ""
+          }
           <div>
             <div class="meta">Event stream</div>
             ${
@@ -1190,6 +1388,36 @@
             }
           </div>
         `;
+        els.jobDetailBody
+          .querySelector("[data-action='approve-job']")
+          ?.addEventListener("click", (event) => {
+            resolveApproval(event.currentTarget.dataset.jobId, "approve", event.currentTarget);
+          });
+        els.jobDetailBody
+          .querySelector("[data-action='deny-job']")
+          ?.addEventListener("click", (event) => {
+            resolveApproval(event.currentTarget.dataset.jobId, "deny", event.currentTarget);
+          });
+      }
+      async function resolveApproval(jobId, decision, button) {
+        if (!state.adminToken) return;
+        button.disabled = true;
+        try {
+          const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/${decision}`, {
+            method: "POST",
+            headers: authHeaders(),
+          });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+          await refreshJobs();
+        } catch (err) {
+          els.jobDetailMeta.textContent = `${decision} failed: ${err.message}`;
+        } finally {
+          button.disabled = false;
+        }
       }
       function renderJobEvent(event) {
         let body = "";

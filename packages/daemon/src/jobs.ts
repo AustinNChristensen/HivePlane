@@ -9,6 +9,12 @@ import {
   type JobEvent,
   type JsonValue,
 } from "@hiveplane/protocol";
+import {
+  getOllamaStatus,
+  getOpenClawStatus,
+  listOllamaModels,
+  runtimeStatusToJson,
+} from "./capabilities.js";
 import type { BeeIdentity } from "./identity.js";
 import type { HiveSession } from "./session.js";
 import { policyAllowsCommand, readBeePolicy, type BeePolicy } from "./policy.js";
@@ -48,6 +54,15 @@ export class JobExecutor {
           break;
         case "run_healthcheck":
           outcome = await this.runHealthcheck(job);
+          break;
+        case "openclaw_status":
+          outcome = await this.runOpenClawStatus(job);
+          break;
+        case "ollama_status":
+          outcome = await this.runOllamaStatus(job);
+          break;
+        case "ollama_list_models":
+          outcome = await this.runOllamaListModels(job);
           break;
         default:
           outcome = {
@@ -160,6 +175,31 @@ export class JobExecutor {
         beeId: this.options.session.beeId,
       },
     };
+  }
+
+  private async runOpenClawStatus(job: Job): Promise<JobOutcome> {
+    await this.emit(job, "info", "openclaw.status.start", {});
+    const status = await getOpenClawStatus();
+    await this.emit(job, "info", "openclaw.status.result", runtimeStatusToJson(status));
+    return { status: "succeeded", output: runtimeStatusToJson(status) };
+  }
+
+  private async runOllamaStatus(job: Job): Promise<JobOutcome> {
+    await this.emit(job, "info", "ollama.status.start", {});
+    const status = await getOllamaStatus();
+    await this.emit(job, "info", "ollama.status.result", runtimeStatusToJson(status));
+    return { status: "succeeded", output: runtimeStatusToJson(status) };
+  }
+
+  private async runOllamaListModels(job: Job): Promise<JobOutcome> {
+    await this.emit(job, "info", "ollama.models.start", {});
+    const result = await listOllamaModels();
+    const output: Record<string, JsonValue> = {
+      models: result.models,
+      ...(result.message ? { message: result.message } : {}),
+    };
+    await this.emit(job, "info", "ollama.models.result", output);
+    return { status: "succeeded", output };
   }
 
   private async emit(

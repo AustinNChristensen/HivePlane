@@ -2,7 +2,12 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { policyAllowsCommand, readBeePolicy, DEFAULT_POLICY } from "./policy.js";
+import {
+  policyAllowsCommand,
+  readBeePolicy,
+  DEFAULT_POLICY,
+  SAFE_READ_ONLY_COMMANDS,
+} from "./policy.js";
 
 function newDir() {
   return mkdtempSync(join(tmpdir(), "hp-policy-test-"));
@@ -35,7 +40,13 @@ describe("readBeePolicy", () => {
 });
 
 describe("policyAllowsCommand", () => {
-  it("denies when allowlist empty (default deny)", () => {
+  it("allows safe read-only commands by default", () => {
+    for (const command of SAFE_READ_ONLY_COMMANDS) {
+      expect(policyAllowsCommand(DEFAULT_POLICY, command).allowed).toBe(true);
+    }
+  });
+
+  it("denies commands outside the default safe allowlist", () => {
     const decision = policyAllowsCommand(DEFAULT_POLICY, "ls");
     expect(decision.allowed).toBe(false);
     if (!decision.allowed) {

@@ -9,7 +9,9 @@ import {
   JobCompleteRequestSchema,
   JobEventBatchSchema,
   type BeeHeartbeat,
+  type BeeCapabilities,
   type BeeRegistrationRequest,
+  type BeePermissions,
   type BootstrapTokenCreateRequest,
 } from "@hiveplane/protocol";
 import {
@@ -34,13 +36,16 @@ import {
 import { getHiveInfo } from "./hive-info.js";
 import {
   appendEvents,
+  approveJob,
   claimPendingJobs,
   completeJob,
   CreateJobRequestSchema,
   createJob,
   createJobsState,
+  denyJob,
   findJob,
   listJobs,
+  requireApproval,
   type JobRecord,
   type JobsState,
 } from "./jobs.js";
@@ -52,6 +57,8 @@ export type HiveBeeRecord = {
   daemonVersion: string;
   status: BeeHeartbeat["status"];
   activeJobs: number;
+  capabilities?: BeeCapabilities;
+  permissions?: BeePermissions;
   healthChecks: BeeHeartbeat["healthChecks"];
   firstSeenAt: string;
   lastSeenAt: string;
@@ -211,6 +218,8 @@ export function upsertBeeHeartbeat(
 ): HiveBeeRecord {
   const existing = state.bees.get(heartbeat.beeId);
   const timestamp = heartbeat.timestamp || now.toISOString();
+  const capabilities = heartbeat.capabilities ?? existing?.capabilities;
+  const permissions = heartbeat.permissions ?? existing?.permissions;
   const record: HiveBeeRecord = {
     beeId: heartbeat.beeId,
     ...(existing?.beeName ? { beeName: existing.beeName } : {}),
@@ -223,6 +232,8 @@ export function upsertBeeHeartbeat(
     lastSeenAt: timestamp,
     heartbeatCount: (existing?.heartbeatCount ?? 0) + 1,
   };
+  if (capabilities) record.capabilities = capabilities;
+  if (permissions) record.permissions = permissions;
 
   state.bees.set(heartbeat.beeId, record);
   return record;
@@ -446,6 +457,27 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           });
         }
         const job = createJob(state.jobsState, beeId, parsed.data, now());
+        if (jobNeedsApproval(job)) requireApproval(job);
+        markDirty();
+        return sendJson(response, 200, { job: serializeJob(job) });
+      }
+
+      const approveJobMatch = /^\/api\/jobs\/([^/]+)\/approve$/.exec(url.pathname);
+      if (request.method === "POST" && approveJobMatch) {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const jobId = decodeURIComponent(approveJobMatch[1] ?? "");
+        const job = approveJob(state.jobsState, jobId);
+        if (!job) return sendJson(response, 404, { error: "not_found" });
+        markDirty();
+        return sendJson(response, 200, { job: serializeJob(job) });
+      }
+
+      const denyJobMatch = /^\/api\/jobs\/([^/]+)\/deny$/.exec(url.pathname);
+      if (request.method === "POST" && denyJobMatch) {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const jobId = decodeURIComponent(denyJobMatch[1] ?? "");
+        const job = denyJob(state.jobsState, jobId, now());
+        if (!job) return sendJson(response, 404, { error: "not_found" });
         markDirty();
         return sendJson(response, 200, { job: serializeJob(job) });
       }
@@ -746,6 +778,8 @@ function finalizeRegistration(
     daemonVersion: request.daemonVersion,
     status: "offline",
     activeJobs: 0,
+    capabilities: request.capabilities,
+    ...(existing?.permissions ? { permissions: existing.permissions } : {}),
     healthChecks: [],
     firstSeenAt: existing?.firstSeenAt ?? now.toISOString(),
     lastSeenAt: existing?.lastSeenAt ?? now.toISOString(),
@@ -915,6 +949,19 @@ function serializeJob(job: JobRecord): Record<string, unknown> {
     ...(job.output ? { output: job.output } : {}),
     ...(job.error ? { error: job.error } : {}),
   };
+}
+
+function jobNeedsApproval(job: JobRecord): boolean {
+  if (job.type === "run_healthcheck") return false;
+  if (job.type === "openclaw_status") return false;
+  if (job.type === "ollama_status") return false;
+  if (job.type === "ollama_list_models") return false;
+  if (job.type === "run_command") {
+    const command = typeof job.payload.command === "string" ? job.payload.command : "";
+    const basename = command.trim().split("/").pop() ?? command.trim();
+    return !["hostname", "df", "uptime"].includes(basename);
+  }
+  return true;
 }
 
 function serializeBees(state: HiveServerState, now: Date): HiveBeeRecord[] {

@@ -16,8 +16,10 @@ export const BeePolicySchema = z.object({
 
 export type BeePolicy = z.infer<typeof BeePolicySchema>;
 
+export const SAFE_READ_ONLY_COMMANDS = ["hostname", "df", "uptime"];
+
 export const DEFAULT_POLICY: BeePolicy = {
-  runCommand: { allow: [], unsafeAllowAll: false },
+  runCommand: { allow: SAFE_READ_ONLY_COMMANDS, unsafeAllowAll: false },
 };
 
 export type PolicyDecision = { allowed: true } | { allowed: false; reason: string };

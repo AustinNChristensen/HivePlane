@@ -106,7 +106,7 @@ describe("POST /api/bees/:beeId/jobs", () => {
           authorization: "Bearer admin-secret",
           "content-type": "application/json",
         },
-        body: JSON.stringify({ type: "run_command", payload: { command: "ls" } }),
+        body: JSON.stringify({ type: "run_command", payload: { command: "hostname" } }),
       });
       expect(create.status).toBe(200);
       const created = (await create.json()) as { job: { id: string; status: string } };
@@ -122,6 +122,32 @@ describe("POST /api/bees/:beeId/jobs", () => {
       });
       const listed = (await list.json()) as { jobs: Array<{ id: string }> };
       expect(listed.jobs.map((j) => j.id)).toContain(created.job.id);
+    });
+  });
+
+  it("holds mutating jobs for admin approval before dispatch", async () => {
+    const state = createHiveServerState();
+    await withServer({ state, adminToken: "admin-secret", authRequired: true }, async (baseUrl) => {
+      const { beeId } = await setupBee(state, baseUrl);
+      const create = await fetch(`${baseUrl}/api/bees/${beeId}/jobs`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer admin-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ type: "install_runtime", payload: { runtime: "ollama" } }),
+      });
+      expect(create.status).toBe(200);
+      const created = (await create.json()) as { job: { id: string; status: string } };
+      expect(created.job.status).toBe("waiting_for_approval");
+
+      const approve = await fetch(`${baseUrl}/api/jobs/${created.job.id}/approve`, {
+        method: "POST",
+        headers: { authorization: "Bearer admin-secret" },
+      });
+      expect(approve.status).toBe(200);
+      const approved = (await approve.json()) as { job: { status: string } };
+      expect(approved.job.status).toBe("queued");
     });
   });
 });

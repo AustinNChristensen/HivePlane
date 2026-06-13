@@ -112,9 +112,11 @@ describe("heartbeat", () => {
       status: "online",
       activeJobs: 0,
       capabilities,
+      permissions: { runCommand: { allow: ["hostname"], unsafeAllowAll: false } },
     });
 
     expect(heartbeat.status).toBe("online");
+    expect(heartbeat.permissions?.runCommand.allow).toContain("hostname");
   });
 });
 
@@ -149,6 +151,20 @@ describe("jobs and events", () => {
     });
 
     expect(batch.events).toHaveLength(1);
+  });
+
+  it("validates adapter jobs", () => {
+    for (const type of ["openclaw_status", "ollama_status", "ollama_list_models"]) {
+      const job = JobSchema.parse({
+        id: `job_${type}`,
+        type,
+        beeId: "bee_123",
+        status: "queued",
+        payload: {},
+        createdAt: "2026-05-08T20:00:00.000Z",
+      });
+      expect(job.type).toBe(type);
+    }
   });
 });
 

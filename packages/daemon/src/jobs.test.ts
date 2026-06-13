@@ -233,4 +233,56 @@ describe("JobExecutor", () => {
     expect(body.output.daemonVersion).toBe("0.0.1-test");
     expect(body.output.beeId).toBe("bee_test");
   });
+
+  it("openclaw_status completes through the adapter path", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      daemonVersion: "0.0.1-test",
+      policy: { runCommand: { allow: [], unsafeAllowAll: false } },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl: makeSpawn({}) as unknown as typeof import("node:child_process").spawn,
+    });
+
+    await executor.execute(makeJob({ type: "openclaw_status", payload: {} }));
+
+    const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
+    expect(body.status).toBe("succeeded");
+    expect(typeof body.output.installed).toBe("boolean");
+  });
+
+  it("ollama_list_models completes through the adapter path", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      daemonVersion: "0.0.1-test",
+      policy: { runCommand: { allow: [], unsafeAllowAll: false } },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl: makeSpawn({}) as unknown as typeof import("node:child_process").spawn,
+    });
+
+    await executor.execute(makeJob({ type: "ollama_list_models", payload: {} }));
+
+    const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
+    expect(body.status).toBe("succeeded");
+    expect(Array.isArray(body.output.models)).toBe(true);
+  });
 });

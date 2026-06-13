@@ -67,6 +67,29 @@ export function createJob(
   return job;
 }
 
+export function requireApproval(job: JobRecord): JobRecord {
+  job.status = "waiting_for_approval";
+  return job;
+}
+
+export function approveJob(state: JobsState, jobId: string): JobRecord | null {
+  const job = state.jobs.get(jobId);
+  if (!job) return null;
+  if (job.status !== "waiting_for_approval") return job;
+  job.status = "queued";
+  return job;
+}
+
+export function denyJob(state: JobsState, jobId: string, now: Date): JobRecord | null {
+  const job = state.jobs.get(jobId);
+  if (!job) return null;
+  if (job.status !== "waiting_for_approval") return job;
+  job.status = "cancelled";
+  job.completedAt = now;
+  job.error = { code: "approval_denied", message: "job denied by Hive admin" };
+  return job;
+}
+
 /** Atomically transition queued jobs for this bee to "assigned" and return them as Job protos. */
 export function claimPendingJobs(state: JobsState, beeId: string, now: Date): Job[] {
   const claimed: Job[] = [];

@@ -2,10 +2,12 @@ import { sign as edSign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { BeeConnectionManager, HttpBeeConnectionTransport } from "./connection.js";
 import { readHivePlaneConfig } from "./config.js";
+import { collectBeeCapabilities } from "./capabilities.js";
 import { collectBeeHealthChecks, statusFromHealthChecks } from "./health.js";
 import { createDaemonState } from "./index.js";
 import { loadOrCreateBeeIdentity } from "./identity.js";
 import { JobExecutor } from "./jobs.js";
+import { readBeePolicy } from "./policy.js";
 import { isSessionExpired, readHiveSession } from "./session.js";
 
 const VERSION = "0.0.7";
@@ -86,7 +88,13 @@ async function main(): Promise<void> {
     daemonVersion: VERSION,
     heartbeatIntervalMs: options.intervalSeconds * 1000,
     beforeHeartbeat: async () => {
-      state.healthChecks = await collectBeeHealthChecks();
+      const [healthChecks, capabilities] = await Promise.all([
+        collectBeeHealthChecks(),
+        collectBeeCapabilities(state.hardware),
+      ]);
+      state.healthChecks = healthChecks;
+      state.capabilities = capabilities;
+      state.permissions = readBeePolicy(options.configDir);
       state.status = statusFromHealthChecks(state.healthChecks);
     },
     onStatusChange: (status) => console.log(`[bee] status=${status}`),

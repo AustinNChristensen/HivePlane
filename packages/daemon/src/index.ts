@@ -4,9 +4,13 @@ import { z } from "zod";
 import {
   BeeHeartbeatSchema,
   type BeeHeartbeat,
+  type BeeCapabilities,
+  type BeeHardware,
   type BeeHealthCheck,
+  type BeePermissions,
   type BeePlatform,
 } from "@hiveplane/protocol";
+import { DEFAULT_POLICY } from "./policy.js";
 
 export const DaemonConfigSchema = z.object({
   beeId: z.string().min(1).optional(),
@@ -33,6 +37,8 @@ export type DaemonState = {
   activeJobs: number;
   startedAt: Date;
   hardware: BeeHardwareSnapshot;
+  capabilities: BeeCapabilities;
+  permissions: BeePermissions;
   healthChecks: BeeHealthCheck[];
 };
 
@@ -59,6 +65,8 @@ export function getHardwareSnapshot(): BeeHardwareSnapshot {
 
 export function createDaemonState(config: DaemonConfig): DaemonState {
   const parsed = DaemonConfigSchema.parse(config);
+  const hardware = getHardwareSnapshot();
+  const capabilitiesHardware = toCapabilitiesHardware(hardware);
 
   return {
     beeId: parsed.beeId ?? `bee_${randomUUID()}`,
@@ -66,7 +74,16 @@ export function createDaemonState(config: DaemonConfig): DaemonState {
     status: "online",
     activeJobs: 0,
     startedAt: new Date(),
-    hardware: getHardwareSnapshot(),
+    hardware,
+    capabilities: {
+      runtimes: [],
+      modelBackends: [],
+      models: [],
+      tools: [],
+      networking: [],
+      hardware: capabilitiesHardware,
+    },
+    permissions: DEFAULT_POLICY,
     healthChecks: [],
   };
 }
@@ -79,8 +96,27 @@ export function createHeartbeat(state: DaemonState, daemonVersion: string): BeeH
     daemonVersion,
     status: state.status,
     activeJobs: state.activeJobs,
+    capabilities: state.capabilities,
+    permissions: state.permissions,
     healthChecks: state.healthChecks,
   });
+}
+
+function toCapabilitiesHardware(hardware: BeeHardwareSnapshot): BeeHardware {
+  if (hardware.platform === "unsupported") {
+    return {
+      platform: "linux-x64",
+      hostname: hardware.hostname,
+      cpuCores: hardware.cpuCores,
+      memoryGb: hardware.memoryGb,
+    };
+  }
+  return {
+    platform: hardware.platform,
+    hostname: hardware.hostname,
+    cpuCores: hardware.cpuCores,
+    memoryGb: hardware.memoryGb,
+  };
 }
 
 export * from "./identity.js";
@@ -89,4 +125,5 @@ export * from "./config.js";
 export * from "./session.js";
 export * from "./register.js";
 export * from "./policy.js";
+export * from "./capabilities.js";
 export * from "./jobs.js";
