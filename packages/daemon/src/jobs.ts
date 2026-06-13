@@ -32,13 +32,11 @@ export type JobOutcome =
 export class JobExecutor {
   private readonly fetchImpl: typeof fetch;
   private readonly spawnImpl: typeof spawn;
-  private readonly policy: BeePolicy;
   private sequence = 0;
 
   constructor(private readonly options: JobExecutorOptions) {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.spawnImpl = options.spawnImpl ?? spawn;
-    this.policy = options.policy ?? readBeePolicy(options.configDir);
   }
 
   async execute(job: Job): Promise<void> {
@@ -79,7 +77,7 @@ export class JobExecutor {
       ? job.payload.args.filter((a): a is string => typeof a === "string")
       : [];
 
-    const decision = policyAllowsCommand(this.policy, command);
+    const decision = policyAllowsCommand(this.getPolicy(), command);
     if (!decision.allowed) {
       await this.emit(job, "info", "policy.denied", { command, reason: decision.reason });
       return { status: "failed", error: { code: "policy_denied", message: decision.reason } };
@@ -94,17 +92,31 @@ export class JobExecutor {
 
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
+    const pendingEventPosts: Promise<void>[] = [];
+    const queueEvent = (
+      level: JobEvent["level"],
+      type: string,
+      data: Record<string, JsonValue>,
+    ) => {
+      const post = this.emit(job, level, type, data).catch((error) => {
+        stderrChunks.push(
+          `[hiveplane] failed to stream ${type}: ${
+            error instanceof Error ? error.message : String(error)
+          }\n`,
+        );
+      });
+      pendingEventPosts.push(post);
+    };
 
     child.stdout?.on("data", (data: Buffer) => {
       const text = data.toString("utf8");
       stdoutChunks.push(text);
-      // Stream best-effort; don't await per-line (would serialize too much).
-      void this.emit(job, "debug", "command.stdout", { text });
+      queueEvent("debug", "command.stdout", { text });
     });
     child.stderr?.on("data", (data: Buffer) => {
       const text = data.toString("utf8");
       stderrChunks.push(text);
-      void this.emit(job, "debug", "command.stderr", { text });
+      queueEvent("debug", "command.stderr", { text });
     });
 
     return await new Promise<JobOutcome>((resolve) => {
@@ -114,7 +126,8 @@ export class JobExecutor {
           error: { code: "spawn_error", message: err.message },
         });
       });
-      child.once("close", (exitCode, signal) => {
+      child.once("close", async (exitCode, signal) => {
+        await Promise.allSettled(pendingEventPosts);
         const ok = exitCode === 0;
         const summary = {
           exitCode: exitCode ?? -1,
@@ -213,5 +226,9 @@ export class JobExecutor {
       const text = await res.text().catch(() => "");
       throw new Error(`POST ${url.pathname} failed: ${res.status} ${text}`);
     }
+  }
+
+  private getPolicy(): BeePolicy {
+    return this.options.policy ?? readBeePolicy(this.options.configDir);
   }
 }

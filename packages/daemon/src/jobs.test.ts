@@ -123,6 +123,39 @@ describe("JobExecutor", () => {
     expect(completeBody.output.stdout).toContain("hello");
   });
 
+  it("reloads local policy at execution time", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "hp-policy-"));
+    const identity = await loadOrCreateBeeIdentity({ configDir });
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const spawnImpl = makeSpawn({
+      stdoutChunks: ["hello\n"],
+      exitCode: 0,
+    }) as unknown as typeof import("node:child_process").spawn;
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      configDir,
+      daemonVersion: "0.0.1-test",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl,
+    });
+
+    writeFileSync(
+      join(configDir, "policy.json"),
+      JSON.stringify({ runCommand: { allow: ["echo"] } }),
+    );
+    await executor.execute(makeJob({ payload: { command: "echo", args: ["hello"] } }));
+
+    expect(spawnImpl).toHaveBeenCalledWith(
+      "echo",
+      ["hello"],
+      expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+    );
+  });
+
   it("non-zero exit reports failed with the exit code", async () => {
     const identity = await makeIdentity();
     const session = makeSession();

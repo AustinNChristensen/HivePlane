@@ -379,6 +379,76 @@
         gap: 6px;
         max-width: 360px;
       }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        min-width: 220px;
+      }
+      .split {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(360px, 0.9fr);
+        gap: 16px;
+        align-items: start;
+      }
+      .split > .panel {
+        min-width: 0;
+      }
+      @media (max-width: 980px) {
+        .split {
+          grid-template-columns: 1fr;
+        }
+      }
+      .job-detail {
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+      }
+      .job-detail-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .job-detail-grid .kv {
+        background: var(--panel-2);
+        border-radius: 6px;
+        padding: 8px 10px;
+        min-width: 0;
+      }
+      .job-detail-grid .kv span {
+        display: block;
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .event-list {
+        display: grid;
+        gap: 8px;
+        max-height: 440px;
+        overflow: auto;
+      }
+      .event {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 10px;
+      }
+      .event .event-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 11px;
+        margin-bottom: 4px;
+      }
+      .event .event-body {
+        margin: 0;
+        font-family: var(--mono);
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
       pre.snippet {
         margin: 0;
         background: var(--panel-2);
@@ -456,12 +526,23 @@
       </section>
 
       <section data-view="jobs" hidden>
-        <div class="panel">
-          <div class="panel-header">
-            <span>Jobs</span>
-            <span class="meta" id="jobsMeta">—</span>
+        <div class="split">
+          <div class="panel">
+            <div class="panel-header">
+              <span>Jobs</span>
+              <span class="meta" id="jobsMeta">—</span>
+            </div>
+            <div id="jobsBody"></div>
           </div>
-          <div id="jobsBody"></div>
+          <div class="panel">
+            <div class="panel-header">
+              <span>Job detail</span>
+              <span class="meta" id="jobDetailMeta">select a job</span>
+            </div>
+            <div id="jobDetailBody" class="job-detail">
+              <div class="empty">Select a job to watch logs and completion output.</div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -493,7 +574,11 @@
       const ADMIN_KEY = "hiveplane.adminToken";
       const POLL_MS = 5000;
 
-      const state = { activeTab: "bees", adminToken: localStorage.getItem(ADMIN_KEY) || "" };
+      const state = {
+        activeTab: "bees",
+        adminToken: localStorage.getItem(ADMIN_KEY) || "",
+        selectedJobId: "",
+      };
 
       const els = {
         adminToken: document.getElementById("adminToken"),
@@ -503,6 +588,8 @@
         beesBody: document.getElementById("beesBody"),
         jobsMeta: document.getElementById("jobsMeta"),
         jobsBody: document.getElementById("jobsBody"),
+        jobDetailMeta: document.getElementById("jobDetailMeta"),
+        jobDetailBody: document.getElementById("jobDetailBody"),
         tokenBeeName: document.getElementById("tokenBeeName"),
         mintToken: document.getElementById("mintToken"),
         tokenResult: document.getElementById("tokenResult"),
@@ -764,7 +851,14 @@
                 <td>${renderHealthChecks(b.healthChecks || [])}</td>
                 <td>${escapeHtml(b.heartbeatCount ?? 0)}</td>
                 <td title="${escapeHtml(b.firstSeenAt || "")}">${relativeTime(b.firstSeenAt)}</td>
-                <td><button class="ghost" data-action="healthcheck" data-bee-id="${escapeHtml(b.beeId)}">Healthcheck</button></td>
+                <td>
+                  <div class="actions">
+                    <button class="ghost" data-action="healthcheck" data-bee-id="${escapeHtml(b.beeId)}">Healthcheck</button>
+                    <button class="ghost" data-action="safe-command" data-command="hostname" data-args="[]" data-bee-id="${escapeHtml(b.beeId)}">Hostname</button>
+                    <button class="ghost" data-action="safe-command" data-command="df" data-args='["-h","/"]' data-bee-id="${escapeHtml(b.beeId)}">Disk</button>
+                    <button class="ghost" data-action="safe-command" data-command="uptime" data-args="[]" data-bee-id="${escapeHtml(b.beeId)}">Uptime</button>
+                  </div>
+                </td>
               </tr>
             `,
           )
@@ -790,6 +884,12 @@
         els.beesBody.querySelectorAll("[data-action='healthcheck']").forEach((button) => {
           button.addEventListener("click", () => queueHealthcheck(button.dataset.beeId, button));
         });
+        els.beesBody.querySelectorAll("[data-action='safe-command']").forEach((button) => {
+          button.addEventListener("click", () => {
+            const args = JSON.parse(button.dataset.args || "[]");
+            queueSafeCommand(button.dataset.beeId, button.dataset.command, args, button);
+          });
+        });
       }
       function renderHealthChecks(checks) {
         if (!checks.length) return '<span class="mono">—</span>';
@@ -812,7 +912,10 @@
             body: JSON.stringify({ type: "run_healthcheck", payload: {} }),
           });
           if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+          const body = await res.json();
+          state.selectedJobId = body.job?.id || state.selectedJobId;
           els.beesMeta.textContent = "healthcheck queued";
+          showJobsTab();
           refreshJobs();
         } catch (err) {
           els.beesMeta.textContent = `healthcheck failed: ${err.message}`;
@@ -820,12 +923,51 @@
           button.disabled = false;
         }
       }
+      async function queueSafeCommand(beeId, command, args, button) {
+        if (!state.adminToken) {
+          els.beesMeta.textContent = "set an admin token (top right) to queue jobs";
+          return;
+        }
+        button.disabled = true;
+        try {
+          const res = await fetch(`/api/bees/${encodeURIComponent(beeId)}/jobs`, {
+            method: "POST",
+            headers: { ...authHeaders(), "content-type": "application/json" },
+            body: JSON.stringify({
+              type: "run_command",
+              payload: { command, args },
+              timeoutSeconds: 30,
+            }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+          const body = await res.json();
+          state.selectedJobId = body.job?.id || state.selectedJobId;
+          els.beesMeta.textContent = `${command} queued`;
+          showJobsTab();
+          refreshJobs();
+        } catch (err) {
+          els.beesMeta.textContent = `${command} failed: ${err.message}`;
+        } finally {
+          button.disabled = false;
+        }
+      }
+      function showJobsTab() {
+        state.activeTab = "jobs";
+        document
+          .querySelectorAll("nav.tabs button.tab")
+          .forEach((b) => b.classList.toggle("active", b.dataset.tab === "jobs"));
+        document.querySelectorAll("main section").forEach((s) => {
+          s.hidden = s.dataset.view !== "jobs";
+        });
+      }
 
       // --- jobs view -----------------------------------------------------------
       async function refreshJobs() {
         if (!state.adminToken) {
           els.jobsBody.innerHTML = `<div class="empty">Set an admin token (top right) to view jobs.</div>`;
           els.jobsMeta.textContent = "—";
+          els.jobDetailBody.innerHTML = `<div class="empty">Set an admin token to inspect jobs.</div>`;
+          els.jobDetailMeta.textContent = "—";
           return;
         }
         try {
@@ -833,12 +975,22 @@
           if (res.status === 401) {
             els.jobsBody.innerHTML = `<div class="empty">Admin token rejected.</div>`;
             els.jobsMeta.textContent = "—";
+            els.jobDetailBody.innerHTML = `<div class="empty">Admin token rejected.</div>`;
+            els.jobDetailMeta.textContent = "—";
             return;
           }
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const { jobs } = await res.json();
           renderJobs(jobs ?? []);
           els.jobsMeta.textContent = `${jobs.length} jobs · updated ${new Date().toLocaleTimeString()}`;
+          if (state.selectedJobId) {
+            await refreshSelectedJob();
+          } else if ((jobs ?? []).length > 0) {
+            state.selectedJobId = [...jobs].sort(
+              (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+            )[0].id;
+            await refreshSelectedJob();
+          }
         } catch (err) {
           els.jobsBody.innerHTML = `<div class="empty">Failed to load jobs: ${escapeHtml(err.message)}</div>`;
         }
@@ -858,7 +1010,7 @@
               <tr>
                 <td>${pill(j.status)}</td>
                 <td>${escapeHtml(j.type)}</td>
-                <td><span class="mono truncate" title="${escapeHtml(j.id)}">${escapeHtml(shortId(j.id))}</span></td>
+                <td><button class="ghost" data-action="select-job" data-job-id="${escapeHtml(j.id)}">${escapeHtml(shortId(j.id))}</button></td>
                 <td><span class="mono truncate" title="${escapeHtml(j.beeId)}">${escapeHtml(shortId(j.beeId))}</span></td>
                 <td title="${escapeHtml(j.createdAt || "")}">${relativeTime(j.createdAt)}</td>
                 <td title="${escapeHtml(j.completedAt || "")}">${j.completedAt ? relativeTime(j.completedAt) : "—"}</td>
@@ -884,6 +1036,12 @@
             </thead>
             <tbody>${rows}</tbody>
           </table>`;
+        els.jobsBody.querySelectorAll("[data-action='select-job']").forEach((button) => {
+          button.addEventListener("click", () => {
+            state.selectedJobId = button.dataset.jobId;
+            refreshSelectedJob();
+          });
+        });
       }
       function jobDetailSnippet(j) {
         if (j.error) {
@@ -899,6 +1057,76 @@
           return `<details><summary>output</summary><pre class="snippet">${escapeHtml(JSON.stringify(j.output, null, 2))}</pre></details>`;
         }
         return "—";
+      }
+      async function refreshSelectedJob() {
+        if (!state.selectedJobId) {
+          els.jobDetailMeta.textContent = "select a job";
+          els.jobDetailBody.innerHTML = `<div class="empty">Select a job to watch logs and completion output.</div>`;
+          return;
+        }
+        try {
+          const res = await fetch(`/api/jobs/${encodeURIComponent(state.selectedJobId)}`, {
+            headers: authHeaders(),
+          });
+          if (res.status === 404) {
+            els.jobDetailMeta.textContent = "not found";
+            els.jobDetailBody.innerHTML = `<div class="empty">Selected job no longer exists.</div>`;
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const { job } = await res.json();
+          renderJobDetail(job);
+        } catch (err) {
+          els.jobDetailMeta.textContent = "load failed";
+          els.jobDetailBody.innerHTML = `<div class="empty">Failed to load job detail: ${escapeHtml(err.message)}</div>`;
+        }
+      }
+      function renderJobDetail(job) {
+        const events = [...(job.events || [])].sort(
+          (a, b) => (a.sequence ?? 0) - (b.sequence ?? 0),
+        );
+        els.jobDetailMeta.textContent = `${job.status} · ${events.length} events`;
+        const payload = JSON.stringify(job.payload || {}, null, 2);
+        const result = job.error || job.output;
+        els.jobDetailBody.innerHTML = `
+          <div>${pill(job.status)} <span class="mono">${escapeHtml(job.type)}</span></div>
+          <div class="job-detail-grid">
+            <div class="kv"><span>Job</span><div class="mono truncate" title="${escapeHtml(job.id)}">${escapeHtml(job.id)}</div></div>
+            <div class="kv"><span>Bee</span><div class="mono truncate" title="${escapeHtml(job.beeId)}">${escapeHtml(job.beeId)}</div></div>
+            <div class="kv"><span>Created</span><div title="${escapeHtml(job.createdAt || "")}">${relativeTime(job.createdAt)}</div></div>
+            <div class="kv"><span>Completed</span><div title="${escapeHtml(job.completedAt || "")}">${job.completedAt ? relativeTime(job.completedAt) : "—"}</div></div>
+          </div>
+          <details>
+            <summary>payload</summary>
+            <pre class="snippet">${escapeHtml(payload)}</pre>
+          </details>
+          ${result ? `<details open><summary>${job.error ? "error" : "output"}</summary><pre class="snippet">${escapeHtml(JSON.stringify(result, null, 2))}</pre></details>` : ""}
+          <div>
+            <div class="meta">Event stream</div>
+            ${
+              events.length
+                ? `<div class="event-list">${events.map(renderJobEvent).join("")}</div>`
+                : `<div class="empty">No events yet. The Bee should pick this up on its next heartbeat.</div>`
+            }
+          </div>
+        `;
+      }
+      function renderJobEvent(event) {
+        let body = "";
+        if (event.data && typeof event.data.text === "string") {
+          body = event.data.text;
+        } else {
+          body = JSON.stringify(event.data || {}, null, 2);
+        }
+        return `
+          <div class="event">
+            <div class="event-head">
+              <span>#${escapeHtml(event.sequence ?? "—")} · ${escapeHtml(event.type)} · ${escapeHtml(event.level)}</span>
+              <span title="${escapeHtml(event.createdAt || "")}">${relativeTime(event.createdAt)}</span>
+            </div>
+            <pre class="event-body">${escapeHtml(body || "—")}</pre>
+          </div>
+        `;
       }
 
       // --- tokens view ---------------------------------------------------------
