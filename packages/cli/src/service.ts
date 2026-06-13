@@ -205,6 +205,7 @@ async function stopServiceUnit(spec: DaemonSpec): Promise<void> {
   if (plat === "darwin") {
     const uid = userInfo().uid;
     await runIgnoringFamiliarFailures("launchctl", ["bootout", `gui/${uid}/${spec.launchdLabel}`]);
+    await waitForLaunchAgentGone(uid, spec.launchdLabel);
   } else {
     await runIgnoringFamiliarFailures("systemctl", [
       "--user",
@@ -485,6 +486,13 @@ async function launchAgentExists(uid: number, label: string): Promise<boolean> {
   }
 }
 
+async function waitForLaunchAgentGone(uid: number, label: string): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (!(await launchAgentExists(uid, label))) return;
+    await delay(150);
+  }
+}
+
 async function kickstartLaunchAgent(uid: number, label: string): Promise<void> {
   const target = `gui/${uid}/${label}`;
   let lastError: unknown;
@@ -495,7 +503,6 @@ async function kickstartLaunchAgent(uid: number, label: string): Promise<void> {
       return;
     } catch (error) {
       lastError = error;
-      if (await launchAgentExists(uid, label)) return;
       if (attempt < 2) await delay(250 * (attempt + 1));
     }
   }
