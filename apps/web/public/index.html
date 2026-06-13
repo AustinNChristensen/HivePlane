@@ -298,7 +298,9 @@
         text-transform: uppercase;
         letter-spacing: 0.04em;
       }
-      .form-field input {
+      .form-field input,
+      .form-field select,
+      .form-field textarea {
         background: var(--panel-2);
         color: var(--text);
         border: 1px solid var(--border);
@@ -306,6 +308,37 @@
         padding: 8px 10px;
         font-size: 13px;
         min-width: 200px;
+      }
+      .form-field textarea {
+        min-height: 68px;
+        resize: vertical;
+        font-family: var(--mono);
+      }
+      .form-field.compact input,
+      .form-field.compact select {
+        min-width: 140px;
+      }
+      .form-field.wide {
+        flex: 1 1 260px;
+      }
+      .form-field.wide textarea {
+        width: 100%;
+      }
+      .checkbox-row {
+        display: flex;
+        align-items: center;
+        min-height: 36px;
+        gap: 8px;
+      }
+      .checkbox-row input {
+        min-width: 0;
+      }
+      .profile-form {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: flex-end;
+        margin-top: 12px;
       }
       .token-display {
         margin: 0 18px 18px;
@@ -1031,9 +1064,16 @@
             deleteBee(button.dataset.beeId, button.dataset.beeName, button),
           );
         });
+        els.beesBody.querySelectorAll("[data-action='profile-form']").forEach((form) => {
+          form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            saveBeeProfile(form);
+          });
+        });
         els.beesBody.querySelectorAll("[data-action='select-bee']").forEach((row) => {
           row.addEventListener("click", (event) => {
             if (event.target.closest("button")) return;
+            if (event.target.closest("form")) return;
             state.selectedBeeId = row.dataset.beeId;
             renderBees(bees);
           });
@@ -1161,6 +1201,7 @@
               ${kv("Critical checks", capList(profile.criticalServices || []))}
               ${kv("Expected windows", capList(profile.expectedWindows || []))}
             </div>
+            ${renderProfileEditor(bee)}
           </div>
           <div class="detail-section">
             <h3>Hardware</h3>
@@ -1204,6 +1245,56 @@
           </div>
         `;
       }
+      function renderProfileEditor(bee) {
+        const profile = bee.profile || {};
+        const availabilityClass = profile.availabilityClass || "always_on";
+        const activeJobPolicy = profile.activeJobPolicy || "escalate";
+        const criticalServices = (profile.criticalServices || []).join("\n");
+        const expectedWindows = (profile.expectedWindows || []).join("\n");
+        return `
+          <form class="profile-form" data-action="profile-form" data-bee-id="${escapeHtml(bee.beeId)}">
+            <div class="form-field compact">
+              <label>Class</label>
+              <select name="availabilityClass">
+                ${profileOption("always_on", availabilityClass)}
+                ${profileOption("intermittent", availabilityClass)}
+                ${profileOption("ephemeral", availabilityClass)}
+                ${profileOption("critical", availabilityClass)}
+              </select>
+            </div>
+            <div class="form-field compact">
+              <label>Grace seconds</label>
+              <input name="offlineGraceSeconds" type="number" min="0" step="1" value="${escapeHtml(profile.offlineGraceSeconds ?? 120)}" />
+            </div>
+            <div class="form-field compact">
+              <label>Active jobs</label>
+              <select name="activeJobPolicy">
+                ${profileOption("escalate", activeJobPolicy)}
+                ${profileOption("watch", activeJobPolicy)}
+              </select>
+            </div>
+            <div class="form-field compact">
+              <label>Auto repair</label>
+              <div class="checkbox-row">
+                <input name="autoRepairWhenOnline" type="checkbox" ${profile.autoRepairWhenOnline === false ? "" : "checked"} />
+                <span class="meta">enabled</span>
+              </div>
+            </div>
+            <div class="form-field wide">
+              <label>Critical checks</label>
+              <textarea name="criticalServices" spellcheck="false">${escapeHtml(criticalServices)}</textarea>
+            </div>
+            <div class="form-field wide">
+              <label>Expected windows</label>
+              <textarea name="expectedWindows" spellcheck="false">${escapeHtml(expectedWindows)}</textarea>
+            </div>
+            <button class="action" type="submit">Save Profile</button>
+          </form>
+        `;
+      }
+      function profileOption(value, selected) {
+        return `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value.replace(/_/g, " "))}</option>`;
+      }
       function kv(label, value) {
         return `<div class="kv-row"><span>${escapeHtml(label)}</span><div>${value}</div></div>`;
       }
@@ -1224,6 +1315,49 @@
             ),
           )
           .join("")}</div>`;
+      }
+      async function saveBeeProfile(form) {
+        if (!state.adminToken) {
+          els.beesMeta.textContent = "set an admin token (top right) to edit profiles";
+          return;
+        }
+        const button = form.querySelector("button[type='submit']");
+        button.disabled = true;
+        const data = new FormData(form);
+        const beeId = form.dataset.beeId;
+        const payload = {
+          availabilityClass: String(data.get("availabilityClass") || "always_on"),
+          offlineGraceSeconds: Number(data.get("offlineGraceSeconds") || 0),
+          activeJobPolicy: String(data.get("activeJobPolicy") || "escalate"),
+          autoRepairWhenOnline: Boolean(data.get("autoRepairWhenOnline")),
+          criticalServices: splitProfileList(String(data.get("criticalServices") || "")),
+          expectedWindows: splitProfileList(String(data.get("expectedWindows") || "")),
+        };
+        try {
+          const res = await fetch(`/api/bees/${encodeURIComponent(beeId)}/profile`, {
+            method: "PATCH",
+            headers: { ...authHeaders(), "content-type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            els.beesMeta.textContent = "admin token rejected — paste the current token";
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+          els.beesMeta.textContent = "profile saved";
+          await refreshBees();
+        } catch (err) {
+          els.beesMeta.textContent = `profile save failed: ${err.message}`;
+        } finally {
+          button.disabled = false;
+        }
+      }
+      function splitProfileList(value) {
+        return value
+          .split(/[\n,]/)
+          .map((part) => part.trim())
+          .filter(Boolean);
       }
       async function queueHealthcheck(beeId, button) {
         if (!state.adminToken) {

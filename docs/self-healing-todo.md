@@ -70,4 +70,4 @@ Goal: HivePlane should operate AI agent machines with an AI brain and constraine
 ## Remaining Follow-up
 
 - Configure a local production notification sink. Hive can now deliver incident notifications to `HIVEPLANE_INCIDENT_WEBHOOK_URL` or `HIVEPLANE_INCIDENT_NOTIFY_COMMAND`, and it tracks sent/failed delivery state per notification. The remaining local step is choosing the operator channel for this Hive (for example an OpenClaw/iMessage adapter).
-- Add a dashboard profile editor so operators can change Bee profiles without calling the API directly.
+- Dogfood the dashboard profile editor across a few real profile changes and add any validation hints that prove useful.
