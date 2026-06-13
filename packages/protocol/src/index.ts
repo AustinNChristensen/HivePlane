@@ -154,6 +154,7 @@ export const JobTypeSchema = z.enum([
   "openclaw_status",
   "ollama_status",
   "ollama_list_models",
+  "update_bee",
 ]);
 
 export const JobSchema = z.object({

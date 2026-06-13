@@ -285,4 +285,49 @@ describe("JobExecutor", () => {
     expect(body.status).toBe("succeeded");
     expect(Array.isArray(body.output.models)).toBe(true);
   });
+
+  it("update_bee runs git pull and pnpm install before completing", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const spawnImpl = makeSpawn({
+      stdoutChunks: ["ok\n"],
+      exitCode: 0,
+    }) as unknown as typeof import("node:child_process").spawn;
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      daemonVersion: "0.0.1-test",
+      policy: { runCommand: { allow: [], unsafeAllowAll: false } },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl,
+      scheduleRestart: false,
+    });
+
+    await executor.execute(
+      makeJob({ type: "update_bee", payload: { installDir: "/tmp/hiveplane" } }),
+    );
+
+    expect(spawnImpl).toHaveBeenNthCalledWith(
+      1,
+      "git",
+      ["pull", "--ff-only"],
+      expect.objectContaining({ cwd: "/tmp/hiveplane" }),
+    );
+    expect(spawnImpl).toHaveBeenNthCalledWith(
+      2,
+      "pnpm",
+      ["install", "--frozen-lockfile", "--silent"],
+      expect.objectContaining({ cwd: "/tmp/hiveplane" }),
+    );
+    const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
+    expect(body.status).toBe("succeeded");
+    expect(body.output.restartScheduled).toBe(true);
+  });
 });

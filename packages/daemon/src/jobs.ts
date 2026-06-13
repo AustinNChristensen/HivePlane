@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { sign as edSign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { userInfo } from "node:os";
 import {
   JobCompleteRequestSchema,
   JobEventBatchSchema,
@@ -29,6 +30,7 @@ export type JobExecutorOptions = {
   fetchImpl?: typeof fetch;
   /** Override for tests. Defaults to spawning a real child process. */
   spawnImpl?: typeof spawn;
+  scheduleRestart?: boolean;
 };
 
 export type JobOutcome =
@@ -64,6 +66,9 @@ export class JobExecutor {
         case "ollama_list_models":
           outcome = await this.runOllamaListModels(job);
           break;
+        case "update_bee":
+          outcome = await this.runBeeUpdate(job);
+          break;
         default:
           outcome = {
             status: "failed",
@@ -84,6 +89,13 @@ export class JobExecutor {
     }
 
     await this.complete(job, outcome);
+    if (
+      job.type === "update_bee" &&
+      outcome.status === "succeeded" &&
+      this.options.scheduleRestart !== false
+    ) {
+      this.scheduleBeeRestart();
+    }
   }
 
   private async runCommand(job: Job): Promise<JobOutcome> {
@@ -202,6 +214,108 @@ export class JobExecutor {
     return { status: "succeeded", output };
   }
 
+  private async runBeeUpdate(job: Job): Promise<JobOutcome> {
+    const cwd = typeof job.payload.installDir === "string" ? job.payload.installDir : process.cwd();
+    await this.emit(job, "info", "bee_update.start", { cwd });
+
+    const git = await this.runUpdateCommand(job, "git", ["pull", "--ff-only"], cwd);
+    if (!git.ok) return git.outcome;
+
+    const install = await this.runUpdateCommand(
+      job,
+      "pnpm",
+      ["install", "--frozen-lockfile", "--silent"],
+      cwd,
+    );
+    if (!install.ok) return install.outcome;
+
+    await this.emit(job, "info", "bee_update.restart_scheduled", {
+      service: process.platform === "darwin" ? "com.hiveplane.bee" : "hiveplane-bee.service",
+    });
+
+    return {
+      status: "succeeded",
+      output: {
+        cwd,
+        git: git.summary,
+        install: install.summary,
+        restartScheduled: true,
+      },
+    };
+  }
+
+  private async runUpdateCommand(
+    job: Job,
+    command: string,
+    args: string[],
+    cwd: string,
+  ): Promise<
+    | { ok: true; summary: Record<string, JsonValue> }
+    | { ok: false; outcome: Extract<JobOutcome, { status: "failed" }> }
+  > {
+    await this.emit(job, "info", "bee_update.command.start", { command, args });
+    const child = this.spawnImpl(command, args, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    });
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+    const pendingEventPosts: Promise<void>[] = [];
+    const queueEvent = (level: JobEvent["level"], type: string, data: Record<string, JsonValue>) =>
+      pendingEventPosts.push(this.emit(job, level, type, data));
+
+    child.stdout?.on("data", (data: Buffer) => {
+      const text = data.toString("utf8");
+      stdoutChunks.push(text);
+      queueEvent("debug", "bee_update.stdout", { command, text });
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      const text = data.toString("utf8");
+      stderrChunks.push(text);
+      queueEvent("debug", "bee_update.stderr", { command, text });
+    });
+
+    return await new Promise((resolve) => {
+      child.once("error", async (err) => {
+        await Promise.allSettled(pendingEventPosts);
+        resolve({
+          ok: false,
+          outcome: {
+            status: "failed",
+            error: { code: "update_spawn_error", command, message: err.message },
+          },
+        });
+      });
+      child.once("close", async (exitCode, signal) => {
+        await Promise.allSettled(pendingEventPosts);
+        const summary: Record<string, JsonValue> = {
+          command,
+          args,
+          exitCode: exitCode ?? -1,
+          signal: signal ?? null,
+          stdout: stdoutChunks.join(""),
+          stderr: stderrChunks.join(""),
+        };
+        if (exitCode === 0) {
+          resolve({ ok: true, summary });
+          return;
+        }
+        resolve({
+          ok: false,
+          outcome: {
+            status: "failed",
+            error: {
+              code: "update_command_failed",
+              message: `${command} exited ${exitCode}`,
+              ...summary,
+            },
+          },
+        });
+      });
+    });
+  }
+
   private async emit(
     job: Job,
     level: JobEvent["level"],
@@ -270,5 +384,26 @@ export class JobExecutor {
 
   private getPolicy(): BeePolicy {
     return this.options.policy ?? readBeePolicy(this.options.configDir);
+  }
+
+  private scheduleBeeRestart(): void {
+    setTimeout(() => {
+      if (process.platform === "darwin") {
+        const uid = userInfo().uid;
+        const child = spawn("launchctl", ["kickstart", "-k", `gui/${uid}/com.hiveplane.bee`], {
+          detached: true,
+          stdio: "ignore",
+        });
+        child.unref();
+        return;
+      }
+      if (process.platform === "linux") {
+        const child = spawn("systemctl", ["--user", "restart", "hiveplane-bee.service"], {
+          detached: true,
+          stdio: "ignore",
+        });
+        child.unref();
+      }
+    }, 1_000).unref();
   }
 }

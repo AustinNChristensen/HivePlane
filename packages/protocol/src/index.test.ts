@@ -154,7 +154,7 @@ describe("jobs and events", () => {
   });
 
   it("validates adapter jobs", () => {
-    for (const type of ["openclaw_status", "ollama_status", "ollama_list_models"]) {
+    for (const type of ["openclaw_status", "ollama_status", "ollama_list_models", "update_bee"]) {
       const job = JobSchema.parse({
         id: `job_${type}`,
         type,
