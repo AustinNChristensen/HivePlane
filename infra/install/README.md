@@ -112,6 +112,8 @@ on-disk source of truth for `adminToken`, `host`, `port`, `authRequired`, and
 `openBrowser`. It can also hold an incident notification sink:
 `incidentNotificationWebhookUrl` or `incidentNotificationCommand` (command plus
 args; notification JSON is written to stdin). The Hive runtime reads it at boot.
+For local iMessage delivery, point `incidentNotificationCommand` at
+`infra/install/incident-notify-imessage.js` and pass `--target <imessage-handle>`.
 Env vars still override:
 
 - `HIVEPLANE_ADMIN_TOKEN`

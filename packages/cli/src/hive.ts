@@ -26,6 +26,7 @@ import {
   getHiveConfigPath,
   readHiveOnDiskConfig,
   writeHiveOnDiskConfig,
+  type HiveOnDiskConfig,
 } from "./hive-config.js";
 import { probeHiveVersion, probePortInUse } from "./port-probe.js";
 import {
@@ -115,16 +116,24 @@ async function runInit(parsed: ArgvParseResult): Promise<void> {
         ? false
         : undefined;
 
-  const config = {
+  const resolvedPort = portFlag !== undefined ? Number(portFlag) : (existing.port ?? 4483);
+  if (!Number.isInteger(resolvedPort) || resolvedPort <= 0) {
+    console.error(`Invalid --port: ${portFlag}`);
+    process.exit(2);
+  }
+
+  const config: HiveOnDiskConfig = {
     adminToken: existing.adminToken ?? generateAdminToken(),
     host: hostFlag ?? existing.host ?? "0.0.0.0",
-    port: portFlag !== undefined ? Number(portFlag) : (existing.port ?? 4483),
+    port: resolvedPort,
     authRequired: authRequiredFlag ?? existing.authRequired ?? false,
     openBrowser: existing.openBrowser ?? false,
   };
-  if (!Number.isInteger(config.port) || config.port <= 0) {
-    console.error(`Invalid --port: ${portFlag}`);
-    process.exit(2);
+  if (existing.incidentNotificationWebhookUrl) {
+    config.incidentNotificationWebhookUrl = existing.incidentNotificationWebhookUrl;
+  }
+  if (existing.incidentNotificationCommand) {
+    config.incidentNotificationCommand = existing.incidentNotificationCommand;
   }
   const overwriteAdmin = parsed.flags.get("rotate-admin-token") === true;
   if (overwriteAdmin) config.adminToken = generateAdminToken();

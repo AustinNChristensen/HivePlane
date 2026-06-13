@@ -129,6 +129,22 @@ Optional incident alerts can be configured in `hive-config.json` with
 deduped `needs_approval` / `unresolved` incident notifications and records
 whether delivery was sent or failed.
 
+For a local OpenClaw/iMessage sink on the Hive machine:
+
+```json
+{
+  "incidentNotificationCommand": [
+    "/Users/you/.hiveplane/install/infra/install/incident-notify-imessage.js",
+    "--target",
+    "+15555550123"
+  ]
+}
+```
+
+The command reads the notification JSON on stdin and sends a concise iMessage
+through `openclaw message send`. Set `OPENCLAW_BIN` if the OpenClaw CLI is not
+at `/opt/homebrew/bin/openclaw`.
+
 `hive.sh` prints the admin token at the end of the run — save it. You can re-read or rotate it anytime with `hive init` (and `--rotate-admin-token` to mint a fresh one). Manage the service with:
 
 ```bash

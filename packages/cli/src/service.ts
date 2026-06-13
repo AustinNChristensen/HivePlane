@@ -191,7 +191,10 @@ async function startServiceUnit(spec: DaemonSpec): Promise<void> {
     // Idempotent-ish: launchd sometimes returns Bootstrap failed: 5 right after
     // bootout even though an immediate retry succeeds. Treat bootstrap as a
     // short retry loop, then kickstart the loaded label.
-    await bootstrapLaunchAgent(uid, spec.launchdLabel, unitPath);
+    const loadResult = await bootstrapLaunchAgent(uid, spec.launchdLabel, unitPath);
+    if (loadResult === "loaded" && (await waitForLaunchAgentRunning(uid, spec.launchdLabel))) {
+      return;
+    }
     await kickstartLaunchAgent(uid, spec.launchdLabel);
   } else {
     await execFileAsync("systemctl", ["--user", "enable", "--now", spec.systemdUnitName]);
@@ -445,7 +448,9 @@ async function runIgnoringFamiliarFailures(cmd: string, args: string[]): Promise
     // launchctl returns non-zero for "already loaded" / "not loaded" — those
     // are fine to ignore. Re-throw only if stderr looks like a real failure.
     const stderr = (error as { stderr?: string }).stderr?.toString() ?? "";
-    const benign = /already|not loaded|not currently|no such process/i.test(stderr);
+    const benign = /already|not loaded|not currently|no such process|could not find service/i.test(
+      stderr,
+    );
     if (!benign) {
       throw error;
     }
@@ -460,21 +465,22 @@ async function bootstrapLaunchAgent(
   const target = `gui/${uid}`;
   let lastError: unknown;
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
     try {
       await execFileAsync("launchctl", ["bootstrap", target, unitPath]);
-      return "loaded";
+      if (await waitForLaunchAgentExists(uid, label)) return "loaded";
+      if (attempt < 7) await delay(500 * (attempt + 1));
     } catch (error) {
       lastError = error;
       const stderr = (error as { stderr?: string }).stderr?.toString() ?? "";
-      if (/already/i.test(stderr) || (await launchAgentExists(uid, label))) {
-        return "already_loaded";
+      if (/already/i.test(stderr)) {
+        if (await waitForLaunchAgentExists(uid, label)) return "already_loaded";
       }
-      if (attempt < 2) await delay(250 * (attempt + 1));
+      if (attempt < 7) await delay(500 * (attempt + 1));
     }
   }
 
-  throw lastError;
+  throw lastError ?? new Error(`launchd did not load ${label} after bootstrap`);
 }
 
 async function launchAgentExists(uid: number, label: string): Promise<boolean> {
@@ -493,6 +499,14 @@ async function waitForLaunchAgentGone(uid: number, label: string): Promise<void>
   }
 }
 
+async function waitForLaunchAgentExists(uid: number, label: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (await launchAgentExists(uid, label)) return true;
+    await delay(150);
+  }
+  return false;
+}
+
 async function kickstartLaunchAgent(uid: number, label: string): Promise<void> {
   const target = `gui/${uid}/${label}`;
   let lastError: unknown;
@@ -503,9 +517,27 @@ async function kickstartLaunchAgent(uid: number, label: string): Promise<void> {
       return;
     } catch (error) {
       lastError = error;
+      if (await waitForLaunchAgentRunning(uid, label)) return;
       if (attempt < 2) await delay(250 * (attempt + 1));
     }
   }
 
   throw lastError;
+}
+
+async function launchAgentIsRunning(uid: number, label: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync("launchctl", ["print", `gui/${uid}/${label}`]);
+    return /state\s*=\s*running/.test(stdout);
+  } catch {
+    return false;
+  }
+}
+
+async function waitForLaunchAgentRunning(uid: number, label: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (await launchAgentIsRunning(uid, label)) return true;
+    await delay(150);
+  }
+  return false;
 }

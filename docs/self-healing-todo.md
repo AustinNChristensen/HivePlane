@@ -66,8 +66,9 @@ Goal: HivePlane should operate AI agent machines with an AI brain and constraine
 - [x] Local AI diagnosis/planner can produce a bounded repair recommendation.
 - [x] Verification closes incidents only after health checks recover.
 - [x] Notifications fire only for unresolved/approval-needed incidents.
+- [x] Local OpenClaw/iMessage incident notification sink is wired and smoke-tested.
 
 ## Remaining Follow-up
 
-- Configure a local production notification sink. Hive can now deliver incident notifications to `HIVEPLANE_INCIDENT_WEBHOOK_URL` or `HIVEPLANE_INCIDENT_NOTIFY_COMMAND`, and it tracks sent/failed delivery state per notification. The remaining local step is choosing the operator channel for this Hive (for example an OpenClaw/iMessage adapter).
+- Dogfood more safe failure simulations now that real iMessage alerting is active: stop Bee, stop OpenClaw gateway, deny a risky repair, and force a verification failure.
 - Dogfood the dashboard profile editor across a few real profile changes and add any validation hints that prove useful.

@@ -33,6 +33,8 @@ describe("HiveOnDiskConfig", () => {
       port: 4483,
       authRequired: true,
       openBrowser: false,
+      incidentNotificationWebhookUrl: "https://example.com/hive-alerts",
+      incidentNotificationCommand: ["/usr/local/bin/hive-alert", "--target", "+15555550123"],
     };
     writeHiveOnDiskConfig(config, configDir);
     expect(readHiveOnDiskConfig(configDir)).toEqual(config);

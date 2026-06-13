@@ -19,6 +19,8 @@ export type HiveOnDiskConfig = {
   port?: number;
   authRequired?: boolean;
   openBrowser?: boolean;
+  incidentNotificationWebhookUrl?: string;
+  incidentNotificationCommand?: string[];
 };
 
 export const HIVE_CONFIG_FILENAME = "hive-config.json";

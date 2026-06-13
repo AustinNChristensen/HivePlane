@@ -31,6 +31,7 @@ describe("hive-config", () => {
       port: 9999,
       authRequired: true,
       openBrowser: false,
+      incidentNotificationCommand: ["/usr/local/bin/hive-alert", "--target", "+15555550123"],
     };
     const { path } = writeHiveOnDiskConfig(written, configDir);
     expect(path).toBe(getHiveConfigPath(configDir));
