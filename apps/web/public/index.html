@@ -255,6 +255,13 @@
       button.ghost:hover {
         background: var(--row-hover);
       }
+      button.danger {
+        color: var(--bad);
+        border-color: color-mix(in srgb, var(--bad) 45%, var(--border));
+      }
+      button.danger:hover {
+        background: color-mix(in srgb, var(--bad) 12%, transparent);
+      }
       .form-row {
         display: flex;
         gap: 12px;
@@ -879,6 +886,7 @@
                     <button class="ghost" data-action="safe-command" data-command="hostname" data-args="[]" data-bee-id="${escapeHtml(b.beeId)}">Hostname</button>
                     <button class="ghost" data-action="safe-command" data-command="df" data-args='["-h","/"]' data-bee-id="${escapeHtml(b.beeId)}">Disk</button>
                     <button class="ghost" data-action="safe-command" data-command="uptime" data-args="[]" data-bee-id="${escapeHtml(b.beeId)}">Uptime</button>
+                    <button class="ghost danger" data-action="delete-bee" data-bee-id="${escapeHtml(b.beeId)}" data-bee-name="${escapeHtml(b.beeName || shortId(b.beeId))}">Delete</button>
                   </div>
                 </td>
               </tr>
@@ -911,6 +919,11 @@
             const args = JSON.parse(button.dataset.args || "[]");
             queueSafeCommand(button.dataset.beeId, button.dataset.command, args, button);
           });
+        });
+        els.beesBody.querySelectorAll("[data-action='delete-bee']").forEach((button) => {
+          button.addEventListener("click", () =>
+            deleteBee(button.dataset.beeId, button.dataset.beeName, button),
+          );
         });
       }
       function renderHealthChecks(checks) {
@@ -979,6 +992,34 @@
           refreshJobs();
         } catch (err) {
           els.beesMeta.textContent = `${command} failed: ${err.message}`;
+        } finally {
+          button.disabled = false;
+        }
+      }
+      async function deleteBee(beeId, beeName, button) {
+        if (!state.adminToken) {
+          els.beesMeta.textContent = "set an admin token (top right) to delete stale Bees";
+          return;
+        }
+        if (!window.confirm(`Delete ${beeName}? This removes its active sessions from Hive.`)) {
+          return;
+        }
+        button.disabled = true;
+        try {
+          const res = await fetch(`/api/bees/${encodeURIComponent(beeId)}`, {
+            method: "DELETE",
+            headers: authHeaders(),
+          });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            els.beesMeta.textContent = "admin token rejected — paste the current token";
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+          els.beesMeta.textContent = `${beeName} deleted`;
+          await refreshBees();
+        } catch (err) {
+          els.beesMeta.textContent = `delete failed: ${err.message}`;
         } finally {
           button.disabled = false;
         }

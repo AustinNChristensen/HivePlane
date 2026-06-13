@@ -228,6 +228,23 @@ export function upsertBeeHeartbeat(
   return record;
 }
 
+function findBeeIdByPublicKey(state: HiveServerState, publicKey: string): string | undefined {
+  for (const [beeId, bee] of state.bees.entries()) {
+    if (bee.publicKey && safeEquals(bee.publicKey, publicKey)) return beeId;
+  }
+  return undefined;
+}
+
+function deleteBee(state: HiveServerState, beeId: string): boolean {
+  const deleted = state.bees.delete(beeId);
+  if (!deleted) return false;
+
+  for (const [tokenHash, session] of state.sessions.entries()) {
+    if (session.beeId === beeId) state.sessions.delete(tokenHash);
+  }
+  return true;
+}
+
 function defaultInstallScriptsDir(): string {
   // apps/web/src/server.ts → ../../../infra/install
   const here = dirname(fileURLToPath(import.meta.url));
@@ -317,6 +334,17 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
 
       if (request.method === "GET" && url.pathname === "/api/bees") {
         return sendJson(response, 200, { bees: serializeBees(state, now()) });
+      }
+
+      const deleteBeeMatch = /^\/api\/bees\/([^/]+)$/.exec(url.pathname);
+      if (request.method === "DELETE" && deleteBeeMatch) {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const beeId = decodeURIComponent(deleteBeeMatch[1] ?? "");
+        if (!deleteBee(state, beeId)) {
+          return sendJson(response, 404, { error: "not_found", reason: "bee not registered" });
+        }
+        markDirty();
+        return sendJson(response, 200, { deleted: true, beeId });
       }
 
       if (request.method === "POST" && url.pathname === "/api/bootstrap-tokens") {
@@ -632,7 +660,9 @@ function registerBeeWithBootstrapToken(
     return { error: "unauthorized", reason: "bootstrap token expired" };
   }
 
-  const beeId = `bee_${tokenRecord.tokenId.slice(3)}_${sha256Hex(request.publicKey).slice(0, 12)}`;
+  const beeId =
+    findBeeIdByPublicKey(state, request.publicKey) ??
+    `bee_${tokenRecord.tokenId.slice(3)}_${sha256Hex(request.publicKey).slice(0, 12)}`;
   tokenRecord.consumedAt = now;
   tokenRecord.consumedByBeeId = beeId;
   return finalizeRegistration(state, request, beeId, now);
@@ -686,7 +716,9 @@ function registerBeeWithPairingKey(
     };
   }
 
-  const beeId = `bee_${active.keyId.slice(3)}_${sha256Hex(request.publicKey).slice(0, 12)}`;
+  const beeId =
+    findBeeIdByPublicKey(state, request.publicKey) ??
+    `bee_${active.keyId.slice(3)}_${sha256Hex(request.publicKey).slice(0, 12)}`;
   active.consumedAt = now;
   active.consumedByBeeId = beeId;
   // Pairing keys are single-use: rotate immediately so the next Bee can't

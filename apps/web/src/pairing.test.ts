@@ -28,7 +28,7 @@ function generateBeeKeypair(): { publicKeyPem: string } {
 function buildRegistrationBody(extra: Record<string, unknown>) {
   return {
     type: "bee.registration.request",
-    publicKey: generateBeeKeypair().publicKeyPem,
+    publicKey: (extra.publicKey as string | undefined) ?? generateBeeKeypair().publicKeyPem,
     beeName: "test-bee",
     daemonVersion: "0.0.1-test",
     hiveUrl: "http://hive.example",
@@ -142,6 +142,48 @@ describe("POST /api/bees/register with pairing key", () => {
       expect(reuse.status).toBe(401);
       const reuseBody = (await reuse.json()) as { reason: string };
       expect(reuseBody.reason).toMatch(/rotated/);
+    });
+  });
+
+  it("reuses the existing Bee when the same public key pairs again", async () => {
+    const state = createHiveServerState();
+    const keypair = generateBeeKeypair();
+    const firstKey = ensureActivePairingKey(state, new Date());
+
+    await withServer({ state, adminToken: "secret" }, async (baseUrl) => {
+      const first = await fetch(`${baseUrl}/api/bees/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(
+          buildRegistrationBody({
+            pairingKey: `hp_pair_${firstKey.code}`,
+            publicKey: keypair.publicKeyPem,
+            beeName: "Austin MBP",
+          }),
+        ),
+      });
+      expect(first.status).toBe(200);
+      const firstBody = (await first.json()) as { beeId: string };
+
+      const secondKey = ensureActivePairingKey(state, new Date(), true);
+      const second = await fetch(`${baseUrl}/api/bees/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(
+          buildRegistrationBody({
+            pairingKey: `hp_pair_${secondKey.code}`,
+            publicKey: keypair.publicKeyPem,
+            beeName: "Austin MBP",
+          }),
+        ),
+      });
+      expect(second.status).toBe(200);
+      const secondBody = (await second.json()) as { beeId: string };
+
+      expect(secondBody.beeId).toBe(firstBody.beeId);
+      expect(
+        [...state.bees.values()].filter((bee) => bee.publicKey === keypair.publicKeyPem),
+      ).toHaveLength(1);
     });
   });
 

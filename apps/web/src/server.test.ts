@@ -5,6 +5,23 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createHiveServer, createHiveServerState, upsertBeeHeartbeat } from "./server.js";
 
+async function withServer<T>(
+  options: Parameters<typeof createHiveServer>[0],
+  fn: (baseUrl: string) => Promise<T>,
+): Promise<T> {
+  const server = createHiveServer(options);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const address = server.address();
+    if (!address || typeof address !== "object")
+      throw new Error("server did not bind to a TCP port");
+    return await fn(`http://127.0.0.1:${address.port}`);
+  } finally {
+    server.close();
+  }
+}
+
 describe("Hive heartbeat state", () => {
   it("records first and latest Bee heartbeats", () => {
     const state = createHiveServerState();
@@ -79,6 +96,45 @@ describe("Hive server", () => {
     } finally {
       server.close();
     }
+  });
+
+  it("admin can delete a stale Bee and its sessions", async () => {
+    const state = createHiveServerState();
+    const bee = upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_stale",
+      timestamp: "2026-05-09T20:02:00.000Z",
+      daemonVersion: "0.0.1",
+      status: "online",
+      activeJobs: 0,
+      healthChecks: [],
+    });
+    state.sessions.set("token-hash", {
+      sessionId: "sess_test",
+      beeId: bee.beeId,
+      tokenHash: "token-hash",
+      expiresAt: new Date("2026-06-01T00:00:00.000Z"),
+      createdAt: new Date("2026-05-09T20:02:00.000Z"),
+    });
+
+    await withServer({ state, adminToken: "secret" }, async (baseUrl) => {
+      const noAuth = await fetch(`${baseUrl}/api/bees/${bee.beeId}`, { method: "DELETE" });
+      expect(noAuth.status).toBe(401);
+
+      const deleted = await fetch(`${baseUrl}/api/bees/${bee.beeId}`, {
+        method: "DELETE",
+        headers: { authorization: "Bearer secret" },
+      });
+      expect(deleted.status).toBe(200);
+      expect(state.bees.has(bee.beeId)).toBe(false);
+      expect(state.sessions.size).toBe(0);
+
+      const missing = await fetch(`${baseUrl}/api/bees/${bee.beeId}`, {
+        method: "DELETE",
+        headers: { authorization: "Bearer secret" },
+      });
+      expect(missing.status).toBe(404);
+    });
   });
 
   it("serves install scripts and 404s on unknown ones", async () => {
