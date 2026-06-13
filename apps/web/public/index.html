@@ -641,6 +641,7 @@
         adminToken: localStorage.getItem(ADMIN_KEY) || "",
         selectedJobId: "",
         selectedBeeId: "",
+        bees: [],
       };
 
       const els = {
@@ -765,6 +766,16 @@
           /[&<>"']/g,
           (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
         );
+      }
+      function beeById(beeId) {
+        return state.bees.find((bee) => bee.beeId === beeId) || null;
+      }
+      function beeDisplayName(beeId) {
+        const bee = beeById(beeId);
+        return bee?.beeName || shortId(beeId);
+      }
+      function renderBeeName(beeId) {
+        return `<span class="mono truncate" title="${escapeHtml(beeId)}">${escapeHtml(beeDisplayName(beeId))}</span>`;
       }
 
       // --- pairing key card ----------------------------------------------------
@@ -914,6 +925,7 @@
           const res = await fetch("/api/bees");
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const { bees } = await res.json();
+          state.bees = bees ?? [];
           renderBees(bees ?? []);
           renderSelectedBee(bees ?? []);
           els.beesMeta.textContent = `${bees.length} connected · updated ${new Date().toLocaleTimeString()}`;
@@ -1257,8 +1269,11 @@
           return;
         }
         try {
-          const res = await fetch("/api/jobs", { headers: authHeaders() });
-          if (res.status === 401) {
+          const [jobsRes, beesRes] = await Promise.all([
+            fetch("/api/jobs", { headers: authHeaders() }),
+            fetch("/api/bees"),
+          ]);
+          if (jobsRes.status === 401) {
             clearRejectedAdminToken();
             els.jobsBody.innerHTML = `<div class="empty">Admin token rejected. Paste the current token from <code>~/.hiveplane/hive-config.json</code> and save again.</div>`;
             els.jobsMeta.textContent = "—";
@@ -1266,8 +1281,12 @@
             els.jobDetailMeta.textContent = "—";
             return;
           }
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const { jobs } = await res.json();
+          if (!jobsRes.ok) throw new Error(`HTTP ${jobsRes.status}`);
+          if (beesRes.ok) {
+            const { bees } = await beesRes.json();
+            state.bees = bees ?? [];
+          }
+          const { jobs } = await jobsRes.json();
           renderJobs(jobs ?? []);
           els.jobsMeta.textContent = `${jobs.length} jobs · updated ${new Date().toLocaleTimeString()}`;
           if (state.selectedJobId) {
@@ -1298,7 +1317,7 @@
                 <td>${pill(j.status)}</td>
                 <td>${escapeHtml(j.type)}</td>
                 <td><button class="ghost" data-action="select-job" data-job-id="${escapeHtml(j.id)}">${escapeHtml(shortId(j.id))}</button></td>
-                <td><span class="mono truncate" title="${escapeHtml(j.beeId)}">${escapeHtml(shortId(j.beeId))}</span></td>
+                <td>${renderBeeName(j.beeId)}</td>
                 <td title="${escapeHtml(j.createdAt || "")}">${relativeTime(j.createdAt)}</td>
                 <td title="${escapeHtml(j.completedAt || "")}">${j.completedAt ? relativeTime(j.completedAt) : "—"}</td>
                 <td>${j.eventCount ?? 0}</td>
@@ -1314,7 +1333,7 @@
                 <th>Status</th>
                 <th>Type</th>
                 <th>Job ID</th>
-                <th>Bee ID</th>
+                <th>Bee</th>
                 <th>Created</th>
                 <th>Completed</th>
                 <th>Events</th>
@@ -1385,7 +1404,7 @@
           <div>${pill(job.status)} <span class="mono">${escapeHtml(job.type)}</span></div>
           <div class="job-detail-grid">
             <div class="kv"><span>Job</span><div class="mono truncate" title="${escapeHtml(job.id)}">${escapeHtml(job.id)}</div></div>
-            <div class="kv"><span>Bee</span><div class="mono truncate" title="${escapeHtml(job.beeId)}">${escapeHtml(job.beeId)}</div></div>
+            <div class="kv"><span>Bee</span><div>${renderBeeName(job.beeId)}</div></div>
             <div class="kv"><span>Created</span><div title="${escapeHtml(job.createdAt || "")}">${relativeTime(job.createdAt)}</div></div>
             <div class="kv"><span>Completed</span><div title="${escapeHtml(job.completedAt || "")}">${job.completedAt ? relativeTime(job.completedAt) : "—"}</div></div>
           </div>
