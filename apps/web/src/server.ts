@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
@@ -117,9 +118,16 @@ export type IncidentVerification = {
 };
 
 export type IncidentNotification = {
+  id: string;
   status: Extract<IncidentStatus, "needs_approval" | "unresolved">;
   queuedAt: string;
   message: string;
+  deliveryStatus: "queued" | "delivering" | "sent" | "failed";
+  deliveryChannel?: string;
+  deliveryAttempts: number;
+  lastAttemptAt?: string;
+  deliveredAt?: string;
+  lastError?: string;
 };
 
 export type IncidentRecord = {
@@ -178,6 +186,17 @@ export type HiveServerState = {
   incidents: Map<string, IncidentRecord>;
 };
 
+export type IncidentNotificationPayload = {
+  incident: IncidentRecord;
+  notification: IncidentNotification;
+  bee?: HiveBeeRecord;
+};
+
+export type IncidentNotifier = {
+  channel: string;
+  deliver: (payload: IncidentNotificationPayload) => Promise<void>;
+};
+
 export type CreateHiveServerOptions = {
   state?: HiveServerState;
   now?: () => Date;
@@ -204,6 +223,8 @@ export type CreateHiveServerOptions = {
    */
   bindHost?: string;
   bindPort?: number;
+  /** Optional sink for unresolved / approval-needed incident alerts. */
+  incidentNotifier?: IncidentNotifier | null;
 };
 
 export function createHiveServerState(): HiveServerState {
@@ -387,6 +408,8 @@ const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 const OFFLINE_AFTER_MS = 2 * 60 * 1000;
 const INCIDENT_ATTEMPT_COOLDOWN_MS = 5 * 60 * 1000;
 const INCIDENT_MAX_ATTEMPTS = 3;
+const INCIDENT_NOTIFICATION_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
+const INCIDENT_NOTIFICATION_MAX_ATTEMPTS = 5;
 
 const HIVE_VERSION = "0.0.7";
 const RESCUE_JOB_TYPES: readonly JobType[] = [
@@ -424,6 +447,11 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
   const authRequired = options.authRequired ?? isAuthRequired();
   // No-op when persistence isn't attached (tests, --no-persist, etc.).
   const markDirty = options.onMutation ?? (() => {});
+  const incidentNotifier = options.incidentNotifier ?? createIncidentNotifierFromEnv();
+  const deliverPendingIncidentNotifications = async (current: Date): Promise<void> => {
+    if (!incidentNotifier) return;
+    await deliverIncidentNotifications(state, incidentNotifier, current);
+  };
   // Bind info for the /api/hive-info endpoint. Defaults match the runtime
   // fallbacks in cli.ts so tests that don't pass these still get sane output.
   const bindHost = options.bindHost ?? "0.0.0.0";
@@ -592,9 +620,11 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           return sendJson(response, 401, { error: "unauthorized", reason: authResult.reason });
         }
         const bee = upsertBeeHeartbeat(state, heartbeat, now());
-        evaluateBeeAutomation(state, heartbeat.beeId, now());
+        const current = now();
+        evaluateBeeAutomation(state, heartbeat.beeId, current);
+        await deliverPendingIncidentNotifications(current);
         // Hand back any pending jobs and mark them as assigned.
-        const jobs = claimPendingJobs(state.jobsState, heartbeat.beeId, now(), {
+        const jobs = claimPendingJobs(state.jobsState, heartbeat.beeId, current, {
           excludeTypes: RESCUE_JOB_TYPES,
         });
         markDirty();
@@ -615,9 +645,11 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         if (!authResult.ok) {
           return sendJson(response, 401, { error: "unauthorized", reason: authResult.reason });
         }
-        const bee = upsertRescueHeartbeat(state, heartbeat, now());
-        evaluateBeeAutomation(state, heartbeat.beeId, now());
-        const jobs = claimPendingJobs(state.jobsState, heartbeat.beeId, now(), {
+        const current = now();
+        const bee = upsertRescueHeartbeat(state, heartbeat, current);
+        evaluateBeeAutomation(state, heartbeat.beeId, current);
+        await deliverPendingIncidentNotifications(current);
+        const jobs = claimPendingJobs(state.jobsState, heartbeat.beeId, current, {
           types: RESCUE_JOB_TYPES,
         });
         markDirty();
@@ -717,8 +749,10 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         if (parsed.data.beeId !== job.beeId) {
           return sendJson(response, 403, { error: "forbidden", reason: "job is not yours" });
         }
-        const updated = completeJob(state.jobsState, jobId, parsed.data, now());
-        if (updated) onJobCompleted(state, updated, now());
+        const current = now();
+        const updated = completeJob(state.jobsState, jobId, parsed.data, current);
+        if (updated) onJobCompleted(state, updated, current);
+        await deliverPendingIncidentNotifications(current);
         markDirty();
         return sendJson(response, 200, { job: updated ? serializeJob(updated) : null });
       }
@@ -744,6 +778,21 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
       if (request.method === "GET" && url.pathname === "/api/incidents") {
         if (!checkAdmin(request, response, adminToken)) return;
         return sendJson(response, 200, { incidents: serializeIncidents(state, now()) });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/incidents/notifications/deliver") {
+        if (!checkAdmin(request, response, adminToken)) return;
+        if (!incidentNotifier) {
+          return sendJson(response, 503, {
+            error: "notification_delivery_disabled",
+            reason:
+              "Set HIVEPLANE_INCIDENT_WEBHOOK_URL or HIVEPLANE_INCIDENT_NOTIFY_COMMAND to enable delivery.",
+          });
+        }
+        const current = now();
+        await deliverIncidentNotifications(state, incidentNotifier, current, { force: true });
+        markDirty();
+        return sendJson(response, 200, { incidents: serializeIncidents(state, current) });
       }
 
       if (request.method === "GET" && url.pathname.startsWith("/install/")) {
@@ -1618,10 +1667,147 @@ function queueIncidentNotification(
 ): void {
   if (incident.notifications.some((notification) => notification.status === status)) return;
   incident.notifications.push({
+    id: `${incident.id}:${status}`,
     status,
     queuedAt: now.toISOString(),
     message: `${incident.summary} (${status.replace("_", " ")})`,
+    deliveryStatus: "queued",
+    deliveryAttempts: 0,
   });
+}
+
+async function deliverIncidentNotifications(
+  state: HiveServerState,
+  notifier: IncidentNotifier,
+  now: Date,
+  options: { force?: boolean } = {},
+): Promise<void> {
+  for (const incident of state.incidents.values()) {
+    for (const notification of incident.notifications) {
+      if (!shouldAttemptNotificationDelivery(notification, now, options.force ?? false)) continue;
+      notification.deliveryStatus = "delivering";
+      notification.deliveryChannel = notifier.channel;
+      notification.deliveryAttempts += 1;
+      notification.lastAttemptAt = now.toISOString();
+      delete notification.lastError;
+
+      try {
+        const bee = state.bees.get(incident.beeId);
+        await notifier.deliver({
+          incident,
+          notification,
+          ...(bee ? { bee } : {}),
+        });
+        notification.deliveryStatus = "sent";
+        notification.deliveredAt = now.toISOString();
+      } catch (error) {
+        notification.deliveryStatus = "failed";
+        notification.lastError = error instanceof Error ? error.message : String(error);
+      } finally {
+        incident.updatedAt = now.toISOString();
+      }
+    }
+  }
+}
+
+function shouldAttemptNotificationDelivery(
+  notification: IncidentNotification,
+  now: Date,
+  force: boolean,
+): boolean {
+  if (notification.deliveryStatus === "sent" || notification.deliveryStatus === "delivering") {
+    return false;
+  }
+  if (force) return true;
+  if (notification.deliveryStatus === "queued") return true;
+  if (notification.deliveryAttempts >= INCIDENT_NOTIFICATION_MAX_ATTEMPTS) return false;
+  const lastAttemptMs = notification.lastAttemptAt
+    ? new Date(notification.lastAttemptAt).getTime()
+    : 0;
+  return (
+    !Number.isFinite(lastAttemptMs) ||
+    now.getTime() - lastAttemptMs >= INCIDENT_NOTIFICATION_RETRY_COOLDOWN_MS
+  );
+}
+
+export function createIncidentNotifierFromEnv(): IncidentNotifier | null {
+  const command = process.env.HIVEPLANE_INCIDENT_NOTIFY_COMMAND;
+  if (command) {
+    return createCommandIncidentNotifier(
+      command,
+      parseJsonStringArrayEnv("HIVEPLANE_INCIDENT_NOTIFY_ARGS"),
+    );
+  }
+
+  const webhookUrl = process.env.HIVEPLANE_INCIDENT_WEBHOOK_URL;
+  if (webhookUrl) return createWebhookIncidentNotifier(webhookUrl);
+  return null;
+}
+
+export function createWebhookIncidentNotifier(webhookUrl: string): IncidentNotifier {
+  return {
+    channel: "webhook",
+    deliver: async (payload) => {
+      const timeoutMs = parsePositiveInt(process.env.HIVEPLANE_INCIDENT_NOTIFY_TIMEOUT_MS) ?? 5000;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(webhookUrl, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "user-agent": "HivePlane/0.0.7 incident-notifier",
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const body = await response.text().catch(() => "");
+          throw new Error(
+            `webhook returned ${response.status}${body ? `: ${body.slice(0, 200)}` : ""}`,
+          );
+        }
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  };
+}
+
+export function createCommandIncidentNotifier(
+  command: string,
+  args: string[] = [],
+): IncidentNotifier {
+  return {
+    channel: "command",
+    deliver: (payload) =>
+      new Promise<void>((resolve, reject) => {
+        const child = spawn(command, args, { stdio: ["pipe", "ignore", "pipe"] });
+        let stderr = "";
+        child.stderr?.on("data", (chunk) => {
+          stderr = `${stderr}${String(chunk)}`.slice(-2000);
+        });
+        child.on("error", reject);
+        child.on("close", (code) => {
+          if (code === 0) resolve();
+          else
+            reject(new Error(`notify command exited ${code}${stderr ? `: ${stderr.trim()}` : ""}`));
+        });
+        child.stdin.end(`${JSON.stringify(payload)}\n`);
+      }),
+  };
+}
+
+function parseJsonStringArrayEnv(name: string): string[] {
+  const value = process.env[name];
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) return parsed;
+  } catch {
+    // Fall through to a single argument; useful for simple shell-free commands.
+  }
+  return [value];
 }
 
 function queueAiDiagnosis(

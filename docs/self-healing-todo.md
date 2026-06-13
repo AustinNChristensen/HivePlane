@@ -69,5 +69,5 @@ Goal: HivePlane should operate AI agent machines with an AI brain and constraine
 
 ## Remaining Follow-up
 
-- Wire queued incident notifications to the eventual delivery channel (dashboard badge, iMessage, email, or webhook). The incident model now dedupes `needs_approval` and `unresolved` notifications, but delivery is intentionally separate.
+- Configure a local production notification sink. Hive can now deliver incident notifications to `HIVEPLANE_INCIDENT_WEBHOOK_URL` or `HIVEPLANE_INCIDENT_NOTIFY_COMMAND`, and it tracks sent/failed delivery state per notification. The remaining local step is choosing the operator channel for this Hive (for example an OpenClaw/iMessage adapter).
 - Add a dashboard profile editor so operators can change Bee profiles without calling the API directly.

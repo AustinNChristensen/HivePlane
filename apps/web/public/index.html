@@ -1095,9 +1095,24 @@
       function renderIncidentNotifications(notifications) {
         if (!notifications.length) return '<span class="mono">—</span>';
         return notifications
-          .map((notification) =>
-            pill(notification.status || "queued", notification.status || "warning"),
-          )
+          .map((notification) => {
+            const delivery = notification.deliveryStatus || "queued";
+            const tone =
+              delivery === "sent"
+                ? "succeeded"
+                : delivery === "failed"
+                  ? "failed"
+                  : notification.status || "warning";
+            const title = [
+              notification.message || "",
+              notification.deliveryChannel ? `channel: ${notification.deliveryChannel}` : "",
+              notification.deliveryAttempts ? `attempts: ${notification.deliveryAttempts}` : "",
+              notification.lastError ? `error: ${notification.lastError}` : "",
+            ]
+              .filter(Boolean)
+              .join(" · ");
+            return pill(`${notification.status || "alert"}:${delivery}`, tone, title);
+          })
           .join(" ");
       }
       function renderHealthChecks(checks) {

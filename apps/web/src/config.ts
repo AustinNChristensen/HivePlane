@@ -12,7 +12,8 @@ import { z } from "zod";
  * Lives at `<configDir>/hive-config.json` (default `~/.hiveplane/hive-config.json`)
  * with mode 0600 — `adminToken` is a secret. Env vars still take precedence
  * for compat and CI: `HIVEPLANE_ADMIN_TOKEN`, `HIVEPLANE_AUTH_REQUIRED`,
- * `HIVEPLANE_HIVE_HOST`, `HIVEPLANE_HIVE_PORT`, `HIVEPLANE_OPEN_BROWSER`.
+ * `HIVEPLANE_HIVE_HOST`, `HIVEPLANE_HIVE_PORT`, `HIVEPLANE_OPEN_BROWSER`,
+ * `HIVEPLANE_INCIDENT_WEBHOOK_URL`, and `HIVEPLANE_INCIDENT_NOTIFY_COMMAND`.
  */
 export const HiveOnDiskConfigSchema = z.object({
   /** Admin bearer token. If unset, admin endpoints are disabled (503). */
@@ -28,6 +29,10 @@ export const HiveOnDiskConfigSchema = z.object({
   authRequired: z.boolean().optional(),
   /** Auto-open the dashboard in a browser when the Hive is run interactively. */
   openBrowser: z.boolean().optional(),
+  /** Optional webhook target for needs-approval / unresolved incident alerts. */
+  incidentNotificationWebhookUrl: z.string().url().optional(),
+  /** Optional local command + args. Notification JSON is written to stdin. */
+  incidentNotificationCommand: z.array(z.string().min(1)).optional(),
 });
 
 export type HiveOnDiskConfig = z.infer<typeof HiveOnDiskConfigSchema>;

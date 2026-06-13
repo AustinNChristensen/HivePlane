@@ -471,11 +471,75 @@ describe("Hive server", () => {
         }
 
         const body = (await (await fetch(`${baseUrl}/api/bees`)).json()) as {
-          incidents: Array<{ status: string; notifications: Array<{ status: string }> }>;
+          incidents: Array<{
+            status: string;
+            notifications: Array<{ status: string; deliveryStatus: string }>;
+          }>;
         };
         expect(body.incidents[0]).toMatchObject({
           status: "needs_approval",
-          notifications: [{ status: "needs_approval" }],
+          notifications: [{ status: "needs_approval", deliveryStatus: "queued" }],
+        });
+      },
+    );
+  });
+
+  it("delivers queued incident notifications through the configured notifier", async () => {
+    const state = createHiveServerState();
+    const deliveries: unknown[] = [];
+
+    await withServer(
+      {
+        state,
+        now: () => new Date("2026-05-09T08:00:00.000Z"),
+        incidentNotifier: {
+          channel: "test",
+          deliver: async (payload) => {
+            deliveries.push(payload);
+          },
+        },
+      },
+      async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/bees/heartbeat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            type: "bee.heartbeat",
+            beeId: "bee_deliver",
+            timestamp: "2026-05-09T08:00:00.000Z",
+            daemonVersion: "0.0.7",
+            status: "degraded",
+            activeJobs: 0,
+            healthChecks: [
+              {
+                name: "unknown-ai-runtime",
+                status: "failing",
+                checkedAt: "2026-05-09T08:00:00.000Z",
+                message: "runtime not responding",
+              },
+            ],
+          }),
+        });
+        expect(response.status).toBe(200);
+        expect(deliveries).toHaveLength(1);
+
+        const body = (await (await fetch(`${baseUrl}/api/bees`)).json()) as {
+          incidents: Array<{
+            notifications: Array<{
+              status: string;
+              deliveryStatus: string;
+              deliveryChannel: string;
+              deliveryAttempts: number;
+              deliveredAt: string;
+            }>;
+          }>;
+        };
+        expect(body.incidents[0]?.notifications[0]).toMatchObject({
+          status: "needs_approval",
+          deliveryStatus: "sent",
+          deliveryChannel: "test",
+          deliveryAttempts: 1,
+          deliveredAt: "2026-05-09T08:00:00.000Z",
         });
       },
     );

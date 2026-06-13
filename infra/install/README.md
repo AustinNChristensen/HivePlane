@@ -109,12 +109,18 @@ curl -fsSL http://hive.your-tailnet.ts.net:4483/install/bee.sh | sh
 
 `hive-config.json` (default `~/.hiveplane/hive-config.json`, mode 0600) is the
 on-disk source of truth for `adminToken`, `host`, `port`, `authRequired`, and
-`openBrowser`. The Hive runtime reads it at boot. Env vars still override:
+`openBrowser`. It can also hold an incident notification sink:
+`incidentNotificationWebhookUrl` or `incidentNotificationCommand` (command plus
+args; notification JSON is written to stdin). The Hive runtime reads it at boot.
+Env vars still override:
 
 - `HIVEPLANE_ADMIN_TOKEN`
 - `HIVEPLANE_AUTH_REQUIRED` (`true` / `1`)
 - `HIVEPLANE_HIVE_HOST`, `HIVEPLANE_HIVE_PORT`
 - `HIVEPLANE_OPEN_BROWSER`
+- `HIVEPLANE_INCIDENT_WEBHOOK_URL`
+- `HIVEPLANE_INCIDENT_NOTIFY_COMMAND`
+- `HIVEPLANE_INCIDENT_NOTIFY_ARGS` (JSON string array, optional)
 
 So an operator running the Hive interactively can `HIVEPLANE_AUTH_REQUIRED=true
 pnpm --filter @hiveplane/web start` and have it win over whatever's in the

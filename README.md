@@ -124,6 +124,11 @@ This:
 - installs a launchd plist (`~/Library/LaunchAgents/com.hiveplane.hive.plist`) on macOS or a systemd user unit (`~/.config/systemd/user/hiveplane-hive.service`) on Linux;
 - starts the service. The Hive will come back automatically after reboots and crashes.
 
+Optional incident alerts can be configured in `hive-config.json` with
+`incidentNotificationWebhookUrl` or `incidentNotificationCommand`. The Hive sends
+deduped `needs_approval` / `unresolved` incident notifications and records
+whether delivery was sent or failed.
+
 `hive.sh` prints the admin token at the end of the run — save it. You can re-read or rotate it anytime with `hive init` (and `--rotate-admin-token` to mint a fresh one). Manage the service with:
 
 ```bash

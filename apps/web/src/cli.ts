@@ -1,7 +1,12 @@
 import { spawn } from "node:child_process";
 import { readHiveOnDiskConfig } from "./config.js";
 import { attachPersistence, getDefaultHiveStatePath, loadHiveServerState } from "./persistence.js";
-import { createHiveServer } from "./server.js";
+import {
+  createCommandIncidentNotifier,
+  createHiveServer,
+  createIncidentNotifierFromEnv,
+  createWebhookIncidentNotifier,
+} from "./server.js";
 
 const VERSION = "0.0.7";
 
@@ -18,6 +23,16 @@ const resolvedAuthRequired =
   process.env.HIVEPLANE_AUTH_REQUIRED !== undefined
     ? process.env.HIVEPLANE_AUTH_REQUIRED === "true" || process.env.HIVEPLANE_AUTH_REQUIRED === "1"
     : onDiskConfig.authRequired;
+const incidentNotifier =
+  createIncidentNotifierFromEnv() ??
+  (onDiskConfig.incidentNotificationCommand?.length
+    ? createCommandIncidentNotifier(
+        onDiskConfig.incidentNotificationCommand[0] ?? "",
+        onDiskConfig.incidentNotificationCommand.slice(1),
+      )
+    : onDiskConfig.incidentNotificationWebhookUrl
+      ? createWebhookIncidentNotifier(onDiskConfig.incidentNotificationWebhookUrl)
+      : null);
 
 const { host, port, open, persist, statePath } = parseArgs(process.argv.slice(2));
 
@@ -35,6 +50,7 @@ const server = createHiveServer({
   ...(persistor ? { onMutation: persistor.markDirty } : {}),
   ...(resolvedAdminToken ? { adminToken: resolvedAdminToken } : {}),
   ...(resolvedAuthRequired !== undefined ? { authRequired: resolvedAuthRequired } : {}),
+  incidentNotifier,
   // Surfaced via GET /api/hive-info so the dashboard can recommend a
   // sensible URL for remote Bees without the operator having to guess.
   bindHost: host,
