@@ -16,6 +16,7 @@
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "tsx src/cli.ts",
+    "rescue": "tsx src/rescue.ts",
     "dev": "tsx src/cli.ts"
   },
   "dependencies": {
@@ -23,6 +24,7 @@
     "zod": "^3.24.1"
   },
   "bin": {
-    "hiveplane-bee": "dist/cli.js"
+    "hiveplane-bee": "dist/cli.js",
+    "hiveplane-rescue": "dist/rescue.js"
   }
 }

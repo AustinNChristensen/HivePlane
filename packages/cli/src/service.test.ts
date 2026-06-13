@@ -6,11 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Reset module cache between tests so per-test mocks of node:os work cleanly.
 let installBeeService: typeof import("./service.js").installBeeService;
 let installHiveService: typeof import("./service.js").installHiveService;
+let installRescueService: typeof import("./service.js").installRescueService;
 let getBeeServiceStatus: typeof import("./service.js").getBeeServiceStatus;
 let getHiveServiceStatus: typeof import("./service.js").getHiveServiceStatus;
+let getRescueServiceStatus: typeof import("./service.js").getRescueServiceStatus;
 let getServicePlatform: typeof import("./service.js").getServicePlatform;
 let getUnitPath: typeof import("./service.js").getUnitPath;
 let getHiveUnitPath: typeof import("./service.js").getHiveUnitPath;
+let getRescueUnitPath: typeof import("./service.js").getRescueUnitPath;
 let getDaemonLogFiles: typeof import("./service.js").getDaemonLogFiles;
 
 async function loadServiceWithPlatform(plat: NodeJS.Platform, fakeHome: string) {
@@ -26,11 +29,14 @@ async function loadServiceWithPlatform(plat: NodeJS.Platform, fakeHome: string) 
   const mod = await import("./service.js");
   installBeeService = mod.installBeeService;
   installHiveService = mod.installHiveService;
+  installRescueService = mod.installRescueService;
   getBeeServiceStatus = mod.getBeeServiceStatus;
   getHiveServiceStatus = mod.getHiveServiceStatus;
+  getRescueServiceStatus = mod.getRescueServiceStatus;
   getServicePlatform = mod.getServicePlatform;
   getUnitPath = mod.getUnitPath;
   getHiveUnitPath = mod.getHiveUnitPath;
+  getRescueUnitPath = mod.getRescueUnitPath;
   getDaemonLogFiles = mod.getDaemonLogFiles;
 }
 
@@ -54,6 +60,10 @@ beforeEach(() => {
     join(templateDir, "launchd", "com.hiveplane.hive.plist.tmpl"),
     `LABEL=__LABEL__\nPNPM=__PNPM_BIN__\nWD=__INSTALL_DIR__\nPATH=__PATH__\nCFG=__CONFIG_DIR__\nLOG=__LOG_DIR__\n`,
   );
+  writeFileSync(
+    join(templateDir, "launchd", "com.hiveplane.rescue.plist.tmpl"),
+    `LABEL=__LABEL__\nPNPM=__PNPM_BIN__\nWD=__INSTALL_DIR__\nPATH=__PATH__\nCFG=__CONFIG_DIR__\nLOG=__LOG_DIR__\n`,
+  );
 
   mkdirSync(join(templateDir, "systemd"), { recursive: true });
   writeFileSync(
@@ -63,6 +73,10 @@ beforeEach(() => {
   writeFileSync(
     join(templateDir, "systemd", "hiveplane-hive.service.tmpl"),
     `WorkingDirectory=__INSTALL_DIR__\nEnv=PATH=__PATH__\nExec=__PNPM_BIN__ web start\nCFG=__CONFIG_DIR__\n`,
+  );
+  writeFileSync(
+    join(templateDir, "systemd", "hiveplane-rescue.service.tmpl"),
+    `WorkingDirectory=__INSTALL_DIR__\nEnv=PATH=__PATH__\nExec=__PNPM_BIN__ rescue\nCFG=__CONFIG_DIR__\n`,
   );
 });
 
@@ -239,14 +253,57 @@ describe("getHiveServiceStatus", () => {
   });
 });
 
+describe("installRescueService", () => {
+  it("renders a separate launchd unit for the Rescue Agent", async () => {
+    await loadServiceWithPlatform("darwin", homeDir);
+
+    const result = installRescueService({
+      installDir,
+      pnpmBin: "/usr/local/bin/pnpm",
+      nodeBinDir: "/opt/node/bin",
+      configDir,
+      templateDir,
+    });
+
+    expect(result.platform).toBe("darwin");
+    expect(result.unitPath).toBe(
+      join(homeDir, "Library/LaunchAgents/com.hiveplane.rescue.plist"),
+    );
+    expect(getRescueUnitPath("darwin")).toBe(result.unitPath);
+    expect(readFileSync(result.unitPath, "utf8")).toContain("LABEL=com.hiveplane.rescue");
+  });
+
+  it("reports Rescue installed independently from Bee", async () => {
+    await loadServiceWithPlatform("linux", homeDir);
+
+    installRescueService({
+      installDir,
+      pnpmBin: "/usr/bin/pnpm",
+      nodeBinDir: "/usr/bin",
+      configDir,
+      templateDir,
+    });
+
+    const rescueStatus = await getRescueServiceStatus(configDir);
+    expect(rescueStatus.installed).toBe(true);
+    expect(rescueStatus.unitPath).toBe(
+      join(homeDir, ".config/systemd/user/hiveplane-rescue.service"),
+    );
+    expect((await getBeeServiceStatus(configDir)).installed).toBe(false);
+  });
+});
+
 describe("getDaemonLogFiles", () => {
   it("returns daemon-specific log file paths under <configDir>/logs", async () => {
     await loadServiceWithPlatform("darwin", homeDir);
     const bee = getDaemonLogFiles("bee", configDir);
     const hive = getDaemonLogFiles("hive", configDir);
+    const rescue = getDaemonLogFiles("rescue", configDir);
     expect(bee.stdout).toBe(join(configDir, "logs", "bee.out.log"));
     expect(bee.stderr).toBe(join(configDir, "logs", "bee.err.log"));
     expect(hive.stdout).toBe(join(configDir, "logs", "hive.out.log"));
     expect(hive.stderr).toBe(join(configDir, "logs", "hive.err.log"));
+    expect(rescue.stdout).toBe(join(configDir, "logs", "rescue.out.log"));
+    expect(rescue.stderr).toBe(join(configDir, "logs", "rescue.err.log"));
   });
 });

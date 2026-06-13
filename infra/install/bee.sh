@@ -80,6 +80,12 @@ cd "$INSTALL_DIR" && exec pnpm --silent --filter @hiveplane/daemon start "\$@"
 EOF
 chmod +x "$BIN_DIR/hiveplane-bee"
 
+cat > "$BIN_DIR/hiveplane-rescue" <<EOF
+#!/bin/sh
+cd "$INSTALL_DIR" && exec pnpm --silent --filter @hiveplane/daemon rescue "\$@"
+EOF
+chmod +x "$BIN_DIR/hiveplane-rescue"
+
 # --- identity --------------------------------------------------------------
 log "ensuring Bee identity exists..."
 "$BIN_DIR/bee" identity init >/dev/null
@@ -90,6 +96,7 @@ echo
 echo "  Install dir: $INSTALL_DIR"
 echo "  bee CLI:     $BIN_DIR/bee"
 echo "  daemon:      $BIN_DIR/hiveplane-bee"
+echo "  rescue:      $BIN_DIR/hiveplane-rescue"
 echo
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createHiveServer, createHiveServerState, upsertBeeHeartbeat } from "./server.js";
+import { createJob } from "./jobs.js";
 
 async function withServer<T>(
   options: Parameters<typeof createHiveServer>[0],
@@ -113,6 +114,89 @@ describe("Hive server", () => {
     } finally {
       server.close();
     }
+  });
+
+  it("records Rescue heartbeats and only assigns recovery-safe jobs to Rescue", async () => {
+    const state = createHiveServerState();
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_rescue",
+      timestamp: "2026-05-09T20:02:00.000Z",
+      daemonVersion: "0.0.1",
+      status: "offline",
+      activeJobs: 0,
+      healthChecks: [],
+    });
+    const restartJob = createJob(
+      state.jobsState,
+      "bee_rescue",
+      { type: "restart_bee", payload: {} },
+      new Date("2026-05-09T20:02:01.000Z"),
+    );
+    const shellJob = createJob(
+      state.jobsState,
+      "bee_rescue",
+      { type: "run_command", payload: { command: "hostname" } },
+      new Date("2026-05-09T20:02:02.000Z"),
+    );
+
+    await withServer({ state, now: () => new Date("2026-05-09T20:02:04.000Z") }, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/rescue/heartbeat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "rescue.heartbeat",
+          beeId: "bee_rescue",
+          timestamp: "2026-05-09T20:02:03.000Z",
+          rescueVersion: "0.0.7",
+          status: "online",
+          capabilities: {
+            actions: ["restart_bee", "update_bee", "collect_bee_logs"],
+            hardware: {
+              platform: "darwin-arm64",
+              hostname: "bee-rescue",
+              cpuCores: 10,
+              memoryGb: 32,
+            },
+          },
+        }),
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { jobs: Array<{ id: string; type: string }> };
+      expect(body.jobs).toEqual([expect.objectContaining({ id: restartJob.id })]);
+      expect(state.jobsState.jobs.get(restartJob.id)?.status).toBe("assigned");
+      expect(state.jobsState.jobs.get(shellJob.id)?.status).toBe("queued");
+
+      const bees = (await (await fetch(`${baseUrl}/api/bees`)).json()) as {
+        bees: Array<{ beeId: string; rescue?: { status: string; rescueVersion: string } }>;
+      };
+      expect(bees.bees[0]).toMatchObject({
+        beeId: "bee_rescue",
+        rescue: { status: "online", rescueVersion: "0.0.7" },
+      });
+
+      const beeHeartbeat = await fetch(`${baseUrl}/api/bees/heartbeat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "bee.heartbeat",
+          beeId: "bee_rescue",
+          timestamp: "2026-05-09T20:02:05.000Z",
+          daemonVersion: "0.0.7",
+          status: "online",
+          activeJobs: 0,
+          healthChecks: [],
+        }),
+      });
+      expect(beeHeartbeat.status).toBe(200);
+      const afterBeeHeartbeat = (await (await fetch(`${baseUrl}/api/bees`)).json()) as {
+        bees: Array<{ beeId: string; rescue?: { status: string; rescueVersion: string } }>;
+      };
+      expect(afterBeeHeartbeat.bees[0]?.rescue).toMatchObject({
+        status: "online",
+        rescueVersion: "0.0.7",
+      });
+    });
   });
 
   it("admin can delete a stale Bee and its sessions", async () => {

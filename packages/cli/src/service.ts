@@ -68,6 +68,14 @@ const HIVE_DAEMON: DaemonSpec = {
   logFileBasename: "hive",
 };
 
+const RESCUE_DAEMON: DaemonSpec = {
+  launchdLabel: "com.hiveplane.rescue",
+  systemdUnitName: "hiveplane-rescue.service",
+  launchdTemplate: "com.hiveplane.rescue.plist.tmpl",
+  systemdTemplate: "hiveplane-rescue.service.tmpl",
+  logFileBasename: "rescue",
+};
+
 export function getServicePlatform(): ServicePlatform | "unsupported" {
   const p = platform();
   if (p === "darwin") return "darwin";
@@ -98,6 +106,10 @@ export function getBeeUnitPath(plat: ServicePlatform): string {
 
 export function getHiveUnitPath(plat: ServicePlatform): string {
   return unitPathFor(plat, HIVE_DAEMON);
+}
+
+export function getRescueUnitPath(plat: ServicePlatform): string {
+  return unitPathFor(plat, RESCUE_DAEMON);
 }
 
 function defaultTemplateDir(installDir: string): string {
@@ -342,6 +354,36 @@ export async function getBeeServiceStatus(configDir: string): Promise<ServiceSta
   return getServiceUnitStatus(BEE_DAEMON, configDir);
 }
 
+// --- Public Rescue API -------------------------------------------------------
+
+export function installRescueService(options: InstallServiceOptions): {
+  platform: ServicePlatform;
+  unitPath: string;
+} {
+  return installServiceUnit(RESCUE_DAEMON, options);
+}
+
+export function uninstallRescueService(): { unitRemoved: boolean; unitPath?: string } {
+  return uninstallServiceUnit(RESCUE_DAEMON);
+}
+
+export async function startRescueService(): Promise<void> {
+  await startServiceUnit(RESCUE_DAEMON);
+}
+
+export async function stopRescueService(): Promise<void> {
+  await stopServiceUnit(RESCUE_DAEMON);
+}
+
+export async function restartRescueService(): Promise<void> {
+  await stopRescueService();
+  await startRescueService();
+}
+
+export async function getRescueServiceStatus(configDir: string): Promise<ServiceStatus> {
+  return getServiceUnitStatus(RESCUE_DAEMON, configDir);
+}
+
 // --- Public Hive API ---------------------------------------------------------
 
 export function installHiveService(options: InstallServiceOptions): {
@@ -378,10 +420,10 @@ export async function getHiveServiceStatus(configDir: string): Promise<ServiceSt
  * `<logDir>/<daemon>.out.log` and `<logDir>/<daemon>.err.log` respectively.
  */
 export function getDaemonLogFiles(
-  daemon: "bee" | "hive",
+  daemon: "bee" | "hive" | "rescue",
   configDir: string,
 ): { stdout: string; stderr: string } {
-  const spec = daemon === "bee" ? BEE_DAEMON : HIVE_DAEMON;
+  const spec = daemon === "bee" ? BEE_DAEMON : daemon === "hive" ? HIVE_DAEMON : RESCUE_DAEMON;
   const dir = getDefaultLogDir(configDir);
   return {
     stdout: join(dir, `${spec.logFileBasename}.out.log`),
@@ -394,6 +436,8 @@ export const BEE_LAUNCHD_LABEL = BEE_DAEMON.launchdLabel;
 export const BEE_SYSTEMD_UNIT_NAME = BEE_DAEMON.systemdUnitName;
 export const HIVE_LAUNCHD_LABEL = HIVE_DAEMON.launchdLabel;
 export const HIVE_SYSTEMD_UNIT_NAME = HIVE_DAEMON.systemdUnitName;
+export const RESCUE_LAUNCHD_LABEL = RESCUE_DAEMON.launchdLabel;
+export const RESCUE_SYSTEMD_UNIT_NAME = RESCUE_DAEMON.systemdUnitName;
 
 async function runIgnoringFamiliarFailures(cmd: string, args: string[]): Promise<void> {
   try {

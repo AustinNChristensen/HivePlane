@@ -6,6 +6,7 @@ import {
   HiveToBeeMessageSchema,
   JobEventBatchSchema,
   JobSchema,
+  RescueHeartbeatSchema,
   type BeeCapabilities,
 } from "./index.js";
 
@@ -118,6 +119,22 @@ describe("heartbeat", () => {
     expect(heartbeat.status).toBe("online");
     expect(heartbeat.permissions?.runCommand.allow).toContain("hostname");
   });
+
+  it("validates rescue heartbeat payloads", () => {
+    const heartbeat = RescueHeartbeatSchema.parse({
+      type: "rescue.heartbeat",
+      beeId: "bee_123",
+      timestamp: "2026-05-08T20:00:00.000Z",
+      rescueVersion: "0.1.0",
+      status: "online",
+      capabilities: {
+        actions: ["restart_bee", "update_bee", "collect_bee_logs"],
+        hardware: capabilities.hardware,
+      },
+    });
+
+    expect(heartbeat.capabilities.actions).toContain("restart_bee");
+  });
 });
 
 describe("jobs and events", () => {
@@ -154,7 +171,14 @@ describe("jobs and events", () => {
   });
 
   it("validates adapter jobs", () => {
-    for (const type of ["openclaw_status", "ollama_status", "ollama_list_models", "update_bee"]) {
+    for (const type of [
+      "openclaw_status",
+      "ollama_status",
+      "ollama_list_models",
+      "update_bee",
+      "restart_bee",
+      "collect_bee_logs",
+    ]) {
       const job = JobSchema.parse({
         id: `job_${type}`,
         type,

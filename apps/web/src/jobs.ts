@@ -7,6 +7,7 @@ import {
   type Job,
   type JobEvent,
   type JobStatus,
+  type JobType,
   type JsonValue,
 } from "@hiveplane/protocol";
 import { z } from "zod";
@@ -91,11 +92,20 @@ export function denyJob(state: JobsState, jobId: string, now: Date): JobRecord |
 }
 
 /** Atomically transition queued jobs for this bee to "assigned" and return them as Job protos. */
-export function claimPendingJobs(state: JobsState, beeId: string, now: Date): Job[] {
+export function claimPendingJobs(
+  state: JobsState,
+  beeId: string,
+  now: Date,
+  options: { types?: readonly JobType[]; excludeTypes?: readonly JobType[] } = {},
+): Job[] {
   const claimed: Job[] = [];
+  const allowedTypes = options.types ? new Set<JobType>(options.types) : undefined;
+  const excludedTypes = options.excludeTypes ? new Set<JobType>(options.excludeTypes) : undefined;
   for (const job of state.jobs.values()) {
     if (job.beeId !== beeId) continue;
     if (job.status !== "queued") continue;
+    if (allowedTypes && !allowedTypes.has(job.type)) continue;
+    if (excludedTypes?.has(job.type)) continue;
     job.status = "assigned";
     job.assignedAt = now;
     claimed.push(toJobProto(job));

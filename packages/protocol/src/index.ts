@@ -49,6 +49,20 @@ export const BeePermissionsSchema = z.object({
     .default({ allow: [], unsafeAllowAll: false }),
 });
 
+export const RescueCapabilitiesSchema = z.object({
+  actions: z.array(z.string().min(1)).default([]),
+  hardware: BeeHardwareSchema,
+});
+
+export const RescueHeartbeatSchema = z.object({
+  type: z.literal("rescue.heartbeat"),
+  beeId: IdSchema,
+  timestamp: IsoDateTimeSchema,
+  rescueVersion: z.string().min(1),
+  status: z.enum(["online", "degraded"]),
+  capabilities: RescueCapabilitiesSchema,
+});
+
 /**
  * Plain object form of the registration request. Kept as a `ZodObject` so it
  * can participate in `BeeToHiveMessageSchema`'s discriminated union.
@@ -155,6 +169,8 @@ export const JobTypeSchema = z.enum([
   "ollama_status",
   "ollama_list_models",
   "update_bee",
+  "restart_bee",
+  "collect_bee_logs",
 ]);
 
 export const JobSchema = z.object({
@@ -272,6 +288,7 @@ export const BeeToHiveMessageSchema = z.discriminatedUnion("type", [
   // on `BeeRegistrationRequestSchema`, which the server uses directly.
   BeeRegistrationRequestObjectSchema,
   BeeHeartbeatSchema,
+  RescueHeartbeatSchema,
   JobEventBatchSchema,
   JobCompleteRequestSchema,
   ApprovalRequestSchema,
@@ -284,6 +301,8 @@ export type BeeHardware = z.infer<typeof BeeHardwareSchema>;
 export type BeeCapabilities = z.infer<typeof BeeCapabilitiesSchema>;
 export type BeeHealthCheck = z.infer<typeof BeeHealthCheckSchema>;
 export type BeePermissions = z.infer<typeof BeePermissionsSchema>;
+export type RescueCapabilities = z.infer<typeof RescueCapabilitiesSchema>;
+export type RescueHeartbeat = z.infer<typeof RescueHeartbeatSchema>;
 export type BeeRegistrationRequest = z.infer<typeof BeeRegistrationRequestSchema>;
 export type BeeRegistrationResponse = z.infer<typeof BeeRegistrationResponseSchema>;
 export type BeeHeartbeat = z.infer<typeof BeeHeartbeatSchema>;

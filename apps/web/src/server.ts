@@ -8,11 +8,14 @@ import {
   BootstrapTokenCreateRequestSchema,
   JobCompleteRequestSchema,
   JobEventBatchSchema,
+  RescueHeartbeatSchema,
   type BeeHeartbeat,
   type BeeCapabilities,
   type BeeRegistrationRequest,
   type BeePermissions,
   type BootstrapTokenCreateRequest,
+  type JobType,
+  type RescueHeartbeat,
 } from "@hiveplane/protocol";
 import {
   extractBearer,
@@ -60,6 +63,13 @@ export type HiveBeeRecord = {
   capabilities?: BeeCapabilities;
   permissions?: BeePermissions;
   healthChecks: BeeHeartbeat["healthChecks"];
+  rescue?: {
+    status: RescueHeartbeat["status"] | "offline";
+    rescueVersion: string;
+    capabilities: RescueHeartbeat["capabilities"];
+    lastSeenAt: string;
+    heartbeatCount: number;
+  };
   firstSeenAt: string;
   lastSeenAt: string;
   heartbeatCount: number;
@@ -234,6 +244,39 @@ export function upsertBeeHeartbeat(
   };
   if (capabilities) record.capabilities = capabilities;
   if (permissions) record.permissions = permissions;
+  if (existing?.rescue) record.rescue = existing.rescue;
+
+  state.bees.set(heartbeat.beeId, record);
+  return record;
+}
+
+export function upsertRescueHeartbeat(
+  state: HiveServerState,
+  heartbeat: RescueHeartbeat,
+  now = new Date(),
+): HiveBeeRecord {
+  const existing = state.bees.get(heartbeat.beeId);
+  const timestamp = heartbeat.timestamp || now.toISOString();
+  const record: HiveBeeRecord = existing
+    ? { ...existing }
+    : {
+        beeId: heartbeat.beeId,
+        daemonVersion: "unknown",
+        status: "offline",
+        activeJobs: 0,
+        healthChecks: [],
+        firstSeenAt: timestamp,
+        lastSeenAt: timestamp,
+        heartbeatCount: 0,
+      };
+
+  record.rescue = {
+    status: heartbeat.status,
+    rescueVersion: heartbeat.rescueVersion,
+    capabilities: heartbeat.capabilities,
+    lastSeenAt: timestamp,
+    heartbeatCount: (existing?.rescue?.heartbeatCount ?? 0) + 1,
+  };
 
   state.bees.set(heartbeat.beeId, record);
   return record;
@@ -274,6 +317,7 @@ const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 const OFFLINE_AFTER_MS = 2 * 60 * 1000;
 
 const HIVE_VERSION = "0.0.7";
+const RESCUE_JOB_TYPES: readonly JobType[] = ["restart_bee", "update_bee", "collect_bee_logs"];
 
 export function createHiveServer(options: CreateHiveServerOptions = {}) {
   const state = options.state ?? createHiveServerState();
@@ -435,7 +479,31 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         }
         const bee = upsertBeeHeartbeat(state, heartbeat, now());
         // Hand back any pending jobs and mark them as assigned.
-        const jobs = claimPendingJobs(state.jobsState, heartbeat.beeId, now());
+        const jobs = claimPendingJobs(state.jobsState, heartbeat.beeId, now(), {
+          excludeTypes: RESCUE_JOB_TYPES,
+        });
+        markDirty();
+        return sendJson(response, 200, { accepted: true, bee, jobs });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/rescue/heartbeat") {
+        const { body, raw } = await readJson(request);
+        const parsed = RescueHeartbeatSchema.safeParse(body);
+        if (!parsed.success) {
+          return sendJson(response, 400, {
+            error: "bad_request",
+            message: parsed.error.message,
+          });
+        }
+        const heartbeat = parsed.data;
+        const authResult = authenticateBee(request, raw, heartbeat.beeId, state, authRequired);
+        if (!authResult.ok) {
+          return sendJson(response, 401, { error: "unauthorized", reason: authResult.reason });
+        }
+        const bee = upsertRescueHeartbeat(state, heartbeat, now());
+        const jobs = claimPendingJobs(state.jobsState, heartbeat.beeId, now(), {
+          types: RESCUE_JOB_TYPES,
+        });
         markDirty();
         return sendJson(response, 200, { accepted: true, bee, jobs });
       }
@@ -966,11 +1034,20 @@ function jobNeedsApproval(job: JobRecord): boolean {
 
 function serializeBees(state: HiveServerState, now: Date): HiveBeeRecord[] {
   return [...state.bees.values()].map((bee) => {
+    const rescue = bee.rescue
+      ? {
+          ...bee.rescue,
+          status:
+            now.getTime() - new Date(bee.rescue.lastSeenAt).getTime() > OFFLINE_AFTER_MS
+              ? "offline"
+              : bee.rescue.status,
+        }
+      : undefined;
     const lastSeenMs = new Date(bee.lastSeenAt).getTime();
     if (Number.isFinite(lastSeenMs) && now.getTime() - lastSeenMs > OFFLINE_AFTER_MS) {
-      return { ...bee, status: "offline" };
+      return rescue ? { ...bee, status: "offline", rescue } : { ...bee, status: "offline" };
     }
-    return bee;
+    return rescue ? { ...bee, rescue } : bee;
   });
 }
 

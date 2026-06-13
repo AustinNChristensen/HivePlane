@@ -36,12 +36,18 @@ import {
 import { classifyCredential } from "./credentials.js";
 import {
   getBeeServiceStatus,
+  getRescueServiceStatus,
   getServicePlatform,
   installBeeService,
+  installRescueService,
+  restartRescueService,
+  startRescueService,
   restartBeeService,
   startBeeService,
   stopBeeService,
+  stopRescueService,
   uninstallBeeService,
+  uninstallRescueService,
 } from "./service.js";
 
 async function main(): Promise<void> {
@@ -260,6 +266,11 @@ async function runLogout(parsed: ArgvParseResult): Promise<void> {
   } catch {
     // not installed or not running — fine
   }
+  try {
+    await stopRescueService();
+  } catch {
+    // not installed or not running — fine
+  }
   clearHiveUrl(parsed.configDir);
   clearHiveSession(parsed.configDir);
   console.log("Logged out. Hive URL + session cleared from config.");
@@ -300,6 +311,7 @@ async function runStatus(parsed: ArgvParseResult): Promise<void> {
   }
 
   const status = await getBeeServiceStatus(configDir);
+  const rescueStatus = await getRescueServiceStatus(configDir);
   const stateLabel =
     status.platform === "unsupported"
       ? "(unsupported on this platform — `bee start` will run in foreground)"
@@ -309,6 +321,16 @@ async function runStatus(parsed: ArgvParseResult): Promise<void> {
   console.log(`Service:       ${stateLabel}`);
   if (status.unitPath) {
     console.log(`Unit file:     ${status.unitPath}`);
+  }
+  const rescueLabel =
+    rescueStatus.platform === "unsupported"
+      ? "(unsupported on this platform)"
+      : rescueStatus.installed
+        ? `installed${rescueStatus.running ? ", running" : ", not running"}`
+        : "not installed";
+  console.log(`Rescue:        ${rescueLabel}`);
+  if (rescueStatus.unitPath) {
+    console.log(`Rescue unit:   ${rescueStatus.unitPath}`);
   }
   console.log(`Logs:          ${status.logDir}`);
   if (status.lastExitCode !== undefined && status.lastExitCode !== 0) {
@@ -341,8 +363,22 @@ async function runStart(parsed: ArgvParseResult): Promise<void> {
       });
       console.log(`Installed service unit (${result.platform}): ${result.unitPath}`);
     }
+    const rescueStatus = await getRescueServiceStatus(configDir);
+    if (!rescueStatus.installed) {
+      const env = resolveInstallEnvironment(dirname(fileURLToPath(import.meta.url)));
+      const result = installRescueService({
+        installDir: env.installDir,
+        pnpmBin: env.pnpmBin,
+        nodeBinDir: env.nodeBinDir,
+        configDir,
+      });
+      console.log(`Installed rescue unit (${result.platform}): ${result.unitPath}`);
+    }
     await startBeeService();
-    console.log(`Started. Tail logs with \`bee logs -f\`. Stop with \`bee stop\`.`);
+    await startRescueService();
+    console.log(
+      `Started Bee + Rescue. Tail logs with \`bee logs -f\` or \`bee logs rescue -f\`. Stop Bee with \`bee stop\`.`,
+    );
     warnIfLingerOff();
     return;
   }
@@ -369,12 +405,13 @@ async function runStart(parsed: ArgvParseResult): Promise<void> {
 
 async function runStop(): Promise<void> {
   await stopBeeService();
-  console.log("Stopped.");
+  console.log("Stopped Bee. Rescue stays online for recovery; use `bee disable` to remove it.");
 }
 
 async function runRestart(): Promise<void> {
   await restartBeeService();
-  console.log("Restarted.");
+  await restartRescueService();
+  console.log("Restarted Bee + Rescue.");
 }
 
 async function runEnable(parsed: ArgvParseResult): Promise<void> {
@@ -396,23 +433,35 @@ async function runEnable(parsed: ArgvParseResult): Promise<void> {
   });
 
   console.log(`Wrote unit file: ${result.unitPath}`);
+  const rescueResult = installRescueService({
+    installDir: env.installDir,
+    pnpmBin: env.pnpmBin,
+    nodeBinDir: env.nodeBinDir,
+    configDir,
+  });
+  console.log(`Wrote rescue unit file: ${rescueResult.unitPath}`);
 
   const startNow = parsed.flags.get("no-start") !== true;
   if (startNow) {
     await startBeeService();
-    console.log(`Service enabled and started (${result.platform}).`);
+    await startRescueService();
+    console.log(`Bee + Rescue enabled and started (${result.platform}).`);
     console.log(`Tail logs with \`bee logs -f\`.`);
   } else {
-    console.log(`Service enabled (${result.platform}). Run \`bee start\` to launch.`);
+    console.log(`Bee + Rescue enabled (${result.platform}). Run \`bee start\` to launch.`);
   }
 }
 
 async function runDisable(): Promise<void> {
   const result = uninstallBeeService();
+  const rescueResult = uninstallRescueService();
   if (result.unitRemoved) {
     console.log(`Service disabled. Removed: ${result.unitPath}`);
   } else {
     console.log("Service was not installed; nothing to do.");
+  }
+  if (rescueResult.unitRemoved) {
+    console.log(`Rescue disabled. Removed: ${rescueResult.unitPath}`);
   }
 }
 
@@ -420,11 +469,17 @@ async function runLogs(parsed: ArgvParseResult): Promise<void> {
   const configDir = parsed.configDir ?? getDefaultHivePlaneConfigDir();
   const status = await getBeeServiceStatus(configDir);
   const follow = parsed.flags.get("follow") === true || parsed.flags.get("f") === true;
-  const stream = parsed.positional[0] === "stderr" ? "err" : "out";
-  const logFile = join(status.logDir, `bee.${stream}.log`);
+  const wantsRescue = parsed.positional.includes("rescue");
+  const stream = parsed.positional.includes("stderr") ? "err" : "out";
+  const logFile = join(status.logDir, `${wantsRescue ? "rescue" : "bee"}.${stream}.log`);
 
   if (status.platform === "linux") {
-    const args = ["--user", "-u", "hiveplane-bee.service", "--no-pager"];
+    const args = [
+      "--user",
+      "-u",
+      wantsRescue ? "hiveplane-rescue.service" : "hiveplane-bee.service",
+      "--no-pager",
+    ];
     if (follow) args.push("-f");
     const child = spawn("journalctl", args, { stdio: "inherit" });
     // Minimal containers / WSL1 / some systemd-less distros don't ship
@@ -499,14 +554,15 @@ Usage:
                              skip that (e.g. for provisioning scripts).
   bee logout                 Forget the Hive URL + session, stop the service
   bee status                 Show config, identity, session, and service state
-  bee start                  Start the daemon. Auto-installs the launchd/systemd
-                             unit on first run; restarts it next time.
+  bee start                  Start the daemon and Rescue Agent. Auto-installs
+                             launchd/systemd units on first run.
                              --foreground runs as a child process for dev.
-  bee stop                   Stop the running service
-  bee restart                Restart the service
-  bee enable [--no-start]    Power-user: install the unit file explicitly
-  bee disable                Power-user: stop + remove the unit file
-  bee logs [stderr] [-f]     Print or tail daemon logs (default stdout)
+  bee stop                   Stop Bee; Rescue stays online for recovery
+  bee restart                Restart Bee + Rescue
+  bee enable [--no-start]    Power-user: install unit files explicitly
+  bee disable                Power-user: stop + remove Bee + Rescue units
+  bee logs [rescue] [stderr] [-f]
+                             Print/tail daemon logs (default Bee stdout)
   bee identity init|show     Generate or print the Bee Ed25519 identity
   bee --version              Print version
   bee --help                 Print this help

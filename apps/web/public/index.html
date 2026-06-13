@@ -934,6 +934,7 @@
                 <td><span class="mono truncate" title="${escapeHtml(b.beeId)}">${escapeHtml(b.beeName || shortId(b.beeId))}</span></td>
                 <td><span class="mono truncate" title="${escapeHtml(b.beeId)}">${escapeHtml(shortId(b.beeId))}</span></td>
                 <td>${escapeHtml(b.daemonVersion || "—")}</td>
+                <td>${renderRescueStatus(b.rescue)}</td>
                 <td>${escapeHtml(b.activeJobs ?? 0)}</td>
                 <td title="${escapeHtml(b.lastSeenAt || "")}">${relativeTime(b.lastSeenAt)}</td>
                 <td>${renderHealthChecks(b.healthChecks || [])}</td>
@@ -943,9 +944,11 @@
                   <div class="actions">
                     <button class="ghost" data-action="select-bee-button" data-bee-id="${escapeHtml(b.beeId)}">Detail</button>
                     <button class="ghost" data-action="healthcheck" data-bee-id="${escapeHtml(b.beeId)}">Healthcheck</button>
+                    <button class="ghost" data-action="adapter-job" data-job-type="restart_bee" data-bee-id="${escapeHtml(b.beeId)}">Recover</button>
                     <button class="ghost" data-action="adapter-job" data-job-type="openclaw_status" data-bee-id="${escapeHtml(b.beeId)}">OpenClaw</button>
                     <button class="ghost" data-action="adapter-job" data-job-type="ollama_status" data-bee-id="${escapeHtml(b.beeId)}">Ollama</button>
                     <button class="ghost" data-action="adapter-job" data-job-type="update_bee" data-bee-id="${escapeHtml(b.beeId)}">Update</button>
+                    <button class="ghost" data-action="adapter-job" data-job-type="collect_bee_logs" data-bee-id="${escapeHtml(b.beeId)}">Logs</button>
                     <button class="ghost" data-action="safe-command" data-command="hostname" data-args="[]" data-bee-id="${escapeHtml(b.beeId)}">Hostname</button>
                     <button class="ghost" data-action="safe-command" data-command="df" data-args='["-h","/"]' data-bee-id="${escapeHtml(b.beeId)}">Disk</button>
                     <button class="ghost" data-action="safe-command" data-command="uptime" data-args="[]" data-bee-id="${escapeHtml(b.beeId)}">Uptime</button>
@@ -964,6 +967,7 @@
                 <th>Name</th>
                 <th>Bee ID</th>
                 <th>Version</th>
+                <th>Rescue</th>
                 <th>Active jobs</th>
                 <th>Last heartbeat</th>
                 <th>Health</th>
@@ -1017,6 +1021,10 @@
           )
           .join("")}</div>`;
       }
+      function renderRescueStatus(rescue) {
+        if (!rescue) return '<span class="mono">—</span>';
+        return `${pill(rescue.status || "unknown")} <span title="${escapeHtml(rescue.lastSeenAt || "")}">${relativeTime(rescue.lastSeenAt)}</span>`;
+      }
       function renderSelectedBee(bees) {
         if (!state.selectedBeeId && bees.length > 0) {
           state.selectedBeeId = bees.find((b) => b.status === "online")?.beeId || bees[0].beeId;
@@ -1033,6 +1041,7 @@
         const hardware = capabilities.hardware || {};
         const permissions = bee.permissions || { runCommand: { allow: [], unsafeAllowAll: false } };
         const allow = permissions.runCommand?.allow || [];
+        const rescue = bee.rescue || null;
 
         els.beeDetailBody.innerHTML = `
           <div>${pill(bee.status || "unknown")} <span class="mono">${escapeHtml(bee.beeName || shortId(bee.beeId))}</span></div>
@@ -1062,6 +1071,19 @@
             ${capGroup("Models", capabilities.models)}
             ${capGroup("Tools", capabilities.tools)}
             ${capGroup("Networking", capabilities.networking)}
+          </div>
+          <div class="detail-section">
+            <h3>Rescue</h3>
+            ${
+              rescue
+                ? `<div class="kv-list">
+                    ${kv("Status", `${pill(rescue.status || "unknown")} <span title="${escapeHtml(rescue.lastSeenAt || "")}">${relativeTime(rescue.lastSeenAt)}</span>`)}
+                    ${kv("Version", escapeHtml(rescue.rescueVersion || "—"))}
+                    ${kv("Heartbeats", escapeHtml(rescue.heartbeatCount ?? 0))}
+                    ${kv("Actions", capList(rescue.capabilities?.actions || []))}
+                  </div>`
+                : `<div class="empty">No Rescue Agent heartbeat yet.</div>`
+            }
           </div>
           <div class="detail-section">
             <h3>Permissions</h3>

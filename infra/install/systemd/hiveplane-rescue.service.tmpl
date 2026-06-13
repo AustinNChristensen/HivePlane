@@ -1,0 +1,17 @@
+[Unit]
+Description=HivePlane Rescue Agent
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__INSTALL_DIR__
+Environment=PATH=__PATH__
+Environment=HIVEPLANE_CONFIG_DIR=__CONFIG_DIR__
+ExecStart=__PNPM_BIN__ --silent --filter @hiveplane/daemon rescue
+Restart=always
+RestartSec=10
+StandardOutput=append:__LOG_DIR__/rescue.out.log
+StandardError=append:__LOG_DIR__/rescue.err.log
+
+[Install]
+WantedBy=default.target
