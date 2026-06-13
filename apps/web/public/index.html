@@ -631,6 +631,15 @@
         refreshActive();
       });
 
+      function clearRejectedAdminToken() {
+        state.adminToken = "";
+        els.adminToken.value = "";
+        localStorage.removeItem(ADMIN_KEY);
+        els.authStatus.textContent =
+          "admin token rejected — cleared saved token; paste the current hive-config token";
+        els.authStatus.className = "auth-status bad";
+      }
+
       async function updateAuthStatus() {
         if (!state.adminToken) {
           els.authStatus.textContent = "no admin token (jobs + tokens disabled)";
@@ -642,6 +651,8 @@
           if (res.ok) {
             els.authStatus.textContent = "admin token verified";
             els.authStatus.className = "auth-status ok";
+          } else if (res.status === 401) {
+            clearRejectedAdminToken();
           } else {
             els.authStatus.textContent = `admin token rejected (${res.status})`;
             els.authStatus.className = "auth-status bad";
@@ -704,7 +715,13 @@
         }
         try {
           const res = await fetch("/api/pairing-key", { headers: authHeaders() });
-          if (res.status === 401 || res.status === 503) {
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            els.pairingCard.hidden = true;
+            stopPairingCountdown();
+            return;
+          }
+          if (res.status === 503) {
             els.pairingCard.hidden = true;
             stopPairingCountdown();
             return;
@@ -808,6 +825,11 @@
             method: "POST",
             headers: authHeaders(),
           });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            els.pairingMeta.textContent = "admin token rejected — paste the current token";
+            return;
+          }
           if (!res.ok) {
             const text = await res.text().catch(() => "");
             throw new Error(`HTTP ${res.status}: ${text}`);
@@ -911,6 +933,11 @@
             headers: { ...authHeaders(), "content-type": "application/json" },
             body: JSON.stringify({ type: "run_healthcheck", payload: {} }),
           });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            els.beesMeta.textContent = "admin token rejected — paste the current token";
+            return;
+          }
           if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
           const body = await res.json();
           state.selectedJobId = body.job?.id || state.selectedJobId;
@@ -939,6 +966,11 @@
               timeoutSeconds: 30,
             }),
           });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            els.beesMeta.textContent = "admin token rejected — paste the current token";
+            return;
+          }
           if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
           const body = await res.json();
           state.selectedJobId = body.job?.id || state.selectedJobId;
@@ -973,9 +1005,10 @@
         try {
           const res = await fetch("/api/jobs", { headers: authHeaders() });
           if (res.status === 401) {
-            els.jobsBody.innerHTML = `<div class="empty">Admin token rejected.</div>`;
+            clearRejectedAdminToken();
+            els.jobsBody.innerHTML = `<div class="empty">Admin token rejected. Paste the current token from <code>~/.hiveplane/hive-config.json</code> and save again.</div>`;
             els.jobsMeta.textContent = "—";
-            els.jobDetailBody.innerHTML = `<div class="empty">Admin token rejected.</div>`;
+            els.jobDetailBody.innerHTML = `<div class="empty">Admin token rejected. The stale saved token was cleared.</div>`;
             els.jobDetailMeta.textContent = "—";
             return;
           }
@@ -1068,6 +1101,12 @@
           const res = await fetch(`/api/jobs/${encodeURIComponent(state.selectedJobId)}`, {
             headers: authHeaders(),
           });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            els.jobDetailMeta.textContent = "auth failed";
+            els.jobDetailBody.innerHTML = `<div class="empty">Admin token rejected. The stale saved token was cleared.</div>`;
+            return;
+          }
           if (res.status === 404) {
             els.jobDetailMeta.textContent = "not found";
             els.jobDetailBody.innerHTML = `<div class="empty">Selected job no longer exists.</div>`;
@@ -1143,6 +1182,11 @@
             headers: { ...authHeaders(), "content-type": "application/json" },
             body: JSON.stringify(beeName ? { beeName } : {}),
           });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            els.tokenResult.innerHTML = `<div class="empty">Admin token rejected. Paste the current token and save again.</div>`;
+            return;
+          }
           if (!res.ok) {
             const text = await res.text();
             throw new Error(`HTTP ${res.status}: ${text}`);
