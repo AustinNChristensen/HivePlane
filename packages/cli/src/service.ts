@@ -191,10 +191,8 @@ async function startServiceUnit(spec: DaemonSpec): Promise<void> {
     // Idempotent-ish: launchd sometimes returns Bootstrap failed: 5 right after
     // bootout even though an immediate retry succeeds. Treat bootstrap as a
     // short retry loop, then kickstart the loaded label.
-    const bootstrapStatus = await bootstrapLaunchAgent(uid, spec.launchdLabel, unitPath);
-    if (bootstrapStatus === "already_loaded") {
-      await kickstartLaunchAgent(uid, spec.launchdLabel);
-    }
+    await bootstrapLaunchAgent(uid, spec.launchdLabel, unitPath);
+    await kickstartLaunchAgent(uid, spec.launchdLabel);
   } else {
     await execFileAsync("systemctl", ["--user", "enable", "--now", spec.systemdUnitName]);
   }
