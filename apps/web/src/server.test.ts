@@ -80,7 +80,10 @@ describe("Hive heartbeat state", () => {
           memoryGb: 32,
         },
       },
-      permissions: { runCommand: { allow: ["hostname"], unsafeAllowAll: false } },
+      permissions: {
+        runCommand: { allow: ["hostname"], deny: [], requireApproval: [], unsafeAllowAll: false },
+        jobs: { allow: [], deny: [], requireApproval: [] },
+      },
       healthChecks: [],
     });
     const latest = upsertBeeHeartbeat(state, {
@@ -90,7 +93,15 @@ describe("Hive heartbeat state", () => {
       daemonVersion: "0.0.1",
       status: "degraded",
       activeJobs: 1,
-      permissions: { runCommand: { allow: ["hostname", "df"], unsafeAllowAll: false } },
+      permissions: {
+        runCommand: {
+          allow: ["hostname", "df"],
+          deny: [],
+          requireApproval: [],
+          unsafeAllowAll: false,
+        },
+        jobs: { allow: [], deny: [], requireApproval: [] },
+      },
       healthChecks: [
         {
           name: "openclaw-gateway",

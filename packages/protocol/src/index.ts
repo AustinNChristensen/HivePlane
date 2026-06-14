@@ -44,9 +44,18 @@ export const BeePermissionsSchema = z.object({
   runCommand: z
     .object({
       allow: z.array(z.string().min(1)).default([]),
+      deny: z.array(z.string().min(1)).default([]),
+      requireApproval: z.array(z.string().min(1)).default([]),
       unsafeAllowAll: z.boolean().default(false),
     })
-    .default({ allow: [], unsafeAllowAll: false }),
+    .default({ allow: [], deny: [], requireApproval: [], unsafeAllowAll: false }),
+  jobs: z
+    .object({
+      allow: z.array(z.string().min(1)).default([]),
+      deny: z.array(z.string().min(1)).default([]),
+      requireApproval: z.array(z.string().min(1)).default([]),
+    })
+    .default({ allow: [], deny: [], requireApproval: [] }),
 });
 
 export const RescueCapabilitiesSchema = z.object({
@@ -307,7 +316,7 @@ export type BeeStatus = z.infer<typeof BeeStatusSchema>;
 export type BeeHardware = z.infer<typeof BeeHardwareSchema>;
 export type BeeCapabilities = z.infer<typeof BeeCapabilitiesSchema>;
 export type BeeHealthCheck = z.infer<typeof BeeHealthCheckSchema>;
-export type BeePermissions = z.infer<typeof BeePermissionsSchema>;
+export type BeePermissions = z.input<typeof BeePermissionsSchema>;
 export type RescueCapabilities = z.infer<typeof RescueCapabilitiesSchema>;
 export type RescueHeartbeat = z.infer<typeof RescueHeartbeatSchema>;
 export type BeeRegistrationRequest = z.infer<typeof BeeRegistrationRequestSchema>;

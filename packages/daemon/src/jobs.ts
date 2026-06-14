@@ -18,7 +18,12 @@ import {
 } from "./capabilities.js";
 import type { BeeIdentity } from "./identity.js";
 import type { HiveSession } from "./session.js";
-import { policyAllowsCommand, readBeePolicy, type BeePolicy } from "./policy.js";
+import {
+  policyAllowsCommand,
+  policyDecisionForJob,
+  readBeePolicy,
+  type BeePolicy,
+} from "./policy.js";
 import { executeRecipe, RecipeSchema } from "./recipes.js";
 
 export type JobExecutorOptions = {
@@ -56,6 +61,35 @@ export class JobExecutor {
     try {
       if (signal?.aborted) {
         outcome = cancelledOutcome(job);
+        await this.complete(job, outcome);
+        return;
+      }
+      const policyDecision = policyDecisionForJob(this.getPolicy(), job);
+      if (!policyDecision.allowed) {
+        if (policyDecision.requiresApproval) {
+          await this.emit(job, "warn", "approval_required", {
+            jobType: job.type,
+            reason: policyDecision.reason,
+            risk: policyDecision.risk ?? "write",
+          });
+          outcome = {
+            status: "failed",
+            error: {
+              code: "approval_required",
+              message: policyDecision.reason,
+              risk: policyDecision.risk ?? "write",
+            },
+          };
+        } else {
+          await this.emit(job, "info", "policy.denied", {
+            jobType: job.type,
+            reason: policyDecision.reason,
+          });
+          outcome = {
+            status: "failed",
+            error: { code: "policy_denied", message: policyDecision.reason },
+          };
+        }
         await this.complete(job, outcome);
         return;
       }

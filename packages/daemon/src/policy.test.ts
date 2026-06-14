@@ -3,11 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  policyDecisionForJob,
   policyAllowsCommand,
   readBeePolicy,
   DEFAULT_POLICY,
   SAFE_READ_ONLY_COMMANDS,
 } from "./policy.js";
+import type { Job } from "@hiveplane/protocol";
 
 function newDir() {
   return mkdtempSync(join(tmpdir(), "hp-policy-test-"));
@@ -60,6 +62,18 @@ describe("policyAllowsCommand", () => {
     expect(policyAllowsCommand(policy, "/usr/bin/git").allowed).toBe(true);
   });
 
+  it("denies commands on the explicit denylist even when allowlisted", () => {
+    const policy = { runCommand: { allow: ["git"], deny: ["git"], unsafeAllowAll: false } };
+    expect(policyAllowsCommand(policy, "git").allowed).toBe(false);
+  });
+
+  it("requires approval for commands on the approval list", () => {
+    const policy = { runCommand: { allow: ["brew"], requireApproval: ["brew"] } };
+    const decision = policyAllowsCommand(policy, "brew");
+    expect(decision.allowed).toBe(false);
+    if (!decision.allowed) expect(decision.requiresApproval).toBe(true);
+  });
+
   it("denies different command even if a similarly-named one is allowed", () => {
     const policy = { runCommand: { allow: ["git"], unsafeAllowAll: false } };
     expect(policyAllowsCommand(policy, "rm").allowed).toBe(false);
@@ -73,5 +87,45 @@ describe("policyAllowsCommand", () => {
   it("denies empty command", () => {
     expect(policyAllowsCommand(DEFAULT_POLICY, "").allowed).toBe(false);
     expect(policyAllowsCommand(DEFAULT_POLICY, "   ").allowed).toBe(false);
+  });
+});
+
+describe("policyDecisionForJob", () => {
+  function job(type: Job["type"], payload: Job["payload"] = {}): Job {
+    return {
+      id: "job_1",
+      beeId: "bee_1",
+      status: "assigned",
+      type,
+      payload,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  it("requires approval for dangerous jobs by default", () => {
+    const decision = policyDecisionForJob(DEFAULT_POLICY, job("install_runtime"));
+    expect(decision.allowed).toBe(false);
+    if (!decision.allowed) {
+      expect(decision.requiresApproval).toBe(true);
+      expect(decision.risk).toBe("write");
+    }
+  });
+
+  it("allows dangerous jobs when explicitly allowed by local policy", () => {
+    expect(
+      policyDecisionForJob(
+        { ...DEFAULT_POLICY, jobs: { allow: ["install_runtime"] } },
+        job("install_runtime"),
+      ).allowed,
+    ).toBe(true);
+  });
+
+  it("requires approval when a job says it needs secrets", () => {
+    const decision = policyDecisionForJob(
+      DEFAULT_POLICY,
+      job("run_healthcheck", { requiresSecrets: true }),
+    );
+    expect(decision.allowed).toBe(false);
+    if (!decision.allowed) expect(decision.risk).toBe("credentialed");
   });
 });

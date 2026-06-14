@@ -84,7 +84,10 @@ describe("JobExecutor", () => {
       session,
       identity,
       daemonVersion: "0.0.1-test",
-      policy: { runCommand: { allow: [], unsafeAllowAll: false } },
+      policy: {
+        runCommand: { allow: [], deny: [], requireApproval: [], unsafeAllowAll: false },
+        jobs: { allow: [], deny: [], requireApproval: [] },
+      },
       fetchImpl: fetchImpl as unknown as typeof fetch,
       spawnImpl: makeSpawn({}) as unknown as typeof import("node:child_process").spawn,
     });
@@ -99,6 +102,60 @@ describe("JobExecutor", () => {
     const completeBody = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
     expect(completeBody.status).toBe("failed");
     expect(completeBody.error.code).toBe("policy_denied");
+  });
+
+  it("emits approval_required and does not run dangerous jobs without local approval", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const spawnImpl = makeSpawn({
+      stdoutChunks: ["should-not-run\n"],
+      exitCode: 0,
+    }) as unknown as typeof import("node:child_process").spawn;
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      daemonVersion: "0.0.1-test",
+      policy: {
+        runCommand: { allow: [], deny: [], requireApproval: [], unsafeAllowAll: false },
+        jobs: { allow: [], deny: [], requireApproval: [] },
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl,
+    });
+
+    await executor.execute(
+      makeJob({
+        type: "install_runtime",
+        payload: {
+          recipe: {
+            id: "safe-example",
+            name: "Safe example",
+            version: "1",
+            steps: [{ id: "install", run: { command: "echo", args: ["installed"] } }],
+          },
+        },
+      }),
+    );
+
+    expect(spawnImpl).not.toHaveBeenCalled();
+    const eventBodies = fetchImpl.mock.calls
+      .map((call) => {
+        const [, init] = call as unknown as [URL, RequestInit];
+        return JSON.parse(Buffer.from(init.body as Uint8Array).toString("utf8"));
+      })
+      .filter((body) => Array.isArray(body.events));
+    expect(JSON.stringify(eventBodies)).toContain("approval_required");
+
+    const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
+    expect(body.status).toBe("failed");
+    expect(body.error.code).toBe("approval_required");
   });
 
   it("runs an allowed command, streams stdout events, completes succeeded", async () => {
@@ -238,12 +295,15 @@ describe("JobExecutor", () => {
       session,
       identity,
       daemonVersion: "0.0.1-test",
-      policy: { runCommand: { allow: [], unsafeAllowAll: false } },
+      policy: {
+        runCommand: { allow: [], unsafeAllowAll: false },
+        jobs: { allow: ["update_bee"] },
+      },
       fetchImpl: fetchImpl as unknown as typeof fetch,
       spawnImpl: makeSpawn({}) as unknown as typeof import("node:child_process").spawn,
     });
 
-    await executor.execute(makeJob({ type: "configure_runtime", payload: { runtime: "ollama" } }));
+    await executor.execute(makeJob({ type: "restart_bee", payload: {} }));
 
     const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
       URL,
@@ -265,7 +325,10 @@ describe("JobExecutor", () => {
       session,
       identity,
       daemonVersion: "0.0.1-test",
-      policy: { runCommand: { allow: [], unsafeAllowAll: false } },
+      policy: {
+        runCommand: { allow: [], deny: [], requireApproval: [], unsafeAllowAll: false },
+        jobs: { allow: ["install_runtime"], deny: [], requireApproval: [] },
+      },
       fetchImpl: fetchImpl as unknown as typeof fetch,
       spawnImpl,
     });
@@ -310,7 +373,10 @@ describe("JobExecutor", () => {
       session,
       identity,
       daemonVersion: "0.0.1-test",
-      policy: { runCommand: { allow: [], unsafeAllowAll: false } },
+      policy: {
+        runCommand: { allow: [], deny: [], requireApproval: [], unsafeAllowAll: false },
+        jobs: { allow: ["install_runtime"], deny: [], requireApproval: [] },
+      },
       fetchImpl: fetchImpl as unknown as typeof fetch,
       spawnImpl,
     });
@@ -356,7 +422,10 @@ describe("JobExecutor", () => {
       session,
       identity,
       daemonVersion: "0.0.1-test",
-      policy: { runCommand: { allow: [], unsafeAllowAll: false } },
+      policy: {
+        runCommand: { allow: [], unsafeAllowAll: false },
+        jobs: { allow: ["update_bee"] },
+      },
       fetchImpl: fetchImpl as unknown as typeof fetch,
       spawnImpl: makeSpawn({}) as unknown as typeof import("node:child_process").spawn,
     });
@@ -594,7 +663,10 @@ describe("JobExecutor", () => {
       session,
       identity,
       daemonVersion: "0.0.1-test",
-      policy: { runCommand: { allow: [], unsafeAllowAll: false } },
+      policy: {
+        runCommand: { allow: [], unsafeAllowAll: false },
+        jobs: { allow: ["update_bee"] },
+      },
       fetchImpl: fetchImpl as unknown as typeof fetch,
       spawnImpl,
       scheduleRestart: false,
