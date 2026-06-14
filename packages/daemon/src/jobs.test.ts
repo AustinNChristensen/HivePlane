@@ -243,7 +243,7 @@ describe("JobExecutor", () => {
       spawnImpl: makeSpawn({}) as unknown as typeof import("node:child_process").spawn,
     });
 
-    await executor.execute(makeJob({ type: "install_runtime", payload: { runtime: "ollama" } }));
+    await executor.execute(makeJob({ type: "configure_runtime", payload: { runtime: "ollama" } }));
 
     const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
       URL,
@@ -252,6 +252,98 @@ describe("JobExecutor", () => {
     const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
     expect(body.status).toBe("failed");
     expect(body.error.code).toBe("unsupported_job_type");
+  });
+
+  it("dry-runs install_runtime recipes without spawning commands", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const spawnImpl = makeSpawn({}) as unknown as typeof import("node:child_process").spawn;
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      daemonVersion: "0.0.1-test",
+      policy: { runCommand: { allow: [], unsafeAllowAll: false } },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl,
+    });
+
+    await executor.execute(
+      makeJob({
+        type: "install_runtime",
+        payload: {
+          dryRun: true,
+          recipe: {
+            id: "safe-example",
+            name: "Safe example",
+            version: "1",
+            steps: [{ id: "echo", run: { command: "echo", args: ["hello"] } }],
+          },
+        },
+      }),
+    );
+
+    expect(spawnImpl).not.toHaveBeenCalled();
+    const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
+    expect(body.status).toBe("succeeded");
+    expect(body.output.dryRun).toBe(true);
+    expect(body.output.plannedSteps[0]).toMatchObject({ id: "echo", command: "echo" });
+  });
+
+  it("executes install_runtime recipes and streams recipe events", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const spawnImpl = makeSpawn({
+      stdoutChunks: ["installed\n"],
+      exitCode: 0,
+    }) as unknown as typeof import("node:child_process").spawn;
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      daemonVersion: "0.0.1-test",
+      policy: { runCommand: { allow: [], unsafeAllowAll: false } },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl,
+    });
+
+    await executor.execute(
+      makeJob({
+        type: "install_runtime",
+        payload: {
+          recipe: {
+            id: "safe-example",
+            name: "Safe example",
+            version: "1",
+            steps: [{ id: "install", run: { command: "echo", args: ["installed"] } }],
+          },
+        },
+      }),
+    );
+
+    const eventBodies = fetchImpl.mock.calls
+      .map((call) => {
+        const [, init] = call as unknown as [URL, RequestInit];
+        return JSON.parse(Buffer.from(init.body as Uint8Array).toString("utf8"));
+      })
+      .filter((body) => Array.isArray(body.events));
+    expect(JSON.stringify(eventBodies)).toContain("recipe.step.stdout");
+
+    const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
+    expect(body.status).toBe("succeeded");
+    expect(body.output.steps[0].stdout).toContain("installed");
   });
 
   it("run_healthcheck succeeds with daemon info", async () => {

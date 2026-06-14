@@ -1,0 +1,25 @@
+{
+  "id": "safe-example",
+  "name": "Safe example recipe",
+  "version": "1",
+  "description": "A harmless recipe fixture used to validate planning, idempotency checks, command execution, and healthchecks.",
+  "steps": [
+    {
+      "id": "node-version",
+      "name": "Verify Node.js is available",
+      "platforms": ["darwin", "linux"],
+      "skipIf": {
+        "command": "node",
+        "args": ["--version"]
+      },
+      "run": {
+        "command": "node",
+        "args": ["--version"]
+      },
+      "healthcheck": {
+        "command": "node",
+        "args": ["--version"]
+      }
+    }
+  ]
+}

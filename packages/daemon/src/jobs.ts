@@ -19,6 +19,7 @@ import {
 import type { BeeIdentity } from "./identity.js";
 import type { HiveSession } from "./session.js";
 import { policyAllowsCommand, readBeePolicy, type BeePolicy } from "./policy.js";
+import { executeRecipe, RecipeSchema } from "./recipes.js";
 
 export type JobExecutorOptions = {
   hiveUrl: string;
@@ -76,6 +77,9 @@ export class JobExecutor {
           break;
         case "update_bee":
           outcome = await this.runBeeUpdate(job, signal);
+          break;
+        case "install_runtime":
+          outcome = await this.runInstallRuntime(job, signal);
           break;
         case "agent_task":
           outcome = await this.runAgentTask(job, signal);
@@ -279,6 +283,35 @@ export class JobExecutor {
         restartScheduled: true,
       },
     };
+  }
+
+  private async runInstallRuntime(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
+    const parsed = RecipeSchema.safeParse(job.payload.recipe);
+    if (!parsed.success) {
+      await this.emit(job, "error", "recipe.invalid", {
+        issues: parsed.error.issues.map((issue) => issue.message),
+      });
+      return {
+        status: "failed",
+        error: {
+          code: "invalid_recipe",
+          message: "install_runtime requires a valid recipe in payload.recipe",
+          issues: parsed.error.issues.map((issue) => issue.message),
+        },
+      };
+    }
+
+    const result = await executeRecipe({
+      recipe: parsed.data,
+      dryRun: job.payload.dryRun === true,
+      spawnImpl: this.spawnImpl,
+      ...(signal ? { signal } : {}),
+      emit: async (event) => {
+        await this.emit(job, event.level, event.type, event.data);
+      },
+    });
+
+    return result;
   }
 
   private async runAgentTask(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
