@@ -43,6 +43,7 @@ Keep iterating until every item below is either shipped and verified on `main`, 
 7. **Remote provisioning** — issue #19
    - Goal: SSH-based remote provisioning for smoother alpha onboarding.
    - Acceptance signal: an operator can point HivePlane at a reachable machine and get Bee installed/paired without manual copy-install steps.
+   - Status: first CLI implementation shipped on 2026-06-14. `hive node provision ssh <user@host>` now runs a remote prerequisite healthcheck, mints a one-use bootstrap token, streams the normal Bee installer over SSH, applies a provisioning profile mapped to a Bee policy profile, and starts the Bee. Remaining hardening belongs in the fresh-machine pass: live non-Chris host dogfood and any host-specific prerequisite UX.
 
 8. **Fresh-machine demo hardening**
    - Goal: run the full 10-minute script from a totally fresh non-Chris machine and turn every rough edge into issues or fixes.
@@ -222,3 +223,26 @@ Live dogfood notes:
 - Chris Mac mini Bee heartbeat reported the configured sub-agent within five heartbeat checks.
 - live task `task_67d29386f649aacd` assigned to job `job_6fddb6893f854bea`, used session key `hiveplane-subagent-subagent_18530298ed5b4f16-task-task_67d29386f649aacd`, stored `subAgentId`, and returned `hiveplane-subagent-task-ok`.
 - add richer model metadata beyond names and endpoint URL.
+
+### 2026-06-14 — SSH Remote Provisioning
+
+Shipped the first #19 implementation:
+
+- `hive node provision ssh <user@host>` now performs a harmless SSH prerequisite healthcheck before doing anything stateful;
+- the healthcheck verifies a remote shell plus required bootstrap prerequisites: `curl`, `git`, and Node 20+;
+- the provisioner accepts `--hive-url`, or discovers a URL from local Hive config and hostname;
+- it mints a single-use bootstrap token through `/api/bootstrap-tokens` using the local Hive admin token or `--token`;
+- it streams a remote `sh -s` bootstrap script over SSH instead of storing SSH credentials;
+- the remote script runs the existing `/install/bee.sh` one-command flow with `HIVEPLANE_HIVE_URL`, `HIVEPLANE_BOOTSTRAP_TOKEN`, and `HIVEPLANE_NO_START=1`;
+- after install/pairing, it applies a selected provisioning profile (`macos-openclaw`, `linux-openclaw`, `server-worker`, `dev-box`, `read-only`) mapped onto an existing Bee policy profile, then starts the Bee service and prints `bee status`;
+- `--healthcheck-only`, `--dry-run`, `--ssh-bin`, and `--json` are available for first-run troubleshooting and scripted use;
+- README now documents the SSH path and explicitly says HivePlane does not persist SSH passwords/private keys for the MVP.
+
+Verification:
+
+- `pnpm --filter @hiveplane/cli typecheck` passed;
+- `pnpm --filter @hiveplane/cli test` passed, including fake-SSH healthcheck and dry-run coverage;
+- full `pnpm format:check`, `pnpm typecheck`, and `pnpm test` passed after the implementation;
+- manual dry-run JSON smoke passed for `hive node provision ssh austin@example --hive-url http://hive.tailnet.test:4483 --profile server-worker --dry-run --json`.
+
+Fresh-machine pass still needs a real non-Chris reachable host to prove end-to-end network/prerequisite assumptions, then file/fix any rough edges found there.

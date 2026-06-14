@@ -52,6 +52,12 @@ export function parseArgs(args: string[]): ArgvParseResult {
       flags.set("host", requireValue(args, ++i, "--host"));
     } else if (a === "--port") {
       flags.set("port", requireValue(args, ++i, "--port"));
+    } else if (a === "--hive-url") {
+      flags.set("hive-url", requireValue(args, ++i, "--hive-url"));
+    } else if (a === "--profile") {
+      flags.set("profile", requireValue(args, ++i, "--profile"));
+    } else if (a === "--ssh-bin") {
+      flags.set("ssh-bin", requireValue(args, ++i, "--ssh-bin"));
     } else if (a === "-f") {
       flags.set("follow", true);
     } else if (a.startsWith("--")) {

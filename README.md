@@ -212,6 +212,17 @@ This clones HivePlane to `~/.hiveplane/install`, runs `pnpm install`, drops `bee
 
 If `~/.local/bin` isn't on your shell's PATH, the installer prints the line you need to add to your shell rc.
 
+You can also provision a reachable machine over SSH from the Hive box:
+
+```bash
+hive node provision ssh user@host \
+  --hive-url http://mac-mini.tailnet-name.ts.net:4483 \
+  --profile macos-openclaw \
+  --name laptop-1
+```
+
+The SSH provisioner runs a harmless remote shell healthcheck first, mints a single-use bootstrap token from the local Hive admin config, streams the remote install logs, applies the selected Bee policy profile, and starts the Bee service. It does not store SSH passwords, private keys, or cloud-side SSH credentials. Use `--healthcheck-only` to test access before provisioning, and `--dry-run` to inspect the planned install URL/profile without minting a token.
+
 ### Step 4 — Connect the Bee to the Hive
 
 Still on the Bee machine, run `bee login` with no arguments — it'll prompt you for the Hive URL and the pairing key from Step 2:

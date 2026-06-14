@@ -8,9 +8,11 @@
 // surface because they're separate processes.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { hostname as osHostname } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  boolFlag,
   parseArgs,
   resolveInstallEnvironment,
   runLogsFromFile,
@@ -39,6 +41,42 @@ import {
   stopHiveService,
   uninstallHiveService,
 } from "./service.js";
+
+type ProvisionLogLevel = "info" | "warn" | "error";
+
+type ProvisionProfile = {
+  id: string;
+  label: string;
+  policyProfile: string;
+};
+
+const PROVISION_PROFILES: Record<string, ProvisionProfile> = {
+  "macos-openclaw": {
+    id: "macos-openclaw",
+    label: "macOS OpenClaw workstation",
+    policyProfile: "personal_assistant",
+  },
+  "linux-openclaw": {
+    id: "linux-openclaw",
+    label: "Linux OpenClaw workstation",
+    policyProfile: "personal_assistant",
+  },
+  "server-worker": {
+    id: "server-worker",
+    label: "Always-on server worker",
+    policyProfile: "server_worker",
+  },
+  "dev-box": {
+    id: "dev-box",
+    label: "Developer box",
+    policyProfile: "dev_box",
+  },
+  "read-only": {
+    id: "read-only",
+    label: "Read-only observer",
+    policyProfile: "read_only_observer",
+  },
+};
 
 async function main(): Promise<void> {
   const argv = stripGlobalFlags(process.argv.slice(2));
@@ -71,7 +109,7 @@ async function main(): Promise<void> {
       await runDaemon(parsed);
       return;
     case "node":
-      runNode(parsed);
+      await runNode(parsed);
       return;
     case "job":
       runJob(parsed);
@@ -373,7 +411,7 @@ async function runDaemon(parsed: ArgvParseResult): Promise<void> {
   }
 }
 
-function runNode(parsed: ArgvParseResult): never {
+async function runNode(parsed: ArgvParseResult): Promise<void> {
   const [subcommand, methodOrTarget, maybeTarget] = parsed.positional;
   if (subcommand === "register") {
     notImplemented(
@@ -382,14 +420,278 @@ function runNode(parsed: ArgvParseResult): never {
     );
   }
   if (subcommand === "provision" && methodOrTarget === "ssh" && maybeTarget) {
-    notImplemented(
-      "hive node provision ssh",
-      "SSH provisioning is tracked separately and is not wired into the CLI yet.",
-    );
+    await runNodeProvisionSsh(parsed, maybeTarget);
+    return;
   }
 
-  console.error("Usage: hive node register | hive node provision ssh <host>");
+  console.error("Usage: hive node register | hive node provision ssh <user@host>");
   process.exit(2);
+}
+
+async function runNodeProvisionSsh(parsed: ArgvParseResult, target: string): Promise<void> {
+  const json = parsed.flags.get("json") === true;
+  const dryRun = parsed.flags.get("dry-run") === true;
+  const healthcheckOnly = parsed.flags.get("healthcheck-only") === true;
+  const sshBin = stringFlag(parsed, "ssh-bin") ?? process.env.HIVEPLANE_SSH_BIN ?? "ssh";
+  const profile = resolveProvisionProfile(stringFlag(parsed, "profile"));
+  const configDir = parsed.configDir ?? getDefaultHivePlaneConfigDir();
+  const hiveUrl = resolveProvisionHiveUrl(parsed, configDir);
+  const beeName = stringFlag(parsed, "name") ?? target.replace(/[@:]/g, "-");
+
+  if (boolFlag(parsed, "store-ssh-credentials") === true) {
+    emitProvisionLog(json, "error", "validate", "SSH credential persistence is not supported.");
+    console.error("HivePlane does not store SSH passwords or private keys for MVP provisioning.");
+    process.exit(2);
+  }
+
+  emitProvisionLog(json, "info", "ssh.healthcheck", `checking SSH access to ${target}`, {
+    target,
+  });
+  await runSshCommand({
+    sshBin,
+    target,
+    remoteCommand:
+      "printf 'hiveplane.remote.ok\\n'; uname -s; command -v sh >/dev/null; command -v curl >/dev/null; command -v git >/dev/null; command -v node >/dev/null; node -e 'process.exit(Number(process.versions.node.split(\".\")[0]) >= 20 ? 0 : 1)'",
+    json,
+    dryRun,
+  });
+
+  if (healthcheckOnly) {
+    emitProvisionLog(json, "info", "complete", "remote SSH healthcheck passed");
+    return;
+  }
+
+  if (dryRun) {
+    const installUrl = new URL("/install/bee.sh", ensureTrailingSlash(hiveUrl)).toString();
+    emitProvisionLog(json, "info", "dry-run", "would mint a bootstrap token and run installer", {
+      target,
+      hiveUrl,
+      installUrl,
+      beeName,
+      profile: profile.id,
+      policyProfile: profile.policyProfile,
+    });
+    return;
+  }
+
+  const adminToken = stringFlag(parsed, "token") ?? readHiveOnDiskConfig(configDir).adminToken;
+  if (!adminToken) {
+    console.error(
+      `No admin token available. Pass --token <admin-token> or run this from a Hive with ${getHiveConfigPath(configDir)}.`,
+    );
+    process.exit(2);
+  }
+
+  emitProvisionLog(json, "info", "bootstrap-token.create", `minting token for ${beeName}`, {
+    beeName,
+  });
+  const bootstrapToken = await createRemoteBootstrapToken({
+    hiveUrl,
+    adminToken,
+    beeName,
+  });
+
+  const installUrl = new URL("/install/bee.sh", ensureTrailingSlash(hiveUrl)).toString();
+  const remoteScript = buildProvisionRemoteScript({
+    hiveUrl,
+    installUrl,
+    bootstrapToken,
+    beeName,
+    profile,
+  });
+
+  emitProvisionLog(
+    json,
+    "info",
+    "bootstrap.run",
+    `installing and pairing Bee on ${target} (${profile.label})`,
+    { target, hiveUrl, profile: profile.id },
+  );
+  await runSshCommand({
+    sshBin,
+    target,
+    remoteCommand: "sh -s",
+    stdin: remoteScript,
+    json,
+  });
+  emitProvisionLog(json, "info", "complete", `remote Bee provisioned as ${beeName}`, {
+    target,
+    hiveUrl,
+    beeName,
+  });
+}
+
+function resolveProvisionProfile(profileFlag: string | undefined): ProvisionProfile {
+  const id = profileFlag ?? "macos-openclaw";
+  const profile = PROVISION_PROFILES[id];
+  if (!profile) {
+    console.error(`Unknown provisioning profile: ${id}`);
+    console.error(`Available profiles: ${Object.keys(PROVISION_PROFILES).join(", ")}`);
+    process.exit(2);
+  }
+  return profile;
+}
+
+function resolveProvisionHiveUrl(parsed: ArgvParseResult, configDir: string): string {
+  const explicit = stringFlag(parsed, "hive-url") ?? process.env.HIVEPLANE_HIVE_URL;
+  if (explicit) return normalizeHiveUrlOrExit(explicit);
+
+  const cfg = readHiveOnDiskConfig(configDir);
+  const port = cfg.port ?? 4483;
+  const host = cfg.host && cfg.host !== "0.0.0.0" && cfg.host !== "::" ? cfg.host : osHostname();
+  const discovered = `http://${host}:${port}`;
+  return normalizeHiveUrlOrExit(discovered);
+}
+
+function normalizeHiveUrlOrExit(input: string): string {
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    console.error(`Invalid --hive-url: ${input}`);
+    process.exit(2);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    console.error(`--hive-url must be http(s): got ${url.protocol}`);
+    process.exit(2);
+  }
+  return url.toString().replace(/\/$/, "");
+}
+
+async function createRemoteBootstrapToken(options: {
+  hiveUrl: string;
+  adminToken: string;
+  beeName: string;
+}): Promise<string> {
+  const response = await fetch(
+    new URL("/api/bootstrap-tokens", ensureTrailingSlash(options.hiveUrl)),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${options.adminToken}`,
+        "content-type": "application/json",
+        "x-hiveplane-actor": "hive-cli-provision",
+      },
+      body: JSON.stringify({ beeName: options.beeName }),
+    },
+  );
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `bootstrap token request failed (${response.status} ${response.statusText})${detail ? `: ${detail}` : ""}`,
+    );
+  }
+  const body = (await response.json()) as { token?: unknown };
+  if (typeof body.token !== "string" || !body.token.startsWith("hp_boot_")) {
+    throw new Error("bootstrap token response did not include a valid token");
+  }
+  return body.token;
+}
+
+function buildProvisionRemoteScript(options: {
+  hiveUrl: string;
+  installUrl: string;
+  bootstrapToken: string;
+  beeName: string;
+  profile: ProvisionProfile;
+}): string {
+  return `#!/bin/sh
+set -eu
+
+log() { printf '[hiveplane provision] %s\\n' "$1"; }
+
+command -v sh >/dev/null 2>&1 || { echo "sh is required" >&2; exit 1; }
+command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 1; }
+
+log "fetching Bee installer"
+curl -fsSL ${shellQuote(options.installUrl)} | \\
+  HIVEPLANE_HIVE_URL=${shellQuote(options.hiveUrl)} \\
+  HIVEPLANE_BOOTSTRAP_TOKEN=${shellQuote(options.bootstrapToken)} \\
+  HIVEPLANE_BEE_NAME=${shellQuote(options.beeName)} \\
+  HIVEPLANE_NO_START=1 \\
+  sh
+
+BEE_BIN="$HOME/.local/bin/bee"
+if [ ! -x "$BEE_BIN" ]; then
+  echo "bee CLI was not installed at $BEE_BIN" >&2
+  exit 1
+fi
+
+log "applying policy profile ${options.profile.policyProfile}"
+"$BEE_BIN" policy profile ${shellQuote(options.profile.policyProfile)}
+
+log "starting Bee service"
+"$BEE_BIN" start
+
+log "checking Bee service status"
+"$BEE_BIN" status
+`;
+}
+
+async function runSshCommand(options: {
+  sshBin: string;
+  target: string;
+  remoteCommand: string;
+  stdin?: string;
+  json: boolean;
+  dryRun?: boolean;
+}): Promise<void> {
+  const args = [options.target, options.remoteCommand];
+  if (options.dryRun) {
+    emitProvisionLog(options.json, "info", "ssh.dry-run", "would run SSH command", {
+      sshBin: options.sshBin,
+      args,
+    });
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(options.sshBin, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    child.stdout.on("data", (chunk) => process.stdout.write(chunk));
+    child.stderr.on("data", (chunk) => process.stderr.write(chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`ssh exited with status ${code}`));
+      }
+    });
+    if (options.stdin) child.stdin.end(options.stdin);
+    else child.stdin.end();
+  });
+}
+
+function emitProvisionLog(
+  json: boolean,
+  level: ProvisionLogLevel,
+  stage: string,
+  message: string,
+  data: Record<string, unknown> = {},
+): void {
+  if (json) {
+    console.log(
+      JSON.stringify({
+        type: "provision.log",
+        level,
+        stage,
+        message,
+        ...data,
+      }),
+    );
+    return;
+  }
+  const detail = Object.keys(data).length > 0 ? ` ${JSON.stringify(data)}` : "";
+  console.log(`[provision:${stage}] ${message}${detail}`);
+}
+
+function ensureTrailingSlash(url: string): string {
+  return url.endsWith("/") ? url : `${url}/`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function runJob(parsed: ArgvParseResult): never {
@@ -489,8 +791,9 @@ Usage:
   hive daemon start|status|stop|restart|logs
                              Aliases for local Hive daemon control.
   hive node register         Placeholder for direct node registration.
-  hive node provision ssh <host>
-                             Placeholder for SSH remote provisioning.
+  hive node provision ssh <user@host>
+                             Provision a Bee over SSH using the normal
+                             installer, bootstrap token, and policy profile.
   hive job list              Placeholder for job listing.
   hive job show <job-id>     Placeholder for job details.
   hive job logs <job-id>     Placeholder for job event logs.
@@ -517,6 +820,12 @@ Flags:
   --port <n>                 Bind port for 'init' / 'up' (default 4483)
   --rotate-admin-token       'init': mint a fresh admin token
   --auth-required true|false 'init': require signed heartbeats
+  --hive-url <url>           'node provision ssh': URL the new Bee should use
+  --profile <id>             'node provision ssh': macos-openclaw,
+                             linux-openclaw, server-worker, dev-box, read-only
+  --healthcheck-only         'node provision ssh': only verify remote SSH shell
+  --dry-run                  'node provision ssh': print actions without
+                             minting a token or running remote install
   -f, --follow               'logs' tails the file
 `,
   );
