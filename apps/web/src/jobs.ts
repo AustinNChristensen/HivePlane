@@ -7,6 +7,7 @@ import {
   type Job,
   type JobCancelMessage,
   type WorkContext,
+  type Artifact,
   type JobEvent,
   type JobStatus,
   type JobType,
@@ -21,6 +22,7 @@ export type JobRecord = {
   status: JobStatus;
   payload: Record<string, JsonValue>;
   context?: WorkContext;
+  artifacts: Artifact[];
   timeoutSeconds?: number;
   createdAt: Date;
   assignedAt?: Date;
@@ -77,6 +79,7 @@ export function createJob(
     ...(request.context
       ? { context: request.context as unknown as WorkContext }
       : deriveJobContext(request.payload as Record<string, JsonValue>)),
+    artifacts: [],
     ...(request.timeoutSeconds !== undefined ? { timeoutSeconds: request.timeoutSeconds } : {}),
     createdAt: now,
     events: [],
@@ -192,6 +195,7 @@ export function appendEvents(
     job.status = "running";
   }
   job.events.push(...events);
+  appendArtifacts(job, artifactsFromEvents(events, job));
   return job;
 }
 
@@ -210,6 +214,7 @@ export function completeJob(
   job.completedAt = now;
   if (payload.output) job.output = payload.output as Record<string, JsonValue>;
   if (payload.error) job.error = payload.error as Record<string, JsonValue>;
+  appendArtifacts(job, artifactsFromJobResult(job, payload.completedAt));
   return job;
 }
 
@@ -230,10 +235,113 @@ export function toJobProto(job: JobRecord): Job {
     status: job.status,
     payload: job.payload,
     ...(job.context ? { context: job.context } : {}),
+    ...(job.artifacts.length ? { artifacts: job.artifacts } : {}),
     ...(job.timeoutSeconds !== undefined ? { timeoutSeconds: job.timeoutSeconds } : {}),
     createdAt: job.createdAt.toISOString(),
     ...(job.assignedAt ? { assignedAt: job.assignedAt.toISOString() } : {}),
   });
+}
+
+function appendArtifacts(job: JobRecord, artifacts: Artifact[]): void {
+  for (const artifact of artifacts) {
+    const key =
+      artifact.id ||
+      artifact.storageUrl ||
+      artifact.localPath ||
+      artifact.sha256 ||
+      `${artifact.name}:${artifact.sizeBytes ?? ""}`;
+    if (
+      job.artifacts.some(
+        (existing) =>
+          existing.id === artifact.id ||
+          (artifact.storageUrl && existing.storageUrl === artifact.storageUrl) ||
+          (artifact.localPath && existing.localPath === artifact.localPath) ||
+          (artifact.sha256 && existing.sha256 === artifact.sha256) ||
+          `${existing.name}:${existing.sizeBytes ?? ""}` === key,
+      )
+    ) {
+      continue;
+    }
+    job.artifacts.push(artifact);
+  }
+}
+
+function artifactsFromEvents(events: JobEvent[], job: JobRecord): Artifact[] {
+  return events.flatMap((event) =>
+    normalizeArtifactList(event.data.artifacts, job, event.createdAt),
+  );
+}
+
+function artifactsFromJobResult(job: JobRecord, createdAt: string): Artifact[] {
+  return [
+    ...normalizeArtifactList(job.output?.artifacts, job, createdAt),
+    ...normalizeArtifactList(job.error?.artifacts, job, createdAt),
+  ];
+}
+
+function normalizeArtifactList(
+  value: JsonValue | undefined,
+  job: JobRecord,
+  createdAt: string,
+): Artifact[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const artifact = normalizeArtifact(item, job, createdAt);
+    return artifact ? [artifact] : [];
+  });
+}
+
+function normalizeArtifact(value: JsonValue, job: JobRecord, createdAt: string): Artifact | null {
+  if (typeof value === "string") {
+    return {
+      id: `art_${randomBytes(6).toString("hex")}`,
+      jobId: job.id,
+      beeId: job.beeId,
+      name: artifactNameFromRef(value),
+      ...(value.startsWith("/") || value.startsWith("~") ? { localPath: value } : {}),
+      ...(/^https?:\/\//.test(value) ? { storageUrl: value } : {}),
+      metadata: {},
+      createdAt,
+    };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input = value as Record<string, JsonValue>;
+  const name =
+    typeof input.name === "string"
+      ? input.name
+      : typeof input.localPath === "string"
+        ? artifactNameFromRef(input.localPath)
+        : typeof input.storageUrl === "string"
+          ? artifactNameFromRef(input.storageUrl)
+          : undefined;
+  if (!name) return null;
+  return {
+    id: typeof input.id === "string" ? input.id : `art_${randomBytes(6).toString("hex")}`,
+    jobId: typeof input.jobId === "string" ? input.jobId : job.id,
+    beeId: typeof input.beeId === "string" ? input.beeId : job.beeId,
+    name,
+    ...(typeof input.contentType === "string" ? { contentType: input.contentType } : {}),
+    ...(typeof input.sizeBytes === "number" && Number.isFinite(input.sizeBytes)
+      ? { sizeBytes: Math.max(0, Math.trunc(input.sizeBytes)) }
+      : {}),
+    ...(typeof input.sha256 === "string" ? { sha256: input.sha256 } : {}),
+    ...(typeof input.localPath === "string" ? { localPath: input.localPath } : {}),
+    ...(typeof input.storageUrl === "string" ? { storageUrl: input.storageUrl } : {}),
+    metadata:
+      input.metadata && typeof input.metadata === "object" && !Array.isArray(input.metadata)
+        ? (input.metadata as Record<string, JsonValue>)
+        : {},
+    createdAt: typeof input.createdAt === "string" ? input.createdAt : createdAt,
+  };
+}
+
+function artifactNameFromRef(value: string): string {
+  try {
+    const parsed = new URL(value);
+    return parsed.pathname.split("/").filter(Boolean).at(-1) || parsed.hostname;
+  } catch {
+    return value.split("/").filter(Boolean).at(-1) || value;
+  }
 }
 
 function deriveJobContext(payload: Record<string, JsonValue>): { context: WorkContext } | {} {

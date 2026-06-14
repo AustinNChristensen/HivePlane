@@ -75,6 +75,7 @@ function buildPopulatedState(): HiveServerState {
     type: "run_healthcheck",
     status: "running",
     payload: {},
+    artifacts: [],
     createdAt: new Date("2026-05-09T20:10:00.000Z"),
     assignedAt: new Date("2026-05-09T20:10:01.000Z"),
     events: [

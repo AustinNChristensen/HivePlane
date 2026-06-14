@@ -312,6 +312,7 @@ function deserializeJob(record: PersistedJob): JobRecord {
     // record itself (they're ISO strings on JobEvent.createdAt).
     events: events as JobEvent[],
     payload: rest.payload as Record<string, JsonValue>,
+    artifacts: rest.artifacts ?? [],
     ...(rest.output ? { output: rest.output as Record<string, JsonValue> } : {}),
     ...(rest.error ? { error: rest.error as Record<string, JsonValue> } : {}),
   };

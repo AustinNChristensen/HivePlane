@@ -1012,6 +1012,13 @@
         max-height: 200px;
         overflow: auto;
       }
+      .artifact-preview {
+        max-width: 240px;
+        max-height: 160px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        margin-top: 8px;
+      }
       tr.selected {
         background: linear-gradient(90deg, rgba(139, 92, 255, 0.2), rgba(25, 227, 210, 0.06));
       }
@@ -2416,6 +2423,7 @@
               ${kv("Job", `<button class="ghost" data-action="incident-job" data-job-id="${escapeHtml(attempt.jobId)}">${escapeHtml(shortId(attempt.jobId))}</button>`)}
               ${kv("Queued", `${relativeTime(attempt.queuedAt)} <span class="mono">(${escapeHtml(attempt.queuedAt || "—")})</span>`)}
               ${kv("Completed", attempt.completedAt ? `${relativeTime(attempt.completedAt)} <span class="mono">(${escapeHtml(attempt.completedAt)})</span>` : "—")}
+              ${kv("Artifacts", renderArtifactLinks(attempt.artifactIds || [], job))}
             </div>
             ${renderIncidentJobResult(job)}
           </details>
@@ -2432,6 +2440,7 @@
               ${kv("Job", `<button class="ghost" data-action="incident-job" data-job-id="${escapeHtml(verification.jobId)}">${escapeHtml(shortId(verification.jobId))}</button>`)}
               ${kv("Queued", `${relativeTime(verification.queuedAt)} <span class="mono">(${escapeHtml(verification.queuedAt || "—")})</span>`)}
               ${kv("Completed", verification.completedAt ? `${relativeTime(verification.completedAt)} <span class="mono">(${escapeHtml(verification.completedAt)})</span>` : "—")}
+              ${kv("Artifacts", renderArtifactLinks(verification.artifactIds || [], job))}
             </div>
             ${renderIncidentJobResult(job)}
           </details>
@@ -3711,6 +3720,7 @@
             <pre class="snippet">${escapeHtml(payload)}</pre>
           </details>
           ${renderWorkContextDetails("context", job.context)}
+          ${renderArtifacts(job.artifacts || [])}
           ${result ? `<details open><summary>${job.error ? "error" : "output"}</summary><pre class="snippet">${escapeHtml(JSON.stringify(result, null, 2))}</pre></details>` : ""}
           ${
             job.status === "waiting_for_approval"
@@ -3758,6 +3768,47 @@
           <summary>${escapeHtml(label)}</summary>
           <pre class="snippet">${escapeHtml(JSON.stringify(context, null, 2))}</pre>
         </details>`;
+      }
+      function renderArtifacts(artifacts) {
+        if (!artifacts.length) return "";
+        return `<details open>
+          <summary>artifacts · ${artifacts.length}</summary>
+          <div class="event-list">${artifacts.map(renderArtifact).join("")}</div>
+        </details>`;
+      }
+      function renderArtifact(artifact) {
+        const ref = artifact.storageUrl || artifact.localPath || artifact.sha256 || artifact.id;
+        const preview =
+          artifact.storageUrl && /^image\//.test(artifact.contentType || "")
+            ? `<img class="artifact-preview" alt="${escapeHtml(artifact.name)}" src="${escapeHtml(artifact.storageUrl)}" />`
+            : "";
+        const refHtml = artifact.storageUrl
+          ? `<a href="${escapeHtml(artifact.storageUrl)}" target="_blank" rel="noreferrer">${escapeHtml(artifact.storageUrl)}</a>`
+          : `<span class="mono">${escapeHtml(ref || "—")}</span>`;
+        return `<div class="event-row">
+          <div>
+            ${pill(artifact.contentType || "artifact")} <strong>${escapeHtml(artifact.name || artifact.id)}</strong>
+            <div class="meta">${artifact.sizeBytes != null ? `${escapeHtml(formatBytes(artifact.sizeBytes))} · ` : ""}${refHtml}</div>
+            ${preview}
+          </div>
+        </div>`;
+      }
+      function renderArtifactLinks(ids, job) {
+        const artifacts = (job?.artifacts || []).filter((artifact) => ids.includes(artifact.id));
+        if (!artifacts.length) return '<span class="mono">—</span>';
+        return `<div class="cap-list">${artifacts
+          .map(
+            (artifact) =>
+              `<span class="pill" title="${escapeHtml(artifact.localPath || artifact.storageUrl || artifact.sha256 || "")}">${escapeHtml(artifact.name || artifact.id)}</span>`,
+          )
+          .join("")}</div>`;
+      }
+      function formatBytes(value) {
+        const size = Number(value);
+        if (!Number.isFinite(size)) return "—";
+        if (size < 1024) return `${size} B`;
+        if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+        return `${(size / 1024 / 1024).toFixed(1)} MB`;
       }
       function renderEventFilterControls() {
         const filters = [

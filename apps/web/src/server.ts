@@ -130,6 +130,7 @@ export type IncidentAttempt = {
   queuedAt: string;
   completedAt?: string;
   status?: JobStatus;
+  artifactIds?: string[];
 };
 
 export type IncidentVerification = {
@@ -137,6 +138,7 @@ export type IncidentVerification = {
   queuedAt: string;
   completedAt?: string;
   status?: JobStatus;
+  artifactIds?: string[];
 };
 
 export type IncidentNotification = {
@@ -1560,6 +1562,7 @@ function serializeJob(job: JobRecord): Record<string, unknown> {
     ...(job.completedAt ? { completedAt: job.completedAt.toISOString() } : {}),
     eventCount: job.events.length,
     events: job.events,
+    artifacts: job.artifacts,
     ...(job.exitCode !== undefined ? { exitCode: job.exitCode } : {}),
     ...(job.output ? { output: job.output } : {}),
     ...(job.error ? { error: job.error } : {}),
@@ -2371,11 +2374,15 @@ function onJobCompleted(state: HiveServerState, job: JobRecord, now: Date): void
   if (attempt) {
     attempt.completedAt = now.toISOString();
     attempt.status = job.status;
+    if (job.artifacts.length) attempt.artifactIds = job.artifacts.map((artifact) => artifact.id);
   }
 
   if (incident.verification?.jobId === job.id) {
     incident.verification.completedAt = now.toISOString();
     incident.verification.status = job.status;
+    if (job.artifacts.length) {
+      incident.verification.artifactIds = job.artifacts.map((artifact) => artifact.id);
+    }
     incident.updatedAt = now.toISOString();
     if (job.status !== "succeeded") {
       markUnresolved(incident, now, "Post-repair verification job failed.");

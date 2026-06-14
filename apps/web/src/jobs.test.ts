@@ -126,6 +126,75 @@ describe("POST /api/bees/:beeId/jobs", () => {
     });
   });
 
+  it("normalizes artifact refs from job completion output", async () => {
+    const state = createHiveServerState();
+    await withServer({ state, adminToken: "admin-secret" }, async (baseUrl) => {
+      const { beeId } = await setupBee(state, baseUrl);
+      const create = await fetch(`${baseUrl}/api/bees/${beeId}/jobs`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer admin-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ type: "run_healthcheck", payload: {} }),
+      });
+      const created = (await create.json()) as { job: { id: string } };
+
+      const complete = await fetch(`${baseUrl}/api/jobs/${created.job.id}/complete`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "job.complete",
+          jobId: created.job.id,
+          beeId,
+          status: "succeeded",
+          completedAt: "2026-05-09T08:00:00.000Z",
+          output: {
+            artifacts: [
+              {
+                name: "screenshot.png",
+                contentType: "image/png",
+                sizeBytes: 2048,
+                storageUrl: "https://example.test/screenshot.png",
+              },
+              "/tmp/hiveplane/log.txt",
+            ],
+          },
+        }),
+      });
+      expect(complete.status).toBe(200);
+
+      const inspect = await fetch(`${baseUrl}/api/jobs/${created.job.id}`, {
+        headers: { authorization: "Bearer admin-secret" },
+      });
+      const body = (await inspect.json()) as {
+        job: {
+          artifacts: Array<{
+            name: string;
+            contentType?: string;
+            sizeBytes?: number;
+            localPath?: string;
+            storageUrl?: string;
+          }>;
+        };
+      };
+      expect(body.job.artifacts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "screenshot.png",
+            contentType: "image/png",
+            sizeBytes: 2048,
+            storageUrl: "https://example.test/screenshot.png",
+          }),
+          expect.objectContaining({
+            name: "log.txt",
+            localPath: "/tmp/hiveplane/log.txt",
+          }),
+        ]),
+      );
+    });
+  });
+
   it("lets an admin cancel a queued job", async () => {
     const state = createHiveServerState();
     await withServer({ state, adminToken: "admin-secret", authRequired: true }, async (baseUrl) => {

@@ -1217,6 +1217,65 @@ describe("Hive server", () => {
     });
   });
 
+  it("links recovery job artifacts back to incident attempts", async () => {
+    const state = createHiveServerState();
+    const job = createJob(
+      state.jobsState,
+      "bee_evidence",
+      {
+        type: "collect_bee_logs",
+        payload: { incidentId: "bee_evidence:bee_offline" },
+      },
+      new Date("2026-05-09T08:00:00.000Z"),
+    );
+    state.incidents.set("bee_evidence:bee_offline", {
+      id: "bee_evidence:bee_offline",
+      beeId: "bee_evidence",
+      kind: "bee_offline",
+      status: "recovering",
+      severity: "critical",
+      summary: "Bee is offline.",
+      detectedAt: "2026-05-09T07:59:00.000Z",
+      updatedAt: "2026-05-09T08:00:00.000Z",
+      attempts: [
+        {
+          jobId: job.id,
+          action: "collect_bee_logs",
+          queuedAt: "2026-05-09T08:00:00.000Z",
+        },
+      ],
+      notifications: [],
+    });
+
+    await withServer({ state, adminToken: "secret" }, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/jobs/${job.id}/complete`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "job.complete",
+          jobId: job.id,
+          beeId: "bee_evidence",
+          status: "failed",
+          completedAt: "2026-05-09T08:01:00.000Z",
+          error: {
+            code: "logs_failed",
+            message: "log collection failed",
+            artifacts: [{ id: "art_logs", name: "bee.log", localPath: "/tmp/bee.log" }],
+          },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(state.jobsState.jobs.get(job.id)?.artifacts).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "art_logs", name: "bee.log" })]),
+      );
+      expect(state.incidents.get("bee_evidence:bee_offline")?.attempts[0]).toMatchObject({
+        status: "failed",
+        artifactIds: ["art_logs"],
+      });
+    });
+  });
+
   it("admin can delete a stale Bee and its sessions", async () => {
     const state = createHiveServerState();
     const bee = upsertBeeHeartbeat(state, {
