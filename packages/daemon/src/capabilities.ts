@@ -11,6 +11,7 @@ export type RuntimeStatus = {
   running?: boolean;
   version?: string;
   models?: string[];
+  endpointUrl?: string;
   message?: string;
 };
 
@@ -26,7 +27,11 @@ export async function collectBeeCapabilities(
     hardware: toCapabilitiesHardware(hardware),
   };
 
-  const [openclaw, ollama] = await Promise.all([getOpenClawStatus(), getOllamaStatus()]);
+  const [openclaw, ollama, mlx] = await Promise.all([
+    getOpenClawStatus(),
+    getOllamaStatus(),
+    getMlxStatus(),
+  ]);
 
   if (openclaw.installed || openclaw.running) {
     capabilities.runtimes.push("openclaw");
@@ -36,6 +41,10 @@ export async function collectBeeCapabilities(
   if (ollama.installed || ollama.running) {
     capabilities.modelBackends.push("ollama");
     capabilities.models.push(...(ollama.models ?? []));
+  }
+
+  if (mlx.installed) {
+    capabilities.modelBackends.push("mlx");
   }
 
   if (
@@ -85,6 +94,7 @@ export async function getOllamaStatus(): Promise<RuntimeStatus> {
 
   const status: RuntimeStatus = {
     installed: Boolean(ollamaPath) || launchd.installed,
+    endpointUrl: "http://127.0.0.1:11434",
     ...(launchd.installed ? { running: launchd.running } : {}),
   };
 
@@ -105,6 +115,22 @@ export async function getOllamaStatus(): Promise<RuntimeStatus> {
   status.models = list.models;
   if (list.message) status.message = list.message;
   return status;
+}
+
+export async function getMlxStatus(): Promise<RuntimeStatus> {
+  const pythonPath = findExecutable([
+    "/opt/homebrew/bin/python3",
+    "/usr/local/bin/python3",
+    "/usr/bin/python3",
+  ]);
+  if (!pythonPath) return { installed: false, message: "python3 not found for MLX probe" };
+
+  try {
+    await runCommand(pythonPath, ["-c", "import mlx_lm"], 5_000);
+    return { installed: true, message: "mlx_lm import succeeded" };
+  } catch (error) {
+    return { installed: false, message: shortError(error) };
+  }
 }
 
 export async function listOllamaModels(): Promise<{ models: string[]; message?: string }> {
@@ -130,8 +156,13 @@ export function runtimeStatusToJson(status: RuntimeStatus): Record<string, JsonV
     ...(status.running !== undefined ? { running: status.running } : {}),
     ...(status.version ? { version: status.version } : {}),
     ...(status.models ? { models: status.models } : {}),
+    ...(status.endpointUrl ? { endpointUrl: status.endpointUrl } : {}),
     ...(status.message ? { message: status.message } : {}),
   };
+}
+
+export function findOllamaExecutable(): string | undefined {
+  return findExecutable(["/opt/homebrew/bin/ollama", "/usr/local/bin/ollama"]);
 }
 
 function findExecutable(paths: string[]): string | undefined {

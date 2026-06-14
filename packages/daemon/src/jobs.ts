@@ -13,6 +13,7 @@ import {
 import {
   getOllamaStatus,
   getOpenClawStatus,
+  findOllamaExecutable,
   listOllamaModels,
   runtimeStatusToJson,
 } from "./capabilities.js";
@@ -38,6 +39,8 @@ export type JobExecutorOptions = {
   spawnImpl?: typeof spawn;
   /** Override for tests. Production resolves the local OpenClaw binary from fixed paths. */
   openclawPathOverride?: string;
+  /** Override for tests. Production resolves the local Ollama binary from fixed paths. */
+  ollamaPathOverride?: string;
   scheduleRestart?: boolean;
 };
 
@@ -114,6 +117,9 @@ export class JobExecutor {
           break;
         case "install_runtime":
           outcome = await this.runInstallRuntime(job, signal);
+          break;
+        case "configure_model":
+          outcome = await this.runConfigureModel(job, signal);
           break;
         case "agent_task":
           outcome = await this.runAgentTask(job, signal);
@@ -215,6 +221,75 @@ export class JobExecutor {
           stderr: stderrChunks.join(""),
         };
         if (ok) {
+          resolve({ status: "succeeded", output: summary as Record<string, JsonValue> });
+        } else if (exitSignal && signal?.aborted) {
+          resolve(cancelledOutcome(job, exitSignal));
+        } else {
+          resolve({
+            status: "failed",
+            error: {
+              code: exitSignal ? "process_signalled" : "non_zero_exit",
+              message: `exit code ${exitCode}${exitSignal ? ` (signal ${exitSignal})` : ""}`,
+              ...summary,
+            } as Record<string, JsonValue>,
+          });
+        }
+      });
+    });
+  }
+
+  private async runStreamingProcess(
+    job: Job,
+    command: string,
+    args: string[],
+    signal: AbortSignal | undefined,
+    eventTypes: { stdout: string; stderr: string },
+  ): Promise<Extract<JobOutcome, { status: "succeeded" | "failed" | "cancelled" }>> {
+    const child = this.spawnImpl(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    });
+    const cleanupCancellation = attachChildCancellation(child, signal);
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+    const pendingEventPosts: Promise<void>[] = [];
+    const queueEvent = (
+      level: JobEvent["level"],
+      type: string,
+      data: Record<string, JsonValue>,
+    ) => {
+      pendingEventPosts.push(this.emit(job, level, type, data));
+    };
+
+    child.stdout?.on("data", (data: Buffer) => {
+      const text = data.toString("utf8");
+      stdoutChunks.push(text);
+      queueEvent("debug", eventTypes.stdout, { text });
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      const text = data.toString("utf8");
+      stderrChunks.push(text);
+      queueEvent("debug", eventTypes.stderr, { text });
+    });
+
+    return await new Promise((resolve) => {
+      child.once("error", (err) => {
+        cleanupCancellation();
+        resolve({
+          status: "failed",
+          error: { code: "spawn_error", message: err.message },
+        });
+      });
+      child.once("close", async (exitCode, exitSignal) => {
+        cleanupCancellation();
+        await Promise.allSettled(pendingEventPosts);
+        const summary = {
+          exitCode: exitCode ?? -1,
+          signal: exitSignal ?? null,
+          stdout: stdoutChunks.join(""),
+          stderr: stderrChunks.join(""),
+        };
+        if (exitCode === 0) {
           resolve({ status: "succeeded", output: summary as Record<string, JsonValue> });
         } else if (exitSignal && signal?.aborted) {
           resolve(cancelledOutcome(job, exitSignal));
@@ -346,6 +421,52 @@ export class JobExecutor {
     });
 
     return result;
+  }
+
+  private async runConfigureModel(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
+    const backend = typeof job.payload.backend === "string" ? job.payload.backend : "ollama";
+    const model = typeof job.payload.model === "string" ? job.payload.model.trim() : "";
+    if (!model) {
+      return {
+        status: "failed",
+        error: { code: "missing_model", message: "configure_model requires payload.model" },
+      };
+    }
+    if (backend !== "ollama") {
+      return {
+        status: "failed",
+        error: {
+          code: "unsupported_model_backend",
+          message: `configure_model does not support backend '${backend}' yet`,
+        },
+      };
+    }
+
+    const ollamaPath = this.options.ollamaPathOverride ?? findOllamaExecutable();
+    if (!ollamaPath) {
+      await this.emit(job, "error", "ollama.pull.missing", { model });
+      return {
+        status: "failed",
+        error: { code: "ollama_not_found", message: "ollama CLI not found on this Bee" },
+      };
+    }
+
+    await this.emit(job, "info", "ollama.pull.start", { model });
+    const result = await this.runStreamingProcess(job, ollamaPath, ["pull", model], signal, {
+      stdout: "ollama.pull.stdout",
+      stderr: "ollama.pull.stderr",
+    });
+    if (result.status !== "succeeded") return result;
+    await this.emit(job, "info", "ollama.pull.complete", { model });
+    return {
+      status: "succeeded",
+      output: {
+        backend: "ollama",
+        model,
+        endpointUrl: "http://127.0.0.1:11434",
+        ...(result.output ?? {}),
+      },
+    };
   }
 
   private async runAgentTask(job: Job, signal?: AbortSignal): Promise<JobOutcome> {

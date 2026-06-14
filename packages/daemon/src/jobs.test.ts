@@ -649,6 +649,63 @@ describe("JobExecutor", () => {
     expect(Array.isArray(body.output.models)).toBe(true);
   });
 
+  it("configure_model pulls Ollama models with progress events", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const spawnImpl = makeSpawn({
+      stdoutChunks: ["pulling manifest\n", "success\n"],
+      exitCode: 0,
+    }) as unknown as typeof import("node:child_process").spawn;
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      daemonVersion: "0.0.1-test",
+      policy: {
+        runCommand: { allow: [], unsafeAllowAll: false },
+        jobs: { allow: ["configure_model"] },
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl,
+      ollamaPathOverride: "/usr/local/bin/ollama",
+    });
+
+    await executor.execute(
+      makeJob({
+        type: "configure_model",
+        payload: { backend: "ollama", model: "qwen2.5-coder:7b" },
+      }),
+    );
+
+    expect(spawnImpl).toHaveBeenCalledWith(
+      "/usr/local/bin/ollama",
+      ["pull", "qwen2.5-coder:7b"],
+      expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+    );
+    const eventBodies = fetchImpl.mock.calls
+      .map((call) => {
+        const [, init] = call as unknown as [URL, RequestInit];
+        return JSON.parse(Buffer.from(init.body as Uint8Array).toString("utf8"));
+      })
+      .filter((body) => Array.isArray(body.events));
+    expect(JSON.stringify(eventBodies)).toContain("ollama.pull.stdout");
+
+    const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
+    expect(body.status).toBe("succeeded");
+    expect(body.output).toMatchObject({
+      backend: "ollama",
+      model: "qwen2.5-coder:7b",
+      endpointUrl: "http://127.0.0.1:11434",
+    });
+    expect(body.output.stdout).toContain("success");
+  });
+
   it("update_bee fetches, hard-resets stale checkouts, and installs deps before completing", async () => {
     const identity = await makeIdentity();
     const session = makeSession();
