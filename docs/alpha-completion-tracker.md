@@ -103,6 +103,22 @@ Still left in this area:
 - extend scoped checks to more mutation surfaces such as recovery jobs, profile edits, automations, and incident/audit reads;
 - add polish around roles so non-admin operators see only the controls they can actually use.
 
+### 2026-06-14 — Hive Approval Marker
+
+Shipped a #32 enforcement fix:
+
+- Hive approval now stamps `payload.hiveApproval` with `approvedAt` and `approvedBy`;
+- Bee local policy treats approval-required job types as allowed only when that Hive approval marker is present;
+- explicit local policy denies still win.
+
+Live approval dogfood:
+
+- removed `openclaw_subagent_configure/delete` from the live Chris Mac mini Bee's local job allowlist;
+- reconciled sub-agent `subagent_3e4d123a0562324a`;
+- Hive queued job `job_a230ed29fee98c71` as `waiting_for_approval`;
+- approval response included `hiveApproval` with `approvedBy=admin-token`;
+- Bee accepted and completed the job successfully because local policy recognized the Hive approval marker.
+
 ### 2026-06-14 — Ollama Backend Adapter
 
 Shipped the first #39 implementation:
