@@ -2289,7 +2289,7 @@
                 <th>Kind</th>
                 <th>Summary</th>
                 <th>Next action</th>
-                <th>Attempts</th>
+                <th>Recovery</th>
                 <th>Alerts</th>
                 <th>Updated</th>
               </tr>
@@ -2308,7 +2308,7 @@
                         <div class="meta">${escapeHtml(incident.lastDiagnosis || "")}</div>
                       </td>
                       <td><span class="mono">${escapeHtml(incident.nextAction || "—")}</span></td>
-                      <td>${escapeHtml(incident.attempts?.length ?? 0)}</td>
+                      <td>${renderIncidentRecoveryJobs(incident)}</td>
                       <td>${renderIncidentNotifications(incident.notifications || [])}</td>
                       <td title="${escapeHtml(incident.updatedAt || "")}">${relativeTime(incident.updatedAt)}</td>
                     </tr>
@@ -2317,6 +2317,31 @@
                 .join("")}
             </tbody>
           </table>`;
+        els.incidentsBody.querySelectorAll("[data-action='incident-job']").forEach((button) => {
+          button.addEventListener("click", () => {
+            state.selectedJobId = button.dataset.jobId;
+            state.selectedJob = null;
+            showJobsTab();
+            refreshJobs();
+          });
+        });
+      }
+
+      function renderIncidentRecoveryJobs(incident) {
+        const attempts = incident.attempts || [];
+        const verification = incident.verification;
+        const parts = attempts.map(
+          (attempt) =>
+            `<button class="ghost" data-action="incident-job" data-job-id="${escapeHtml(attempt.jobId)}" title="${escapeHtml(attempt.action || "repair")} · ${escapeHtml(attempt.queuedAt || "")}">${escapeHtml(attempt.action || "repair")}</button>`,
+        );
+        if (verification?.jobId) {
+          parts.push(
+            `<button class="ghost" data-action="incident-job" data-job-id="${escapeHtml(verification.jobId)}" title="verification · ${escapeHtml(verification.completedAt || verification.queuedAt || "")}">Verify ${escapeHtml(verification.status || "queued")}</button>`,
+          );
+        }
+        return parts.length
+          ? `<div class="actions">${parts.join("")}</div>`
+          : '<span class="mono">—</span>';
       }
 
       function renderIncidentNotifications(notifications) {
