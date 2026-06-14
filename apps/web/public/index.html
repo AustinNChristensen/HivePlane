@@ -148,6 +148,37 @@
         color: var(--muted);
         font-weight: 400;
       }
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 8px;
+      }
+      .segmented {
+        display: inline-flex;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        overflow: hidden;
+        background: var(--panel-2);
+      }
+      .segmented button {
+        border: 0;
+        border-right: 1px solid var(--border);
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 12px;
+        padding: 5px 9px;
+      }
+      .segmented button:last-child {
+        border-right: 0;
+      }
+      .segmented button.active {
+        background: var(--accent-soft);
+        color: var(--text);
+      }
       .meta {
         color: var(--muted);
         font-size: 12px;
@@ -743,6 +774,7 @@
         selectedTask: null,
         selectedTaskJob: null,
         selectedJob: null,
+        eventFilter: "signal",
       };
 
       const els = {
@@ -1897,6 +1929,7 @@
         root.querySelector("[data-action='cancel-task']")?.addEventListener("click", (event) => {
           cancelTask(event.currentTarget.dataset.taskId, event.currentTarget);
         });
+        bindJobDetailActions(root);
       }
 
       async function retryTask(taskId, button) {
@@ -2120,6 +2153,7 @@
         const events = [...(job.events || [])].sort(
           (a, b) => (a.sequence ?? 0) - (b.sequence ?? 0),
         );
+        const filteredEvents = filterJobEvents(events);
         const payload = JSON.stringify(job.payload || {}, null, 2);
         const result = job.error || job.output;
         return `
@@ -2154,14 +2188,39 @@
               : ""
           }
           <div>
-            <div class="meta">Event stream</div>
+            <div class="toolbar">
+              <div class="meta">Event stream · ${filteredEvents.length}/${events.length}</div>
+              ${renderEventFilterControls()}
+            </div>
             ${
-              events.length
-                ? `<div class="event-list">${events.map(renderJobEvent).join("")}</div>`
-                : `<div class="empty">No events yet. The Bee should pick this up on its next heartbeat.</div>`
+              filteredEvents.length
+                ? `<div class="event-list">${filteredEvents.map(renderJobEvent).join("")}</div>`
+                : events.length
+                  ? `<div class="empty">No ${escapeHtml(state.eventFilter)} events match this view.</div>`
+                  : `<div class="empty">No events yet. The Bee should pick this up on its next heartbeat.</div>`
             }
           </div>
         `;
+      }
+      function renderEventFilterControls() {
+        const filters = [
+          ["signal", "Signal"],
+          ["noisy", "Noisy"],
+          ["all", "All"],
+        ];
+        return `<div class="segmented" role="group" aria-label="Event filter">
+          ${filters
+            .map(
+              ([value, label]) =>
+                `<button data-action="event-filter" data-filter="${value}" class="${state.eventFilter === value ? "active" : ""}">${label}</button>`,
+            )
+            .join("")}
+        </div>`;
+      }
+      function filterJobEvents(events) {
+        if (state.eventFilter === "all") return events;
+        if (state.eventFilter === "noisy") return events.filter(jobEventIsNoisy);
+        return events.filter((event) => !jobEventIsNoisy(event) || jobEventIsImportant(event));
       }
       function bindJobDetailActions(root) {
         root.querySelector("[data-action='approve-job']")?.addEventListener("click", (event) => {
@@ -2175,6 +2234,13 @@
         });
         root.querySelector("[data-action='retry-job']")?.addEventListener("click", (event) => {
           retryJob(event.currentTarget.dataset.jobId, event.currentTarget);
+        });
+        root.querySelectorAll("[data-action='event-filter']").forEach((button) => {
+          button.addEventListener("click", () => {
+            state.eventFilter = button.dataset.filter || "signal";
+            if (state.activeTab === "tasks") renderTasks(state.tasks);
+            else renderJobs(state.jobs);
+          });
         });
       }
       function renderInlineJobError(message) {
@@ -2255,11 +2321,8 @@
           body = JSON.stringify(event.data || {}, null, 2);
         }
         const eventType = String(event.type || "");
-        const noisy = /(?:stdout|stderr)$/.test(eventType) || event.level === "debug";
-        const important =
-          event.level === "error" ||
-          /(?:complete|failed|cancel|cancelled|error|status|final|start)$/.test(eventType) ||
-          eventType.includes("missing");
+        const noisy = jobEventIsNoisy(event);
+        const important = jobEventIsImportant(event);
         const bodyId = `copy_${Math.random().toString(36).slice(2)}`;
         const label = `#${escapeHtml(event.sequence ?? "—")} · ${escapeHtml(eventType)} · ${escapeHtml(event.level)}`;
         const content = `<div class="event-body-row">
@@ -2286,6 +2349,18 @@
             ${content}
           </div>
         `;
+      }
+      function jobEventIsNoisy(event) {
+        const eventType = String(event.type || "");
+        return /(?:stdout|stderr)$/.test(eventType) || event.level === "debug";
+      }
+      function jobEventIsImportant(event) {
+        const eventType = String(event.type || "");
+        return (
+          event.level === "error" ||
+          /(?:complete|failed|cancel|cancelled|error|status|final|start)$/.test(eventType) ||
+          eventType.includes("missing")
+        );
       }
 
       document.addEventListener("click", (event) => {
