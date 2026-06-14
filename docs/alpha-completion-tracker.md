@@ -48,6 +48,7 @@ Keep iterating until every item below is either shipped and verified on `main`, 
 8. **Fresh-machine demo hardening**
    - Goal: run the full 10-minute script from a totally fresh non-Chris machine and turn every rough edge into issues or fixes.
    - Acceptance signal: a fresh alpha tester can install, pair, route, inspect, cancel/retry, recover, and understand the audit trail without Chris-specific setup.
+   - Status: executable pass script added on 2026-06-14 in `docs/fresh-machine-demo-pass.md`. True end-to-end proof is blocked until there is a reachable fresh non-Chris SSH host; current live Bees are healthy, but Austin MBP is already paired and does not prove first onboarding.
 
 ## Working Order
 
@@ -246,3 +247,32 @@ Verification:
 - manual dry-run JSON smoke passed for `hive node provision ssh austin@example --hive-url http://hive.tailnet.test:4483 --profile server-worker --dry-run --json`.
 
 Fresh-machine pass still needs a real non-Chris reachable host to prove end-to-end network/prerequisite assumptions, then file/fix any rough edges found there.
+
+### 2026-06-14 — Fresh-Machine Demo Pass Setup
+
+Added `docs/fresh-machine-demo-pass.md` as the executable alpha onboarding checklist:
+
+- host prerequisites;
+- exact SSH healthcheck command;
+- exact SSH provision command;
+- dashboard verification steps;
+- first healthcheck job;
+- demo routed agent task;
+- cancel/retry/audit check;
+- safe Rescue recovery step;
+- rough-edge capture rule.
+
+Current status:
+
+- live Hive is healthy;
+- Chris Mac mini Bee is online/healthy with Rescue online;
+- Austin MBP Bee is online/healthy with Rescue online;
+- Tailscale did not return a node list from this Hive box;
+- Austin MBP is already paired, so it cannot prove fresh onboarding;
+- true fresh-host proof is blocked until a clean reachable host is available.
+
+Pre-real-host rough edges already identified:
+
+- `--hive-url` needs to be an actually routable Tailnet/LAN URL; config discovery is useful but not magic;
+- the SSH healthcheck now catches missing Node 20/git/curl up front, but HivePlane still does not install Node itself;
+- provisioning is CLI-only; a dashboard wizard remains future polish.
