@@ -48,7 +48,7 @@ Keep iterating until every item below is either shipped and verified on `main`, 
 8. **Fresh-machine demo hardening**
    - Goal: run the full 10-minute script from a totally fresh non-Chris machine and turn every rough edge into issues or fixes.
    - Acceptance signal: a fresh alpha tester can install, pair, route, inspect, cancel/retry, recover, and understand the audit trail without Chris-specific setup.
-   - Status: executable pass script added on 2026-06-14 in `docs/fresh-machine-demo-pass.md`. True end-to-end proof is blocked until there is a reachable fresh non-Chris SSH host; current live Bees are healthy, but Austin MBP is already paired and does not prove first onboarding.
+   - Status: executable pass script added on 2026-06-14 in `docs/fresh-machine-demo-pass.md`. True end-to-end proof is tracked by #80 and blocked until there is a reachable fresh non-Chris SSH host; current live Bees are healthy, but Austin MBP is already paired and does not prove first onboarding.
 
 ## Working Order
 
@@ -269,7 +269,7 @@ Current status:
 - Austin MBP Bee is online/healthy with Rescue online;
 - Tailscale did not return a node list from this Hive box;
 - Austin MBP is already paired, so it cannot prove fresh onboarding;
-- true fresh-host proof is blocked until a clean reachable host is available.
+- true fresh-host proof is tracked by #80 and blocked until a clean reachable host is available.
 
 Pre-real-host rough edges already identified:
 
