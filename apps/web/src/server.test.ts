@@ -494,11 +494,48 @@ describe("Hive server", () => {
 
         expect(response.status).toBe(200);
         const body = (await response.json()) as {
-          task: { status: string; lastError: string };
+          task: { id: string; status: string; lastError: string };
         };
         expect(body.task).toMatchObject({
           status: "blocked",
           lastError: "No healthy Bee currently matches the task requirements.",
+        });
+
+        upsertBeeHeartbeat(state, {
+          type: "bee.heartbeat",
+          beeId: "bee_model",
+          timestamp: "2026-05-09T08:00:10.000Z",
+          daemonVersion: "0.0.7",
+          status: "online",
+          activeJobs: 0,
+          capabilities: {
+            runtimes: ["openclaw"],
+            modelBackends: ["ollama"],
+            models: ["gemma4:12b"],
+            tools: ["filesystem"],
+            networking: [],
+            hardware: {
+              platform: "darwin-arm64",
+              hostname: "bee-model",
+              cpuCores: 10,
+              memoryGb: 32,
+            },
+          },
+          healthChecks: [],
+        });
+
+        const retryResponse = await fetch(`${baseUrl}/api/tasks/${body.task.id}/retry`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret" },
+        });
+        expect(retryResponse.status).toBe(200);
+        const retryBody = (await retryResponse.json()) as {
+          task: { status: string; assignedBeeId: string; jobId: string };
+        };
+        expect(retryBody.task).toMatchObject({
+          status: "assigned",
+          assignedBeeId: "bee_model",
+          jobId: expect.stringMatching(/^job_/),
         });
       },
     );

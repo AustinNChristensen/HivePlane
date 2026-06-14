@@ -1746,6 +1746,7 @@
             refreshSelectedTask();
           });
         });
+        bindTaskDetailActions(els.tasksBody);
       }
 
       async function refreshSelectedTask() {
@@ -1809,6 +1810,11 @@
               : ""
           }
           ${
+            ["blocked", "failed", "succeeded"].includes(task.status)
+              ? `<div class="actions"><button class="action" data-action="retry-task" data-task-id="${escapeHtml(task.id)}">Retry</button></div>`
+              : ""
+          }
+          ${
             job
               ? `<details ${job.status === "running" ? "open" : ""}>
                   <summary>backing job · ${escapeHtml(shortId(job.id))} · ${escapeHtml(job.status)}</summary>
@@ -1830,6 +1836,40 @@
         }
         if (typeof result.message === "string" && result.message.trim()) return result.message;
         return "";
+      }
+
+      function bindTaskDetailActions(root) {
+        root.querySelector("[data-action='retry-task']")?.addEventListener("click", (event) => {
+          retryTask(event.currentTarget.dataset.taskId, event.currentTarget);
+        });
+      }
+
+      async function retryTask(taskId, button) {
+        if (!state.adminToken || !taskId) return;
+        button.disabled = true;
+        try {
+          const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/retry`, {
+            method: "POST",
+            headers: authHeaders(),
+          });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            renderInlineTaskError("Admin token rejected. The stale saved token was cleared.");
+            return;
+          }
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.reason || body.message || `HTTP ${res.status}`);
+          state.selectedTaskId = body.task?.id || taskId;
+          state.selectedTask = null;
+          state.selectedTaskJob = null;
+          els.tasksMeta.textContent =
+            body.task?.status === "blocked" ? body.task.lastError : "task retried";
+          await refreshTasks();
+        } catch (err) {
+          renderInlineTaskError(`Retry failed: ${err.message}`);
+        } finally {
+          button.disabled = false;
+        }
       }
 
       function renderInlineTaskError(message) {

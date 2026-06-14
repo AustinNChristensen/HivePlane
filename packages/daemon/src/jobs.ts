@@ -348,12 +348,12 @@ export class JobExecutor {
       pendingEventPosts.push(this.emit(job, level, type, data));
 
     child.stdout?.on("data", (data: Buffer) => {
-      const text = data.toString("utf8");
+      const text = sanitizeProcessText(data.toString("utf8"));
       stdoutChunks.push(text);
       queueEvent("debug", "agent_task.openclaw.stdout", { text });
     });
     child.stderr?.on("data", (data: Buffer) => {
-      const text = data.toString("utf8");
+      const text = sanitizeProcessText(data.toString("utf8"));
       stderrChunks.push(text);
       queueEvent("debug", "agent_task.openclaw.stderr", { text });
     });
@@ -665,8 +665,15 @@ function readObject(value: JsonValue | undefined): Record<string, JsonValue> | u
 }
 
 function truncateText(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength)}\n...[truncated ${value.length - maxLength} chars]`;
+  const sanitized = sanitizeProcessText(value);
+  if (sanitized.length <= maxLength) return sanitized;
+  return `${sanitized.slice(0, maxLength)}\n...[truncated ${sanitized.length - maxLength} chars]`;
+}
+
+function sanitizeProcessText(value: string): string {
+  return value
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
 
 function findExecutable(paths: string[]): string | undefined {

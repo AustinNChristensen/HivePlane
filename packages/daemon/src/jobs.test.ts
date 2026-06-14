@@ -300,6 +300,7 @@ describe("JobExecutor", () => {
           },
         }) + "\n",
       ],
+      stderrChunks: ["\u001b[?25lprogress\u0000\n"],
       exitCode: 0,
     }) as unknown as typeof import("node:child_process").spawn;
 
@@ -368,6 +369,24 @@ describe("JobExecutor", () => {
     });
     expect(body.output.result.agent.verboseInternalBlob).toBeUndefined();
     expect(body.output.result.systemPromptReport).toBeUndefined();
+    expect(body.output.stderr).toBe("progress\n");
+    const eventBodies = (fetchImpl.mock.calls as unknown as Array<[URL, RequestInit]>)
+      .map((call) => JSON.parse(Buffer.from(call[1].body as Uint8Array).toString("utf8")))
+      .filter((payload) => payload.type === "job.events.append");
+    expect(JSON.stringify(eventBodies)).not.toContain("\u001b");
+    expect(JSON.stringify(eventBodies)).not.toContain("\u0000");
+    expect(eventBodies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          events: expect.arrayContaining([
+            expect.objectContaining({
+              type: "agent_task.openclaw.stderr",
+              data: { text: "progress\n" },
+            }),
+          ]),
+        }),
+      ]),
+    );
   });
 
   it("openclaw_status completes through the adapter path", async () => {

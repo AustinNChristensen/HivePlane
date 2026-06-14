@@ -851,6 +851,29 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         });
       }
 
+      const retryTaskMatch = /^\/api\/tasks\/([^/]+)\/retry$/.exec(url.pathname);
+      if (request.method === "POST" && retryTaskMatch) {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const taskId = decodeURIComponent(retryTaskMatch[1] ?? "");
+        const task = state.tasks.get(taskId);
+        if (!task) return sendJson(response, 404, { error: "not_found" });
+        if (task.status === "assigned" || task.status === "running" || task.status === "queued") {
+          return sendJson(response, 409, {
+            error: "task_not_retryable",
+            reason: `Task is currently ${task.status}.`,
+          });
+        }
+        const current = now();
+        task.status = "queued";
+        task.updatedAt = current.toISOString();
+        delete task.assignedBeeId;
+        delete task.jobId;
+        delete task.lastError;
+        scheduleHiveTask(state, task, current);
+        markDirty();
+        return sendJson(response, 200, { task: serializeTask(task) });
+      }
+
       if (request.method === "POST" && url.pathname === "/api/tasks") {
         if (!checkAdmin(request, response, adminToken)) return;
         const { body } = await readJson(request);
