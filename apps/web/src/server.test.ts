@@ -633,6 +633,17 @@ describe("Hive server", () => {
           status: "assigned",
           assignedBeeId: "bee_agent",
         });
+
+        const visibleTasks = await fetch(`${baseUrl}/api/tasks`, {
+          headers: { authorization: `Bearer ${operatorBody.token}` },
+        });
+        expect(visibleTasks.status).toBe(200);
+        const visibleTasksBody = (await visibleTasks.json()) as {
+          tasks: Array<{ id: string; targetSystemId: string }>;
+        };
+        expect(visibleTasksBody.tasks).toEqual(
+          expect.arrayContaining([expect.objectContaining({ targetSystemId: "finance" })]),
+        );
       },
     );
   });

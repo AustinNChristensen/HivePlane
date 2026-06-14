@@ -804,6 +804,26 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         });
       }
 
+      if (request.method === "GET" && url.pathname === "/api/operators") {
+        const actor = requireOperatorOrSend(request, response, state, adminToken, {
+          minRole: "admin",
+        });
+        if (!actor) return;
+        return sendJson(response, 200, {
+          operators: [...state.operators.values()].map(redactOperator),
+        });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/system-permissions") {
+        const actor = requireOperatorOrSend(request, response, state, adminToken, {
+          minRole: "admin",
+        });
+        if (!actor) return;
+        return sendJson(response, 200, {
+          grants: [...state.userSystemPermissions.values()],
+        });
+      }
+
       if (request.method === "POST" && url.pathname === "/api/system-permissions") {
         const actor = requireOperatorOrSend(request, response, state, adminToken, {
           minRole: "admin",
@@ -833,6 +853,16 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         });
         markDirty();
         return sendJson(response, 200, { grants });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/bee-system-access") {
+        const actor = requireOperatorOrSend(request, response, state, adminToken, {
+          minRole: "admin",
+        });
+        if (!actor) return;
+        return sendJson(response, 200, {
+          grants: [...state.beeSystemAccess.values()],
+        });
       }
 
       if (request.method === "POST" && url.pathname === "/api/bee-system-access") {
@@ -1289,24 +1319,38 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
       // GET /api/jobs/:jobId — admin-gated inspection.
       const getJobMatch = /^\/api\/jobs\/([^/]+)$/.exec(url.pathname);
       if (request.method === "GET" && getJobMatch) {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
         const jobId = decodeURIComponent(getJobMatch[1] ?? "");
         const job = findJob(state.jobsState, jobId);
         if (!job) return sendJson(response, 404, { error: "not_found" });
+        if (
+          !requireSystemPermissionOrSend(response, state, actor, jobTargetSystemId(job), "view")
+        ) {
+          return;
+        }
         return sendJson(response, 200, { job: serializeJob(job) });
       }
 
       // GET /api/jobs?beeId=… — admin list.
       if (request.method === "GET" && url.pathname === "/api/jobs") {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
         const beeId = url.searchParams.get("beeId") ?? undefined;
-        const jobs = listJobs(state.jobsState, beeId ? { beeId } : undefined).map(serializeJob);
+        const jobs = listJobs(state.jobsState, beeId ? { beeId } : undefined)
+          .filter((job) => hasSystemPermission(state, actor, jobTargetSystemId(job), "view"))
+          .map(serializeJob);
         return sendJson(response, 200, { jobs });
       }
 
       if (request.method === "GET" && url.pathname === "/api/tasks") {
-        if (!checkAdmin(request, response, adminToken)) return;
-        return sendJson(response, 200, { tasks: serializeTasks(state) });
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
+        return sendJson(response, 200, {
+          tasks: serializeTasks(state).filter((task) =>
+            hasSystemPermission(state, actor, task.targetSystemId || "public", "view"),
+          ),
+        });
       }
 
       if (request.method === "GET" && url.pathname === "/api/automations") {
@@ -1395,10 +1439,22 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
 
       const getTaskMatch = /^\/api\/tasks\/([^/]+)$/.exec(url.pathname);
       if (request.method === "GET" && getTaskMatch) {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
         const taskId = decodeURIComponent(getTaskMatch[1] ?? "");
         const task = state.tasks.get(taskId);
         if (!task) return sendJson(response, 404, { error: "not_found" });
+        if (
+          !requireSystemPermissionOrSend(
+            response,
+            state,
+            actor,
+            task.targetSystemId || "public",
+            "view",
+          )
+        ) {
+          return;
+        }
         const job = task.jobId ? findJob(state.jobsState, task.jobId) : null;
         return sendJson(response, 200, {
           task: serializeTask(task),

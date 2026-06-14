@@ -1513,6 +1513,9 @@
           <button class="tab" data-tab="activity">
             <span><span class="nav-icon">A</span> Activity</span>
           </button>
+          <button class="tab" data-tab="permissions">
+            <span><span class="nav-icon">P</span> Permissions</span>
+          </button>
           <button class="tab" data-tab="tokens">
             <span><span class="nav-icon">T</span> Tokens</span>
           </button>
@@ -1622,6 +1625,12 @@
                   </select>
                 </div>
                 <div class="form-field">
+                  <label for="taskTargetSystem">System</label>
+                  <select id="taskTargetSystem">
+                    <option value="public">Public Demo</option>
+                  </select>
+                </div>
+                <div class="form-field">
                   <label for="taskRuntime">Runtime</label>
                   <select id="taskRuntime">
                     <option value="">Any runtime</option>
@@ -1702,6 +1711,78 @@
             </div>
           </section>
 
+          <section data-view="permissions" hidden>
+            <div class="panel">
+              <div class="panel-header">
+                <span>Operators & Systems</span>
+                <span class="meta" id="permissionsMeta">—</span>
+              </div>
+              <div class="form-row">
+                <div class="form-field">
+                  <label for="operatorEmail">Email</label>
+                  <input id="operatorEmail" placeholder="operator@example.com" />
+                </div>
+                <div class="form-field">
+                  <label for="operatorName">Name</label>
+                  <input id="operatorName" placeholder="optional" />
+                </div>
+                <div class="form-field">
+                  <label for="operatorRole">Role</label>
+                  <select id="operatorRole">
+                    <option value="operator">operator</option>
+                    <option value="developer">developer</option>
+                    <option value="viewer">viewer</option>
+                    <option value="admin">admin</option>
+                    <option value="owner">owner</option>
+                  </select>
+                </div>
+                <button class="action" id="createOperator">Create Operator</button>
+              </div>
+              <div id="operatorTokenResult"></div>
+              <div class="form-row">
+                <div class="form-field">
+                  <label for="permissionUser">Operator</label>
+                  <select id="permissionUser"></select>
+                </div>
+                <div class="form-field">
+                  <label for="permissionSystem">System</label>
+                  <select id="permissionSystem"></select>
+                </div>
+                <div class="form-field">
+                  <label for="permissionGrant">Permissions</label>
+                  <select id="permissionGrant" multiple size="5">
+                    <option value="view">view</option>
+                    <option value="run">run</option>
+                    <option value="approve">approve</option>
+                    <option value="admin">admin</option>
+                    <option value="audit">audit</option>
+                  </select>
+                </div>
+                <button class="action" id="grantPermission">Grant Permissions</button>
+              </div>
+              <div class="form-row">
+                <div class="form-field">
+                  <label for="beeAccessBee">Bee</label>
+                  <select id="beeAccessBee"></select>
+                </div>
+                <div class="form-field">
+                  <label for="beeAccessSystem">System</label>
+                  <select id="beeAccessSystem"></select>
+                </div>
+                <div class="form-field">
+                  <label for="beeAccessMode">Access</label>
+                  <select id="beeAccessMode">
+                    <option value="limited">limited</option>
+                    <option value="universal">universal</option>
+                    <option value="none">none</option>
+                  </select>
+                </div>
+                <button class="action" id="grantBeeAccess">Grant Bee Access</button>
+              </div>
+              <div id="permissionsBody"></div>
+            </div>
+          </section>
+
           <section data-view="tokens" hidden>
             <div class="panel">
               <div class="panel-header">
@@ -1758,6 +1839,10 @@
         tasks: [],
         automations: [],
         auditLog: [],
+        systems: [],
+        operators: [],
+        userSystemGrants: [],
+        beeSystemGrants: [],
         selectedTask: null,
         selectedTaskJob: null,
         selectedJob: null,
@@ -1790,11 +1875,27 @@
         jobsBody: document.getElementById("jobsBody"),
         activityMeta: document.getElementById("activityMeta"),
         activityBody: document.getElementById("activityBody"),
+        permissionsMeta: document.getElementById("permissionsMeta"),
+        permissionsBody: document.getElementById("permissionsBody"),
+        operatorEmail: document.getElementById("operatorEmail"),
+        operatorName: document.getElementById("operatorName"),
+        operatorRole: document.getElementById("operatorRole"),
+        createOperator: document.getElementById("createOperator"),
+        operatorTokenResult: document.getElementById("operatorTokenResult"),
+        permissionUser: document.getElementById("permissionUser"),
+        permissionSystem: document.getElementById("permissionSystem"),
+        permissionGrant: document.getElementById("permissionGrant"),
+        grantPermission: document.getElementById("grantPermission"),
+        beeAccessBee: document.getElementById("beeAccessBee"),
+        beeAccessSystem: document.getElementById("beeAccessSystem"),
+        beeAccessMode: document.getElementById("beeAccessMode"),
+        grantBeeAccess: document.getElementById("grantBeeAccess"),
         tasksMeta: document.getElementById("tasksMeta"),
         tasksBody: document.getElementById("tasksBody"),
         automationsBody: document.getElementById("automationsBody"),
         taskTitle: document.getElementById("taskTitle"),
         taskPreferredBee: document.getElementById("taskPreferredBee"),
+        taskTargetSystem: document.getElementById("taskTargetSystem"),
         taskBeeHint: document.getElementById("taskBeeHint"),
         taskRoutePreview: document.getElementById("taskRoutePreview"),
         taskRuntime: document.getElementById("taskRuntime"),
@@ -1857,6 +1958,7 @@
           tasks: "dispatch",
           jobs: "jobs",
           activity: "activity",
+          permissions: "permissions",
           tokens: "tokens",
         };
         els.pageTitle.textContent = titles[state.activeTab] || state.activeTab;
@@ -1893,9 +1995,10 @@
           return;
         }
         try {
-          const res = await fetch("/api/jobs", { headers: authHeaders() });
+          const res = await fetch("/api/auth/me", { headers: authHeaders() });
           if (res.ok) {
-            els.authStatus.textContent = `admin token verified · ${state.operatorId}`;
+            const body = await res.json();
+            els.authStatus.textContent = `token verified · ${body.actor?.role || "operator"} · ${state.operatorId}`;
             els.authStatus.className = "auth-status ok";
           } else if (res.status === 401) {
             clearRejectedAdminToken();
@@ -3379,7 +3482,14 @@
 
       // --- tasks view ----------------------------------------------------------
       els.taskPreferredBee.addEventListener("change", applySelectedBeeRequirements);
-      [els.taskRuntime, els.taskTools, els.taskModelBackends, els.taskModels, els.taskConnectors]
+      [
+        els.taskTargetSystem,
+        els.taskRuntime,
+        els.taskTools,
+        els.taskModelBackends,
+        els.taskModels,
+        els.taskConnectors,
+      ]
         .filter(Boolean)
         .forEach((input) => {
           input.addEventListener("change", renderTaskRoutePreview);
@@ -3410,6 +3520,7 @@
         const title = els.taskTitle.value.trim();
         const instructions = els.taskInstructions.value.trim();
         const runtime = els.taskRuntime.value.trim();
+        const targetSystemId = els.taskTargetSystem.value.trim() || "public";
         const preferredBeeId = els.taskPreferredBee.value.trim();
         const sessionId = els.taskSessionId.value.trim();
         const workingDirectory = els.taskWorkingDirectory.value.trim();
@@ -3427,6 +3538,7 @@
           const payload = {
             title,
             instructions,
+            targetSystemId,
             requestedBy: "dashboard",
             ...(preferredBeeId ? { preferredBeeId } : {}),
             requirements: {
@@ -3466,6 +3578,7 @@
           if (!res.ok) throw new Error(body.reason || body.message || `HTTP ${res.status}`);
           els.taskTitle.value = "";
           els.taskPreferredBee.value = "";
+          els.taskTargetSystem.value = "public";
           els.taskRuntime.value = "";
           els.taskSessionId.value = "";
           els.taskWorkingDirectory.value = "";
@@ -3499,10 +3612,12 @@
           return;
         }
         try {
-          const [tasksRes, automationsRes, beesRes] = await Promise.all([
+          const [tasksRes, automationsRes, beesRes, systemsRes, beeGrantsRes] = await Promise.all([
             fetch("/api/tasks", { headers: authHeaders() }),
             fetch("/api/automations", { headers: authHeaders() }),
             fetch("/api/bees"),
+            fetch("/api/systems", { headers: authHeaders() }),
+            fetch("/api/bee-system-access", { headers: authHeaders() }),
           ]);
           if (tasksRes.status === 401) {
             clearRejectedAdminToken();
@@ -3512,6 +3627,8 @@
           }
           if (!tasksRes.ok) throw new Error(`HTTP ${tasksRes.status}`);
           if (!automationsRes.ok) throw new Error(`HTTP ${automationsRes.status}`);
+          if (!systemsRes.ok) throw new Error(`systems HTTP ${systemsRes.status}`);
+          if (!beeGrantsRes.ok) throw new Error(`Bee grants HTTP ${beeGrantsRes.status}`);
           if (beesRes.ok) {
             const { bees } = await beesRes.json();
             state.bees = bees ?? [];
@@ -3519,6 +3636,11 @@
             renderTaskRequirementOptions();
             renderTaskRoutePreview();
           }
+          const { systems } = await systemsRes.json();
+          const { grants: beeGrants } = await beeGrantsRes.json();
+          state.systems = systems ?? [];
+          state.beeSystemGrants = beeGrants ?? [];
+          renderTaskSystemOptions();
           const { tasks } = await tasksRes.json();
           const { automations } = await automationsRes.json();
           state.tasks = tasks ?? [];
@@ -3562,6 +3684,29 @@
           els.taskPreferredBee.insertAdjacentHTML(
             "beforeend",
             `<option value="${escapeHtml(selected)}" selected>Unknown Bee (${escapeHtml(shortId(selected))})</option>`,
+          );
+        }
+      }
+
+      function renderTaskSystemOptions() {
+        const selected = els.taskTargetSystem.value || "public";
+        const systems = state.systems.length
+          ? state.systems
+          : [{ id: "public", name: "Public Demo", risk: "low", permissions: ["run"] }];
+        els.taskTargetSystem.innerHTML = systems
+          .filter((system) => (system.permissions || []).includes("run"))
+          .map(
+            (system) =>
+              `<option value="${escapeHtml(system.id)}" ${system.id === selected ? "selected" : ""}>${escapeHtml(system.name || system.id)} · ${escapeHtml(system.risk || "medium")}</option>`,
+          )
+          .join("");
+        if (
+          selected &&
+          ![...els.taskTargetSystem.options].some((option) => option.value === selected)
+        ) {
+          els.taskTargetSystem.insertAdjacentHTML(
+            "beforeend",
+            `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)}</option>`,
           );
         }
       }
@@ -3627,7 +3772,9 @@
         preview.classList.add("ready");
         const winner = matches[0];
         const required = currentTaskRequirements();
+        const targetSystemId = els.taskTargetSystem.value || "public";
         const reqText = [
+          targetSystemId ? `system ${targetSystemId}` : "",
           required.runtimes.length ? `runtime ${required.runtimes.join(", ")}` : "",
           required.tools.length ? `tools ${required.tools.join(", ")}` : "",
           required.modelBackends.length ? `model backend ${required.modelBackends.join(", ")}` : "",
@@ -3656,14 +3803,26 @@
 
       function matchingTaskBees() {
         const preferredBeeId = els.taskPreferredBee.value.trim();
+        const targetSystemId = els.taskTargetSystem.value || "public";
         const requirements = currentTaskRequirements();
         return [...state.bees]
           .filter((bee) => {
             if (preferredBeeId && bee.beeId !== preferredBeeId) return false;
             if (bee.status !== "online" || bee.operationalState !== "healthy") return false;
+            if (!beeCanAccessTargetSystem(bee.beeId, targetSystemId)) return false;
             return beeMatchesRequirements(bee, requirements);
           })
           .sort((a, b) => (a.activeJobs ?? 0) - (b.activeJobs ?? 0));
+      }
+
+      function beeCanAccessTargetSystem(beeId, systemId) {
+        if (!systemId || systemId === "public") return true;
+        return state.beeSystemGrants.some(
+          (grant) =>
+            grant.beeId === beeId &&
+            grant.systemId === systemId &&
+            (grant.access || "limited") !== "none",
+        );
       }
 
       function beeMatchesRequirements(bee, requirements) {
@@ -3835,6 +3994,7 @@
                     <tr class="${selected ? "selected" : ""}" data-action="select-task-row" data-task-id="${escapeHtml(task.id)}">
                       <td data-label="Status">${pill(task.status || "queued")}</td>
                       <td data-label="Title">${escapeHtml(task.title || "—")}</td>
+                      <td data-label="System">${escapeHtml(task.targetSystemId || "public")}</td>
                       <td data-label="Bee">${task.assignedBeeId ? renderBeeName(task.assignedBeeId) : "—"}</td>
                       <td data-label="Requirements">${renderTaskRequirementsSummary(task.requirements || {})}</td>
                       <td data-label="Job">${task.jobId ? `<button class="ghost" data-action="task-job" data-job-id="${escapeHtml(task.jobId)}">${escapeHtml(shortId(task.jobId))}</button>` : "—"}</td>
@@ -3843,7 +4003,7 @@
                     </tr>
                     ${
                       selected
-                        ? `<tr class="detail-row"><td colspan="7"><div id="selectedTaskDetail" class="inline-detail job-detail">${
+                        ? `<tr class="detail-row"><td colspan="8"><div id="selectedTaskDetail" class="inline-detail job-detail">${
                             selectedTask
                               ? renderTaskDetail(selectedTask, selectedJob)
                               : `<div class="empty">Loading task detail...</div>`
@@ -3858,6 +4018,7 @@
               <tr>
                 <th>Status</th>
                 <th>Title</th>
+                <th>System</th>
                 <th>Bee</th>
                 <th>Requirements</th>
                 <th>Job</th>
@@ -4019,6 +4180,7 @@
           <div>${pill(task.status || "queued")} <span class="mono">${escapeHtml(task.id)}</span></div>
           <div class="job-detail-grid">
             <div class="kv"><span>Requester</span><div>${escapeHtml(task.requestedBy || "hive")}</div></div>
+            <div class="kv"><span>System</span><div>${escapeHtml(task.targetSystemId || "public")}</div></div>
             <div class="kv"><span>Bee</span><div>${task.assignedBeeId ? renderBeeName(task.assignedBeeId) : "—"}</div></div>
             <div class="kv"><span>Created</span><div title="${escapeHtml(task.createdAt || "")}">${relativeTime(task.createdAt)}</div></div>
             <div class="kv"><span>Updated</span><div title="${escapeHtml(task.updatedAt || "")}">${relativeTime(task.updatedAt)}</div></div>
@@ -4772,6 +4934,318 @@
         return JSON.stringify(value).slice(0, 220);
       }
 
+      // --- permissions view ---------------------------------------------------
+      els.createOperator.addEventListener("click", async () => {
+        if (!state.adminToken) {
+          els.permissionsMeta.textContent = "set an admin/operator token first";
+          return;
+        }
+        const email = els.operatorEmail.value.trim();
+        const name = els.operatorName.value.trim();
+        const role = els.operatorRole.value;
+        if (!email) {
+          els.permissionsMeta.textContent = "email is required";
+          return;
+        }
+        els.createOperator.disabled = true;
+        try {
+          const res = await fetch("/api/operators", {
+            method: "POST",
+            headers: { ...authHeaders(), "content-type": "application/json" },
+            body: JSON.stringify({ email, ...(name ? { name } : {}), role }),
+          });
+          const body = await res.json();
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            return;
+          }
+          if (!res.ok) throw new Error(body.reason || body.message || `HTTP ${res.status}`);
+          els.operatorEmail.value = "";
+          els.operatorName.value = "";
+          els.operatorTokenResult.innerHTML = `
+            <div class="token-display">
+              <div class="token-row">
+                <code>${escapeHtml(body.token)}</code>
+                <button class="ghost" id="copyOperatorToken">Copy</button>
+              </div>
+              <div class="meta">operator ${escapeHtml(body.operator.email)} · role ${escapeHtml(body.operator.role)} · token shown once</div>
+            </div>`;
+          document.getElementById("copyOperatorToken").addEventListener("click", () => {
+            navigator.clipboard.writeText(body.token).then(() => {
+              const btn = document.getElementById("copyOperatorToken");
+              const original = btn.textContent;
+              btn.textContent = "Copied";
+              setTimeout(() => (btn.textContent = original), 1200);
+            });
+          });
+          await refreshPermissions();
+        } catch (err) {
+          els.permissionsMeta.textContent = `operator create failed: ${err.message}`;
+        } finally {
+          els.createOperator.disabled = false;
+        }
+      });
+
+      els.grantPermission.addEventListener("click", async () => {
+        if (!state.adminToken) {
+          els.permissionsMeta.textContent = "set an admin/operator token first";
+          return;
+        }
+        const userId = els.permissionUser.value;
+        const systemId = els.permissionSystem.value;
+        const permissions = selectedValues(els.permissionGrant);
+        if (!userId || !systemId || !permissions.length) {
+          els.permissionsMeta.textContent =
+            "operator, system, and at least one permission are required";
+          return;
+        }
+        els.grantPermission.disabled = true;
+        try {
+          const res = await fetch("/api/system-permissions", {
+            method: "POST",
+            headers: { ...authHeaders(), "content-type": "application/json" },
+            body: JSON.stringify({ userId, systemId, permissions }),
+          });
+          const body = await res.json();
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            return;
+          }
+          if (!res.ok) throw new Error(body.reason || body.message || `HTTP ${res.status}`);
+          els.permissionsMeta.textContent = "permissions granted";
+          await refreshPermissions();
+        } catch (err) {
+          els.permissionsMeta.textContent = `permission grant failed: ${err.message}`;
+        } finally {
+          els.grantPermission.disabled = false;
+        }
+      });
+
+      els.grantBeeAccess.addEventListener("click", async () => {
+        if (!state.adminToken) {
+          els.permissionsMeta.textContent = "set an admin/operator token first";
+          return;
+        }
+        const beeId = els.beeAccessBee.value;
+        const systemId = els.beeAccessSystem.value;
+        const access = els.beeAccessMode.value;
+        if (!beeId || !systemId) {
+          els.permissionsMeta.textContent = "Bee and System are required";
+          return;
+        }
+        els.grantBeeAccess.disabled = true;
+        try {
+          const res = await fetch("/api/bee-system-access", {
+            method: "POST",
+            headers: { ...authHeaders(), "content-type": "application/json" },
+            body: JSON.stringify({ beeId, systemId, access }),
+          });
+          const body = await res.json();
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            return;
+          }
+          if (!res.ok) throw new Error(body.reason || body.message || `HTTP ${res.status}`);
+          els.permissionsMeta.textContent = "Bee access granted";
+          await refreshPermissions();
+        } catch (err) {
+          els.permissionsMeta.textContent = `Bee access grant failed: ${err.message}`;
+        } finally {
+          els.grantBeeAccess.disabled = false;
+        }
+      });
+
+      async function refreshPermissions() {
+        if (!state.adminToken) {
+          els.permissionsBody.innerHTML = `<div class="empty">Set an admin/operator token to manage operators and scoped access.</div>`;
+          els.permissionsMeta.textContent = "—";
+          return;
+        }
+        try {
+          const [systemsRes, operatorsRes, userGrantsRes, beeGrantsRes, beesRes] =
+            await Promise.all([
+              fetch("/api/systems", { headers: authHeaders() }),
+              fetch("/api/operators", { headers: authHeaders() }),
+              fetch("/api/system-permissions", { headers: authHeaders() }),
+              fetch("/api/bee-system-access", { headers: authHeaders() }),
+              fetch("/api/bees"),
+            ]);
+          if (
+            systemsRes.status === 401 ||
+            operatorsRes.status === 401 ||
+            userGrantsRes.status === 401 ||
+            beeGrantsRes.status === 401
+          ) {
+            clearRejectedAdminToken();
+            els.permissionsBody.innerHTML = `<div class="empty">Token rejected. Paste the current admin or operator token and save again.</div>`;
+            return;
+          }
+          if (!systemsRes.ok) throw new Error(`systems HTTP ${systemsRes.status}`);
+          if (!operatorsRes.ok) throw new Error(`operators HTTP ${operatorsRes.status}`);
+          if (!userGrantsRes.ok) throw new Error(`user grants HTTP ${userGrantsRes.status}`);
+          if (!beeGrantsRes.ok) throw new Error(`Bee grants HTTP ${beeGrantsRes.status}`);
+          const [
+            { systems },
+            { operators },
+            { grants: userGrants },
+            { grants: beeGrants },
+            beesBody,
+          ] = await Promise.all([
+            systemsRes.json(),
+            operatorsRes.json(),
+            userGrantsRes.json(),
+            beeGrantsRes.json(),
+            beesRes.ok ? beesRes.json() : Promise.resolve({ bees: state.bees }),
+          ]);
+          state.systems = systems ?? [];
+          state.operators = operators ?? [];
+          state.userSystemGrants = userGrants ?? [];
+          state.beeSystemGrants = beeGrants ?? [];
+          state.bees = beesBody.bees ?? state.bees;
+          renderPermissionSelectors();
+          renderPermissions();
+          els.permissionsMeta.textContent = `${state.operators.length} operators · ${state.userSystemGrants.length} user grants · ${state.beeSystemGrants.length} Bee grants`;
+        } catch (err) {
+          els.permissionsBody.innerHTML = `<div class="empty">Failed to load permissions: ${escapeHtml(err.message)}</div>`;
+          els.permissionsMeta.textContent = "—";
+        }
+      }
+
+      function renderPermissionSelectors() {
+        const operatorOptions = state.operators
+          .map(
+            (operator) =>
+              `<option value="${escapeHtml(operator.userId)}">${escapeHtml(operator.email)} · ${escapeHtml(operator.role)}</option>`,
+          )
+          .join("");
+        els.permissionUser.innerHTML =
+          operatorOptions || `<option value="" disabled>No operators yet</option>`;
+        const systemOptions = state.systems
+          .map(
+            (system) =>
+              `<option value="${escapeHtml(system.id)}">${escapeHtml(system.name || system.id)} · ${escapeHtml(system.risk || "medium")}</option>`,
+          )
+          .join("");
+        els.permissionSystem.innerHTML =
+          systemOptions || `<option value="" disabled>No systems available</option>`;
+        els.beeAccessSystem.innerHTML = els.permissionSystem.innerHTML;
+        els.beeAccessBee.innerHTML =
+          state.bees
+            .map(
+              (bee) =>
+                `<option value="${escapeHtml(bee.beeId)}">${escapeHtml(beeDisplayName(bee.beeId))} · ${escapeHtml(bee.status || "unknown")}</option>`,
+            )
+            .join("") || `<option value="" disabled>No Bees connected</option>`;
+      }
+
+      function renderPermissions() {
+        els.permissionsBody.innerHTML = `
+          <div class="detail-section">
+            <h3>Systems</h3>
+            ${renderSystemsTable()}
+          </div>
+          <div class="detail-section">
+            <h3>Operators</h3>
+            ${renderOperatorsTable()}
+          </div>
+          <div class="detail-section">
+            <h3>User Grants</h3>
+            ${renderUserGrantsTable()}
+          </div>
+          <div class="detail-section">
+            <h3>Bee Access</h3>
+            ${renderBeeAccessTable()}
+          </div>`;
+      }
+
+      function renderSystemsTable() {
+        if (!state.systems.length) return `<div class="empty">No Systems loaded.</div>`;
+        return `
+          <table>
+            <thead><tr><th>System</th><th>Risk</th><th>Your Permissions</th><th>Description</th></tr></thead>
+            <tbody>
+              ${state.systems
+                .map(
+                  (system) => `
+                    <tr>
+                      <td data-label="System"><strong>${escapeHtml(system.name || system.id)}</strong><div class="mono">${escapeHtml(system.id)}</div></td>
+                      <td data-label="Risk">${pill(system.risk || "medium")}</td>
+                      <td data-label="Your Permissions">${capList(system.permissions || [])}</td>
+                      <td data-label="Description">${escapeHtml(system.description || "—")}</td>
+                    </tr>`,
+                )
+                .join("")}
+            </tbody>
+          </table>`;
+      }
+
+      function renderOperatorsTable() {
+        if (!state.operators.length) return `<div class="empty">No operators yet.</div>`;
+        return `
+          <table>
+            <thead><tr><th>Email</th><th>Role</th><th>User ID</th><th>Created</th></tr></thead>
+            <tbody>
+              ${state.operators
+                .map(
+                  (operator) => `
+                    <tr>
+                      <td data-label="Email">${escapeHtml(operator.email)}${operator.name ? `<div class="meta">${escapeHtml(operator.name)}</div>` : ""}</td>
+                      <td data-label="Role">${pill(operator.role || "operator")}</td>
+                      <td data-label="User ID"><span class="mono">${escapeHtml(operator.userId)}</span></td>
+                      <td data-label="Created">${escapeHtml(relativeTime(operator.createdAt))}</td>
+                    </tr>`,
+                )
+                .join("")}
+            </tbody>
+          </table>`;
+      }
+
+      function renderUserGrantsTable() {
+        if (!state.userSystemGrants.length) return `<div class="empty">No user grants yet.</div>`;
+        return `
+          <table>
+            <thead><tr><th>Operator</th><th>System</th><th>Permission</th><th>Granted</th></tr></thead>
+            <tbody>
+              ${state.userSystemGrants
+                .map((grant) => {
+                  const operator = state.operators.find((item) => item.userId === grant.userId);
+                  const system = state.systems.find((item) => item.id === grant.systemId);
+                  return `
+                    <tr>
+                      <td data-label="Operator">${escapeHtml(operator?.email || grant.userId)}</td>
+                      <td data-label="System">${escapeHtml(system?.name || grant.systemId)}</td>
+                      <td data-label="Permission">${pill(grant.permission)}</td>
+                      <td data-label="Granted">${escapeHtml(relativeTime(grant.createdAt))}</td>
+                    </tr>`;
+                })
+                .join("")}
+            </tbody>
+          </table>`;
+      }
+
+      function renderBeeAccessTable() {
+        if (!state.beeSystemGrants.length)
+          return `<div class="empty">No Bee access grants yet. Public tasks can still route to healthy Bees by default.</div>`;
+        return `
+          <table>
+            <thead><tr><th>Bee</th><th>System</th><th>Access</th><th>Granted</th></tr></thead>
+            <tbody>
+              ${state.beeSystemGrants
+                .map((grant) => {
+                  const system = state.systems.find((item) => item.id === grant.systemId);
+                  return `
+                    <tr>
+                      <td data-label="Bee">${renderBeeName(grant.beeId)}</td>
+                      <td data-label="System">${escapeHtml(system?.name || grant.systemId)}</td>
+                      <td data-label="Access">${pill(grant.access || "limited")}</td>
+                      <td data-label="Granted">${escapeHtml(relativeTime(grant.createdAt))}</td>
+                    </tr>`;
+                })
+                .join("")}
+            </tbody>
+          </table>`;
+      }
+
       els.closeBeeModal.addEventListener("click", closeBeeModal);
       els.beeModal.addEventListener("click", (event) => {
         if (event.target === els.beeModal) closeBeeModal();
@@ -4850,6 +5324,8 @@
           refreshJobs();
         } else if (state.activeTab === "activity") {
           refreshActivity();
+        } else if (state.activeTab === "permissions") {
+          refreshPermissions();
         }
       }
 

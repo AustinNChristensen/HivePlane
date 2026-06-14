@@ -79,3 +79,23 @@ Still left in this area:
 - broader operator checks on read/list/admin surfaces;
 - real browser sign-in/session UX instead of raw operator bearer tokens;
 - issue updates/closure after the UI and enforcement surface are broader.
+
+### 2026-06-14 — Permissions UI
+
+Shipped the first #33 dashboard pass:
+
+- added a Permissions tab;
+- operators can be created from the dashboard and their token is shown once;
+- user System permission grants can be created from the dashboard;
+- Bee System access grants can be created from the dashboard;
+- current Systems, operators, user grants, and Bee access grants are visible in tables;
+- the task form now includes a target System selector;
+- the route preview now accounts for Bee System access, not only runtime/tool/model capability;
+- operator tokens can read tasks/jobs through System `view` checks, and `run` permission implies view on that System for workflow usability.
+
+Still left in this area:
+
+- replace raw bearer-token workflow with a real sign-in/session UX;
+- add revoke/delete/edit flows for operators and grants;
+- extend scoped checks to more mutation surfaces such as recovery jobs, profile edits, automations, and incident/audit reads;
+- add polish around roles so non-admin operators see only the controls they can actually use.
