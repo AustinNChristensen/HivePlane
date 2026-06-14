@@ -22,6 +22,7 @@ Keep iterating until every item below is either shipped and verified on `main`, 
 3. **Stale P0 issue cleanup** — issues #11 and #16 first
    - Goal: close or retitle issues that no longer describe reality after the recent OpenClaw task routing, control-plane API, incident, audit, automation, connector, and artifact work.
    - Acceptance signal: open P0s only represent real remaining blockers.
+   - Status: #11 and #16 closed on 2026-06-14 as stale/completed umbrellas; remaining runtime work is tracked by #36/#39 and remaining auth hardening by #32/#33/#72.
 
 4. **Ollama backend adapter** — issue #39
    - Goal: make local model management product-grade instead of only reporting capabilities.
