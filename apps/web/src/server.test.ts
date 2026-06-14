@@ -698,6 +698,81 @@ describe("Hive server", () => {
     );
   });
 
+  it("runs due interval automations as Hive tasks", async () => {
+    const state = createHiveServerState();
+    let current = new Date("2026-05-09T08:00:00.000Z");
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_automation",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      capabilities: {
+        runtimes: ["openclaw"],
+        modelBackends: [],
+        models: [],
+        localModels: [],
+        tools: ["filesystem"],
+        networking: [],
+        hardware: {
+          platform: "darwin-arm64",
+          hostname: "bee-automation",
+          cpuCores: 10,
+          memoryGb: 32,
+        },
+      },
+      healthChecks: [],
+    });
+
+    await withServer({ state, adminToken: "secret", now: () => current }, async (baseUrl) => {
+      const create = await fetch(`${baseUrl}/api/automations`, {
+        method: "POST",
+        headers: { authorization: "Bearer secret", "content-type": "application/json" },
+        body: JSON.stringify({
+          title: "Watch repo",
+          instructions: "Check the repo and report issues.",
+          trigger: "interval",
+          everySeconds: 60,
+          requirements: { runtimes: ["openclaw"] },
+        }),
+      });
+      expect(create.status).toBe(200);
+      const created = (await create.json()) as {
+        automation: { id: string; nextRunAt: string; lastTaskId?: string };
+      };
+      expect(created.automation.lastTaskId).toBeUndefined();
+
+      current = new Date("2026-05-09T08:01:01.000Z");
+      const list = await fetch(`${baseUrl}/api/automations`, {
+        headers: { authorization: "Bearer secret" },
+      });
+      expect(list.status).toBe(200);
+      const body = (await list.json()) as {
+        automations: Array<{
+          id: string;
+          status: string;
+          lastTaskId?: string;
+          lastJobId?: string;
+          lastRunAt?: string;
+          nextRunAt?: string;
+        }>;
+      };
+      const automation = body.automations.find((item) => item.id === created.automation.id);
+      expect(automation).toMatchObject({
+        status: "enabled",
+        lastTaskId: expect.stringMatching(/^task_/),
+        lastJobId: expect.stringMatching(/^job_/),
+        lastRunAt: "2026-05-09T08:01:01.000Z",
+      });
+      expect(automation?.nextRunAt).toBe("2026-05-09T08:02:01.000Z");
+      expect(state.tasks.get(automation?.lastTaskId ?? "")).toMatchObject({
+        status: "assigned",
+        assignedBeeId: "bee_automation",
+      });
+    });
+  });
+
   it("cancels Hive tasks and ignores late Bee completion status", async () => {
     const state = createHiveServerState();
     upsertBeeHeartbeat(state, {

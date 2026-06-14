@@ -210,6 +210,8 @@ export type HiveServerState = {
   incidents: Map<string, IncidentRecord>;
   /** Hive-level tasks assigned to Bees as sub-agent work. */
   tasks: Map<string, HiveTaskRecord>;
+  /** Scheduled and signal-triggered background automations. */
+  automations: Map<string, HiveAutomationRecord>;
   /** Operator/security audit entries keyed by audit id. */
   auditLog: Map<string, AuditLogEntry>;
 };
@@ -258,6 +260,30 @@ export type HiveTaskRecord = {
   jobId?: string;
   createdAt: string;
   updatedAt: string;
+  lastError?: string;
+};
+
+export type HiveAutomationStatus = "enabled" | "paused" | "failed";
+
+export type HiveAutomationRecord = {
+  id: string;
+  title: string;
+  instructions: string;
+  requestedBy?: string;
+  preferredBeeId?: string;
+  requirements: HiveTaskRequirements;
+  context?: WorkContext;
+  trigger: "interval" | "signal";
+  everySeconds?: number;
+  enabled: boolean;
+  status: HiveAutomationStatus;
+  createdAt: string;
+  updatedAt: string;
+  nextRunAt?: string;
+  lastRunAt?: string;
+  lastTaskId?: string;
+  lastJobId?: string;
+  failureCount: number;
   lastError?: string;
 };
 
@@ -317,6 +343,7 @@ export function createHiveServerState(): HiveServerState {
     jobsState: createJobsState(),
     incidents: new Map(),
     tasks: new Map(),
+    automations: new Map(),
     auditLog: new Map(),
   };
 }
@@ -516,6 +543,17 @@ const CreateHiveTaskRequestSchema = z.object({
       metadata: z.record(z.unknown()).default({}),
     })
     .default({}),
+});
+
+const CreateHiveAutomationRequestSchema = CreateHiveTaskRequestSchema.extend({
+  trigger: z.enum(["interval", "signal"]).default("interval"),
+  everySeconds: z
+    .number()
+    .int()
+    .min(60)
+    .max(60 * 60 * 24 * 30)
+    .optional(),
+  enabled: z.boolean().default(true),
 });
 
 const HIVE_VERSION = "0.0.7";
@@ -1033,6 +1071,85 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
       if (request.method === "GET" && url.pathname === "/api/tasks") {
         if (!checkAdmin(request, response, adminToken)) return;
         return sendJson(response, 200, { tasks: serializeTasks(state) });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/automations") {
+        if (!checkAdmin(request, response, adminToken)) return;
+        scheduleDueAutomations(state, now());
+        markDirty();
+        return sendJson(response, 200, { automations: serializeAutomations(state) });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/automations") {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const { body } = await readJson(request);
+        const parsed = CreateHiveAutomationRequestSchema.safeParse(body);
+        if (!parsed.success) {
+          return sendJson(response, 400, {
+            error: "bad_request",
+            message: parsed.error.message,
+          });
+        }
+        if (parsed.data.trigger === "interval" && !parsed.data.everySeconds) {
+          return sendJson(response, 400, {
+            error: "bad_request",
+            reason: "interval automations require everySeconds",
+          });
+        }
+        const current = now();
+        const automation = createHiveAutomation(state, parsed.data, current);
+        recordAudit(state, request, current, {
+          action: "automation.create",
+          resourceType: "automation",
+          resourceId: automation.id,
+          data: { title: automation.title, trigger: automation.trigger },
+        });
+        markDirty();
+        return sendJson(response, 200, { automation });
+      }
+
+      const automationActionMatch =
+        /^\/api\/automations\/([^/]+)\/(pause|resume|run|trigger)$/.exec(url.pathname);
+      if (request.method === "POST" && automationActionMatch) {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const automationId = decodeURIComponent(automationActionMatch[1] ?? "");
+        const action = automationActionMatch[2] as "pause" | "resume" | "run" | "trigger";
+        const automation = state.automations.get(automationId);
+        if (!automation) return sendJson(response, 404, { error: "not_found" });
+        const current = now();
+        let task: HiveTaskRecord | undefined;
+        if (action === "pause") {
+          automation.enabled = false;
+          automation.status = "paused";
+          delete automation.nextRunAt;
+        } else if (action === "resume") {
+          automation.enabled = true;
+          automation.status = "enabled";
+          if (automation.trigger === "interval" && automation.everySeconds) {
+            automation.nextRunAt = new Date(
+              current.getTime() + automation.everySeconds * 1000,
+            ).toISOString();
+          }
+        } else {
+          task = runAutomation(
+            state,
+            automation,
+            current,
+            action === "trigger" ? "signal" : "manual",
+          );
+        }
+        automation.updatedAt = current.toISOString();
+        recordAudit(state, request, current, {
+          action: `automation.${action}`,
+          resourceType: "automation",
+          resourceId: automation.id,
+          data: { title: automation.title, ...(task ? { taskId: task.id } : {}) },
+        });
+        markDirty();
+        return sendJson(response, 200, {
+          automation,
+          ...(task ? { task: serializeTask(task) } : {}),
+        });
       }
 
       if (request.method === "GET" && url.pathname === "/api/audit-log") {
@@ -1617,6 +1734,16 @@ function serializeTasks(state: HiveServerState): HiveTaskRecord[] {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+function serializeAutomations(state: HiveServerState): HiveAutomationRecord[] {
+  return [...state.automations.values()]
+    .map((automation) => ({
+      ...automation,
+      requirements: { ...automation.requirements },
+      ...(automation.context ? { context: { ...automation.context } } : {}),
+    }))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
 function serializeTask(task: HiveTaskRecord): HiveTaskRecord {
   return {
     ...task,
@@ -1667,6 +1794,10 @@ function generateTaskId(): string {
   return `task_${randomBytes(8).toString("hex")}`;
 }
 
+function generateAutomationId(): string {
+  return `auto_${randomBytes(8).toString("hex")}`;
+}
+
 function normalizeTaskRequirements(requirements: HiveTaskRequirements): HiveTaskRequirements {
   return {
     runtimes: dedupeStrings(requirements.runtimes),
@@ -1706,12 +1837,125 @@ function createHiveTask(
   return task;
 }
 
+function createHiveAutomation(
+  state: HiveServerState,
+  request: z.infer<typeof CreateHiveAutomationRequestSchema>,
+  now: Date,
+): HiveAutomationRecord {
+  const trigger = request.trigger;
+  const everySeconds =
+    trigger === "interval" ? (request.everySeconds ?? 60 * 60) : request.everySeconds;
+  const automation: HiveAutomationRecord = {
+    id: generateAutomationId(),
+    title: request.title.trim(),
+    instructions: request.instructions.trim(),
+    ...(request.requestedBy ? { requestedBy: request.requestedBy.trim() } : {}),
+    ...(request.preferredBeeId ? { preferredBeeId: request.preferredBeeId } : {}),
+    requirements: normalizeTaskRequirements(request.requirements),
+    context: normalizeWorkContext(request.context as WorkContext),
+    trigger,
+    ...(everySeconds ? { everySeconds } : {}),
+    enabled: request.enabled,
+    status: request.enabled ? "enabled" : "paused",
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+    ...(request.enabled && trigger === "interval" && everySeconds
+      ? { nextRunAt: new Date(now.getTime() + everySeconds * 1000).toISOString() }
+      : {}),
+    failureCount: 0,
+  };
+  state.automations.set(automation.id, automation);
+  return automation;
+}
+
 function scheduleOpenHiveTasks(state: HiveServerState, now: Date): void {
+  scheduleDueAutomations(state, now);
   for (const task of state.tasks.values()) {
     if (task.status === "queued" || task.status === "blocked") {
       scheduleHiveTask(state, task, now);
     }
   }
+}
+
+function scheduleDueAutomations(state: HiveServerState, now: Date): void {
+  for (const automation of state.automations.values()) {
+    if (!automation.enabled || automation.status === "paused") continue;
+    if (automation.trigger !== "interval") continue;
+    if (!automation.nextRunAt) continue;
+    if (new Date(automation.nextRunAt).getTime() > now.getTime()) continue;
+    runAutomation(state, automation, now, "schedule");
+  }
+}
+
+function runAutomation(
+  state: HiveServerState,
+  automation: HiveAutomationRecord,
+  now: Date,
+  triggerSource: "schedule" | "signal" | "manual",
+): HiveTaskRecord {
+  const task = createHiveTask(
+    state,
+    {
+      title: automation.title,
+      instructions: automation.instructions,
+      requestedBy: automation.requestedBy ?? `automation:${automation.id}`,
+      ...(automation.preferredBeeId ? { preferredBeeId: automation.preferredBeeId } : {}),
+      requirements: automation.requirements,
+      context: automation.context ?? emptyWorkContext(),
+    },
+    now,
+  );
+  scheduleHiveTask(state, task, now);
+  automation.lastRunAt = now.toISOString();
+  automation.lastTaskId = task.id;
+  if (task.jobId) automation.lastJobId = task.jobId;
+  automation.updatedAt = now.toISOString();
+  if (automation.trigger === "interval" && automation.everySeconds) {
+    automation.nextRunAt = new Date(now.getTime() + automation.everySeconds * 1000).toISOString();
+  }
+  if (task.status === "blocked") {
+    automation.status = "failed";
+    automation.failureCount += 1;
+    automation.lastError = task.lastError ?? "Automation task could not be scheduled.";
+    recordAutomationFailureIncident(state, automation, task, now, triggerSource);
+  } else {
+    automation.status = automation.enabled ? "enabled" : "paused";
+    delete automation.lastError;
+  }
+  return task;
+}
+
+function recordAutomationFailureIncident(
+  state: HiveServerState,
+  automation: HiveAutomationRecord,
+  task: HiveTaskRecord,
+  now: Date,
+  triggerSource: string,
+): void {
+  const incidentId = `hive:automation:${automation.id}`;
+  const summary = `Automation '${automation.title}' failed to schedule.`;
+  state.incidents.set(incidentId, {
+    id: incidentId,
+    beeId: task.assignedBeeId ?? automation.preferredBeeId ?? "hive",
+    kind: "automation_failure",
+    status: "unresolved",
+    severity: "warning",
+    summary,
+    detectedAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+    attempts: [],
+    notifications: [
+      {
+        id: `${incidentId}:unresolved`,
+        status: "unresolved",
+        queuedAt: now.toISOString(),
+        message: `${summary} ${automation.lastError ?? ""}`.trim(),
+        deliveryStatus: "queued",
+        deliveryAttempts: 0,
+      },
+    ],
+    lastDiagnosis: `${automation.lastError ?? "No matching healthy Bee."} Trigger: ${triggerSource}. Task: ${task.id}.`,
+  });
 }
 
 function scheduleHiveTask(state: HiveServerState, task: HiveTaskRecord, now: Date): void {

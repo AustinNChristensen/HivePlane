@@ -8,6 +8,7 @@ import {
   createHiveServerState,
   type AuditLogEntry,
   type HiveBeeRecord,
+  type HiveAutomationRecord,
   type HiveServerState,
   type HiveTaskRecord,
   type IncidentRecord,
@@ -168,6 +169,7 @@ type PersistedSnapshot = {
   jobs: Array<[string, PersistedJob]>;
   incidents?: Array<[string, IncidentRecord]>;
   tasks?: Array<[string, HiveTaskRecord]>;
+  automations?: Array<[string, HiveAutomationRecord]>;
   auditLog?: Array<[string, AuditLogEntry]>;
 };
 
@@ -197,6 +199,7 @@ function serialize(state: HiveServerState): PersistedSnapshot {
     jobs: [...state.jobsState.jobs.entries()].map(([k, v]) => [k, serializeJob(v)]),
     incidents: [...state.incidents.entries()],
     tasks: [...state.tasks.entries()],
+    automations: [...state.automations.entries()],
     auditLog: [...state.auditLog.entries()],
   };
 }
@@ -253,6 +256,7 @@ function rehydrate(snapshot: PersistedSnapshot): HiveServerState {
         : {}),
     });
   }
+  for (const [k, v] of snapshot.automations ?? []) state.automations.set(k, v);
   for (const [k, v] of snapshot.auditLog ?? []) state.auditLog.set(k, v);
   return state;
 }

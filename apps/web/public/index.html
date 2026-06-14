@@ -1377,6 +1377,16 @@
                   <label for="taskWorkingDirectory">Working dir</label>
                   <input id="taskWorkingDirectory" placeholder="/repo/path" />
                 </div>
+                <div class="form-field">
+                  <label for="taskRepeatMinutes">Repeat min</label>
+                  <input
+                    id="taskRepeatMinutes"
+                    type="number"
+                    min="1"
+                    step="1"
+                    placeholder="one-off"
+                  />
+                </div>
                 <button class="action" id="createTask">Assign Task</button>
               </div>
               <div class="form-field wide">
@@ -1387,6 +1397,10 @@
                 Bee capabilities load with the task list.
               </div>
               <div id="tasksBody"></div>
+              <div class="detail-section">
+                <h3>Automations</h3>
+                <div id="automationsBody"></div>
+              </div>
             </div>
           </section>
 
@@ -1464,6 +1478,7 @@
         incidents: [],
         jobs: [],
         tasks: [],
+        automations: [],
         auditLog: [],
         selectedTask: null,
         selectedTaskJob: null,
@@ -1499,6 +1514,7 @@
         activityBody: document.getElementById("activityBody"),
         tasksMeta: document.getElementById("tasksMeta"),
         tasksBody: document.getElementById("tasksBody"),
+        automationsBody: document.getElementById("automationsBody"),
         taskTitle: document.getElementById("taskTitle"),
         taskPreferredBee: document.getElementById("taskPreferredBee"),
         taskBeeHint: document.getElementById("taskBeeHint"),
@@ -1507,6 +1523,7 @@
         taskModels: document.getElementById("taskModels"),
         taskSessionId: document.getElementById("taskSessionId"),
         taskWorkingDirectory: document.getElementById("taskWorkingDirectory"),
+        taskRepeatMinutes: document.getElementById("taskRepeatMinutes"),
         taskInstructions: document.getElementById("taskInstructions"),
         createTask: document.getElementById("createTask"),
         tokenBeeName: document.getElementById("tokenBeeName"),
@@ -3079,6 +3096,7 @@
         const preferredBeeId = els.taskPreferredBee.value.trim();
         const sessionId = els.taskSessionId.value.trim();
         const workingDirectory = els.taskWorkingDirectory.value.trim();
+        const repeatMinutes = Number(els.taskRepeatMinutes.value || 0);
         const tools = selectedValues(els.taskTools);
         const models = selectedValues(els.taskModels);
         if (!title || !instructions) {
@@ -3099,10 +3117,20 @@
               ...(workingDirectory ? { workingDirectory } : {}),
             },
           };
-          const res = await fetch("/api/tasks", {
+          const isAutomation = Number.isInteger(repeatMinutes) && repeatMinutes > 0;
+          const res = await fetch(isAutomation ? "/api/automations" : "/api/tasks", {
             method: "POST",
             headers: { ...authHeaders(), "content-type": "application/json" },
-            body: JSON.stringify(payload),
+            body: JSON.stringify(
+              isAutomation
+                ? {
+                    ...payload,
+                    trigger: "interval",
+                    everySeconds: repeatMinutes * 60,
+                    enabled: true,
+                  }
+                : payload,
+            ),
           });
           if (res.status === 401) {
             clearRejectedAdminToken();
@@ -3116,6 +3144,7 @@
           els.taskRuntime.value = "";
           els.taskSessionId.value = "";
           els.taskWorkingDirectory.value = "";
+          els.taskRepeatMinutes.value = "";
           setSelectedValues(els.taskTools, []);
           setSelectedValues(els.taskModels, []);
           els.taskInstructions.value = "";
@@ -3123,8 +3152,11 @@
           state.selectedTask = null;
           state.selectedTaskJob = null;
           state.selectedJobId = body.task?.jobId || state.selectedJobId;
-          els.tasksMeta.textContent =
-            body.task?.status === "blocked" ? body.task.lastError : "task assigned";
+          els.tasksMeta.textContent = body.automation
+            ? "automation created"
+            : body.task?.status === "blocked"
+              ? body.task.lastError
+              : "task assigned";
           await refreshTasks();
         } catch (err) {
           els.tasksMeta.textContent = `task failed: ${err.message}`;
@@ -3140,8 +3172,9 @@
           return;
         }
         try {
-          const [tasksRes, beesRes] = await Promise.all([
+          const [tasksRes, automationsRes, beesRes] = await Promise.all([
             fetch("/api/tasks", { headers: authHeaders() }),
+            fetch("/api/automations", { headers: authHeaders() }),
             fetch("/api/bees"),
           ]);
           if (tasksRes.status === 401) {
@@ -3151,6 +3184,7 @@
             return;
           }
           if (!tasksRes.ok) throw new Error(`HTTP ${tasksRes.status}`);
+          if (!automationsRes.ok) throw new Error(`HTTP ${automationsRes.status}`);
           if (beesRes.ok) {
             const { bees } = await beesRes.json();
             state.bees = bees ?? [];
@@ -3158,7 +3192,9 @@
             renderTaskRequirementOptions();
           }
           const { tasks } = await tasksRes.json();
+          const { automations } = await automationsRes.json();
           state.tasks = tasks ?? [];
+          state.automations = automations ?? [];
           if (
             state.selectedTaskId &&
             !state.tasks.some((task) => task.id === state.selectedTaskId)
@@ -3170,6 +3206,7 @@
           if (state.selectedTaskId) await refreshSelectedTask(false);
           renderTaskBeeHint();
           renderTasks(state.tasks);
+          renderAutomations(state.automations);
           els.tasksMeta.textContent = `${state.tasks.length} tasks · updated ${new Date().toLocaleTimeString()}`;
         } catch (err) {
           els.tasksBody.innerHTML = `<div class="empty">Failed to load tasks: ${escapeHtml(err.message)}</div>`;
@@ -3376,6 +3413,101 @@
           });
         });
         bindTaskDetailActions(els.tasksBody);
+      }
+
+      function renderAutomations(automations) {
+        if (!automations.length) {
+          els.automationsBody.innerHTML = `<div class="empty">No automations yet. Add repeat minutes above to create one.</div>`;
+          return;
+        }
+        els.automationsBody.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Title</th>
+                <th>Trigger</th>
+                <th>Last</th>
+                <th>Next</th>
+                <th>Failure</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${automations
+                .map(
+                  (automation) => `
+                    <tr>
+                      <td>${pill(automation.status || "enabled")}</td>
+                      <td>${escapeHtml(automation.title || "—")}</td>
+                      <td>${escapeHtml(renderAutomationTrigger(automation))}</td>
+                      <td>${automation.lastRunAt ? relativeTime(automation.lastRunAt) : "—"}</td>
+                      <td>${automation.nextRunAt ? relativeTime(automation.nextRunAt) : "signal"}</td>
+                      <td>${escapeHtml(automation.lastError || "—")}</td>
+                      <td>
+                        <div class="actions">
+                          <button class="ghost" data-action="run-automation" data-automation-id="${escapeHtml(automation.id)}">Run</button>
+                          ${
+                            automation.enabled
+                              ? `<button class="ghost" data-action="pause-automation" data-automation-id="${escapeHtml(automation.id)}">Pause</button>`
+                              : `<button class="ghost" data-action="resume-automation" data-automation-id="${escapeHtml(automation.id)}">Resume</button>`
+                          }
+                        </div>
+                      </td>
+                    </tr>
+                  `,
+                )
+                .join("")}
+            </tbody>
+          </table>`;
+        els.automationsBody
+          .querySelectorAll(
+            "[data-action='run-automation'], [data-action='pause-automation'], [data-action='resume-automation']",
+          )
+          .forEach((button) => {
+            button.addEventListener("click", () => {
+              const action = button.dataset.action.replace("-automation", "");
+              updateAutomation(button.dataset.automationId, action, button);
+            });
+          });
+      }
+
+      function renderAutomationTrigger(automation) {
+        if (automation.trigger === "interval" && automation.everySeconds) {
+          return `every ${Math.round(automation.everySeconds / 60)}m`;
+        }
+        return automation.trigger || "signal";
+      }
+
+      async function updateAutomation(automationId, action, button) {
+        if (!state.adminToken) {
+          els.tasksMeta.textContent = "set an admin token (top right) to manage automations";
+          return;
+        }
+        button.disabled = true;
+        try {
+          const res = await fetch(
+            `/api/automations/${encodeURIComponent(automationId)}/${action}`,
+            {
+              method: "POST",
+              headers: authHeaders(),
+            },
+          );
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            els.tasksMeta.textContent = "admin token rejected — paste the current token";
+            return;
+          }
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.reason || body.message || `HTTP ${res.status}`);
+          if (body.task?.id) state.selectedTaskId = body.task.id;
+          els.tasksMeta.textContent = `automation ${action} complete`;
+          await refreshTasks();
+        } catch (err) {
+          els.tasksMeta.textContent = `automation ${action} failed: ${err.message}`;
+        } finally {
+          button.disabled = false;
+        }
       }
 
       async function refreshSelectedTask(rerender = true) {
