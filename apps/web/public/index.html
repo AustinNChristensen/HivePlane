@@ -966,6 +966,40 @@
         white-space: pre-wrap;
         word-break: break-word;
       }
+      .activity-list {
+        display: grid;
+        gap: 10px;
+        padding: 18px;
+      }
+      .activity-item {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.025);
+      }
+      .activity-item.important {
+        border-color: rgba(25, 227, 210, 0.4);
+        background: linear-gradient(90deg, var(--cyan-soft), rgba(255, 255, 255, 0.02));
+      }
+      .activity-main {
+        min-width: 0;
+      }
+      .activity-title {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 4px;
+      }
+      .activity-detail {
+        color: var(--muted);
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
       pre.snippet {
         margin: 0;
         background: var(--panel-2);
@@ -1127,7 +1161,7 @@
           padding: 18px;
         }
         nav.tabs {
-          grid-template-columns: repeat(5, minmax(0, 1fr));
+          grid-template-columns: repeat(6, minmax(0, 1fr));
         }
         nav.tabs button {
           justify-content: center;
@@ -1198,6 +1232,9 @@
           </button>
           <button class="tab" data-tab="jobs">
             <span><span class="nav-icon">=</span> Jobs</span>
+          </button>
+          <button class="tab" data-tab="activity">
+            <span><span class="nav-icon">A</span> Activity</span>
           </button>
           <button class="tab" data-tab="tokens">
             <span><span class="nav-icon">T</span> Tokens</span>
@@ -1343,6 +1380,16 @@
             </div>
           </section>
 
+          <section data-view="activity" hidden>
+            <div class="panel">
+              <div class="panel-header">
+                <span>Activity</span>
+                <span class="meta" id="activityMeta">—</span>
+              </div>
+              <div id="activityBody"></div>
+            </div>
+          </section>
+
           <section data-view="tokens" hidden>
             <div class="panel">
               <div class="panel-header">
@@ -1423,6 +1470,8 @@
         incidentsBody: document.getElementById("incidentsBody"),
         jobsMeta: document.getElementById("jobsMeta"),
         jobsBody: document.getElementById("jobsBody"),
+        activityMeta: document.getElementById("activityMeta"),
+        activityBody: document.getElementById("activityBody"),
         tasksMeta: document.getElementById("tasksMeta"),
         tasksBody: document.getElementById("tasksBody"),
         taskTitle: document.getElementById("taskTitle"),
@@ -1481,6 +1530,7 @@
           bees: "bees",
           tasks: "dispatch",
           jobs: "jobs",
+          activity: "activity",
           tokens: "tokens",
         };
         els.pageTitle.textContent = titles[state.activeTab] || state.activeTab;
@@ -3556,6 +3606,169 @@
           setTimeout(() => (button.textContent = original), 1200);
         });
       });
+
+      // --- activity view -------------------------------------------------------
+      async function refreshActivity() {
+        if (!state.adminToken) {
+          els.activityBody.innerHTML = `<div class="empty">Set an admin token (top right) to view activity.</div>`;
+          els.activityMeta.textContent = "—";
+          return;
+        }
+        try {
+          const [beesRes, jobsRes, tasksRes, incidentsRes] = await Promise.all([
+            fetch("/api/bees"),
+            fetch("/api/jobs", { headers: authHeaders() }),
+            fetch("/api/tasks", { headers: authHeaders() }),
+            fetch("/api/incidents", { headers: authHeaders() }),
+          ]);
+          if (jobsRes.status === 401 || tasksRes.status === 401 || incidentsRes.status === 401) {
+            clearRejectedAdminToken();
+            els.activityBody.innerHTML = `<div class="empty">Admin token rejected. Paste the current token and save again.</div>`;
+            els.activityMeta.textContent = "—";
+            return;
+          }
+          if (!beesRes.ok) throw new Error(`bees HTTP ${beesRes.status}`);
+          if (!jobsRes.ok) throw new Error(`jobs HTTP ${jobsRes.status}`);
+          if (!tasksRes.ok) throw new Error(`tasks HTTP ${tasksRes.status}`);
+          if (!incidentsRes.ok) throw new Error(`incidents HTTP ${incidentsRes.status}`);
+          const [{ bees }, { jobs }, { tasks }, { incidents }] = await Promise.all([
+            beesRes.json(),
+            jobsRes.json(),
+            tasksRes.json(),
+            incidentsRes.json(),
+          ]);
+          state.bees = bees ?? [];
+          state.jobs = jobs ?? [];
+          state.tasks = tasks ?? [];
+          state.incidents = incidents ?? [];
+          renderActivity(buildActivityEntries());
+        } catch (err) {
+          els.activityBody.innerHTML = `<div class="empty">Failed to load activity: ${escapeHtml(err.message)}</div>`;
+          els.activityMeta.textContent = "—";
+        }
+      }
+
+      function buildActivityEntries() {
+        const entries = [];
+        state.incidents.forEach((incident) => {
+          entries.push({
+            id: `incident-${incident.id}`,
+            time: incident.resolvedAt || incident.updatedAt || incident.createdAt,
+            kind: "incident",
+            status: incident.status || "open",
+            actor: "hive",
+            target: incident.beeId ? beeDisplayName(incident.beeId) : "swarm",
+            title: `${incident.status === "resolved" ? "Resolved" : "Detected"} incident`,
+            detail: incident.summary || incident.reason || incident.type || incident.id,
+            important: incident.status !== "resolved",
+          });
+        });
+        state.tasks.forEach((task) => {
+          entries.push({
+            id: `task-${task.id}`,
+            time: task.updatedAt || task.createdAt,
+            kind: "task",
+            status: task.status || "queued",
+            actor: task.requestedBy || "hive",
+            target: task.assignedBeeId ? beeDisplayName(task.assignedBeeId) : "unassigned",
+            title: task.title || "Hive task",
+            detail: task.lastError || task.instructions || task.id,
+            jobId: task.jobId,
+            important: ["blocked", "failed", "cancelled"].includes(task.status),
+          });
+        });
+        state.jobs.forEach((job) => {
+          entries.push({
+            id: `job-${job.id}`,
+            time: job.completedAt || job.assignedAt || job.createdAt,
+            kind: "job",
+            status: job.status || "queued",
+            actor: "hive",
+            target: beeDisplayName(job.beeId),
+            title: `${job.type || "job"} ${job.status || ""}`.trim(),
+            detail: job.error
+              ? summarizeActivityData(job.error)
+              : summarizeActivityData(job.output),
+            jobId: job.id,
+            important: ["failed", "timed_out", "cancelled", "waiting_for_approval"].includes(
+              job.status,
+            ),
+          });
+          (job.events || []).forEach((jobEvent) => {
+            if (jobEventIsNoisy(jobEvent) && !jobEventIsImportant(jobEvent)) return;
+            entries.push({
+              id: `event-${job.id}-${jobEvent.id || jobEvent.sequence}`,
+              time: jobEvent.createdAt,
+              kind: "event",
+              status: jobEvent.level || "info",
+              actor: jobEvent.actor || "bee",
+              target: beeDisplayName(job.beeId),
+              title: jobEvent.type || "job event",
+              detail: summarizeActivityData(jobEvent.data),
+              jobId: job.id,
+              important: jobEventIsImportant(jobEvent),
+            });
+          });
+        });
+        return entries
+          .filter((entry) => entry.time)
+          .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+          .slice(0, 120);
+      }
+
+      function renderActivity(entries) {
+        els.activityMeta.textContent = `${entries.length} entries · updated ${new Date().toLocaleTimeString()}`;
+        if (!entries.length) {
+          els.activityBody.innerHTML = `<div class="empty">No activity yet. Run a Bee healthcheck or task to start the audit trail.</div>`;
+          return;
+        }
+        els.activityBody.innerHTML = `
+          <div class="activity-list">
+            ${entries.map(renderActivityEntry).join("")}
+          </div>`;
+        els.activityBody.querySelectorAll("[data-action='activity-job']").forEach((button) => {
+          button.addEventListener("click", () => {
+            state.selectedJobId = button.dataset.jobId;
+            state.selectedJob = null;
+            showJobsTab();
+            refreshJobs();
+          });
+        });
+      }
+
+      function renderActivityEntry(entry) {
+        return `
+          <div class="activity-item ${entry.important ? "important" : ""}">
+            <div class="activity-main">
+              <div class="activity-title">
+                ${pill(entry.kind)}
+                ${pill(entry.status)}
+                <strong>${escapeHtml(entry.title)}</strong>
+              </div>
+              <div class="activity-detail">
+                actor ${escapeHtml(entry.actor)} · target ${escapeHtml(entry.target)} ·
+                <span title="${escapeHtml(entry.time)}">${escapeHtml(relativeTime(entry.time))}</span>
+                ${entry.detail ? ` · ${escapeHtml(entry.detail)}` : ""}
+              </div>
+            </div>
+            ${
+              entry.jobId
+                ? `<button class="ghost" data-action="activity-job" data-job-id="${escapeHtml(entry.jobId)}">Open Job</button>`
+                : ""
+            }
+          </div>`;
+      }
+
+      function summarizeActivityData(value) {
+        if (!value) return "";
+        if (typeof value === "string") return value.slice(0, 220);
+        if (typeof value !== "object") return String(value);
+        if (typeof value.message === "string") return value.message.slice(0, 220);
+        if (typeof value.text === "string") return value.text.slice(0, 220);
+        if (typeof value.error === "string") return value.error.slice(0, 220);
+        return JSON.stringify(value).slice(0, 220);
+      }
+
       els.closeBeeModal.addEventListener("click", closeBeeModal);
       els.beeModal.addEventListener("click", (event) => {
         if (event.target === els.beeModal) closeBeeModal();
@@ -3632,6 +3845,8 @@
           refreshTasks();
         } else if (state.activeTab === "jobs") {
           refreshJobs();
+        } else if (state.activeTab === "activity") {
+          refreshActivity();
         }
       }
 
