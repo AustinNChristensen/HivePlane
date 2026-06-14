@@ -8,7 +8,7 @@ const execFileAsync = promisify(execFile);
  * The Hive's "what URL should a Bee actually use to reach me?" answer.
  *
  * Why this isn't just `<bind-host>:<port>`: an operator who opens the
- * dashboard at `http://localhost:4483/` from their browser on the Hive box
+ * dashboard at `http://localhost:4483/dashboard` from their browser on the Hive box
  * has no way to know what URL to give to a Bee on another machine. We
  * detect Tailscale automatically (the recommended HivePlane transport per
  * the README), and otherwise fall back to the machine's hostname.

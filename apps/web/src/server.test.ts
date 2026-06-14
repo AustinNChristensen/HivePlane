@@ -1532,8 +1532,9 @@ describe("Hive server", () => {
     }
   });
 
-  it("serves the dashboard at /, /dashboard, and /index.html", async () => {
+  it("serves the landing page at / and dashboard at /dashboard and /index.html", async () => {
     const publicDir = mkdtempSync(join(tmpdir(), "hiveplane-public-test-"));
+    writeFileSync(join(publicDir, "landing.html"), "<!doctype html><title>Test Landing</title>");
     writeFileSync(join(publicDir, "index.html"), "<!doctype html><title>Test Dashboard</title>");
 
     const server = createHiveServer({ publicDir });
@@ -1546,7 +1547,12 @@ describe("Hive server", () => {
         throw new Error("server did not bind to a TCP port");
       const baseUrl = `http://127.0.0.1:${address.port}`;
 
-      for (const path of ["/", "/dashboard", "/dashboard/", "/index.html"]) {
+      const landing = await fetch(`${baseUrl}/`);
+      expect(landing.status).toBe(200);
+      expect(landing.headers.get("content-type")).toContain("text/html");
+      expect(await landing.text()).toContain("Test Landing");
+
+      for (const path of ["/dashboard", "/dashboard/", "/index.html"]) {
         const ok = await fetch(`${baseUrl}${path}`);
         expect(ok.status, `path ${path}`).toBe(200);
         expect(ok.headers.get("content-type")).toContain("text/html");
@@ -1569,7 +1575,7 @@ describe("Hive server", () => {
       const res = await fetch(`http://127.0.0.1:${address.port}/`);
       expect(res.status).toBe(404);
       const body = (await res.json()) as { error: string };
-      expect(body.error).toBe("dashboard_not_built");
+      expect(body.error).toBe("landing_not_built");
     } finally {
       server2.close();
     }

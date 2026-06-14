@@ -97,12 +97,13 @@ server.listen(port, host, () => {
   const url = `${scheme}://${visitHost}:${boundPort}`;
 
   console.log(`HivePlane Hive v${VERSION} listening on ${scheme}://${boundHost}:${boundPort}`);
-  console.log(`Dashboard:   ${url}/`);
+  console.log(`Dashboard:   ${url}/dashboard`);
+  console.log(`Website:     ${url}/`);
   console.log(`Health:      ${url}/healthz`);
   console.log(`API root:    ${url}/api/bees`);
 
   if (open) {
-    openInBrowser(`${url}/`);
+    openInBrowser(`${url}/dashboard`);
   }
 });
 

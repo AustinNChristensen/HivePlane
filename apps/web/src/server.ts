@@ -608,11 +608,33 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
 
-      // Dashboard: GET /, /dashboard, /index.html all serve the static index.html.
+      // Public landing page: GET / serves the website front door, while the
+      // operator dashboard stays available at /dashboard and /index.html.
+      if (request.method === "GET" && url.pathname === "/") {
+        const landingPath = join(publicDir, "landing.html");
+        try {
+          const html = readFileSync(landingPath, "utf8");
+          response.writeHead(200, {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "no-store",
+          });
+          response.end(html);
+          return;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            return sendJson(response, 404, {
+              error: "landing_not_built",
+              message: `landing page not found at ${landingPath}. The Hive process may be running an older revision than the source on disk — restart it.`,
+            });
+          }
+          throw error;
+        }
+      }
+
+      // Dashboard: GET /dashboard, /dashboard/, and /index.html serve the static index.html.
       if (
         request.method === "GET" &&
-        (url.pathname === "/" ||
-          url.pathname === "/dashboard" ||
+        (url.pathname === "/dashboard" ||
           url.pathname === "/dashboard/" ||
           url.pathname === "/index.html")
       ) {

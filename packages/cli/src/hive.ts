@@ -217,7 +217,7 @@ async function runStart(parsed: ArgvParseResult): Promise<void> {
     console.log(`Installed Hive service unit (${result.platform}): ${result.unitPath}`);
   }
   await startHiveService();
-  console.log(`Hive started. Dashboard: http://localhost:${port}/`);
+  console.log(`Hive started. Dashboard: http://localhost:${port}/dashboard`);
   console.log(`Tail logs with \`hive logs -f\`. Stop with \`hive stop\`.`);
   warnIfLingerOff();
 }
