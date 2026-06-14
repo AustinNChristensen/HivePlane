@@ -784,7 +784,7 @@ describe("Hive server", () => {
         });
         expect(assignedTask.status).toBe(200);
         const assignedBody = (await assignedTask.json()) as {
-          task: { status: string; assignedBeeId: string };
+          task: { id: string; status: string; assignedBeeId: string };
         };
         expect(assignedBody.task).toMatchObject({
           status: "assigned",
@@ -801,6 +801,60 @@ describe("Hive server", () => {
         expect(visibleTasksBody.tasks).toEqual(
           expect.arrayContaining([expect.objectContaining({ targetSystemId: "finance" })]),
         );
+
+        const cancelledTask = await fetch(`${baseUrl}/api/tasks/${assignedBody.task.id}/cancel`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${operatorBody.token}` },
+        });
+        expect(cancelledTask.status).toBe(200);
+
+        const automationResponse = await fetch(`${baseUrl}/api/automations`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${operatorBody.token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            title: "Finance automation",
+            instructions: "Inspect finance files later.",
+            targetSystemId: "finance",
+            requirements: { runtimes: ["openclaw"], tools: ["github"] },
+            trigger: "interval",
+            everySeconds: 3600,
+          }),
+        });
+        expect(automationResponse.status).toBe(200);
+
+        const visibleAutomations = await fetch(`${baseUrl}/api/automations`, {
+          headers: { authorization: `Bearer ${operatorBody.token}` },
+        });
+        expect(visibleAutomations.status).toBe(200);
+        const visibleAutomationsBody = (await visibleAutomations.json()) as {
+          automations: Array<{ targetSystemId: string }>;
+        };
+        expect(visibleAutomationsBody.automations).toEqual(
+          expect.arrayContaining([expect.objectContaining({ targetSystemId: "finance" })]),
+        );
+
+        const forbiddenAudit = await fetch(`${baseUrl}/api/audit-log`, {
+          headers: { authorization: `Bearer ${operatorBody.token}` },
+        });
+        expect(forbiddenAudit.status).toBe(403);
+
+        const grantAudit = await fetch(`${baseUrl}/api/system-permissions`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            userId: operatorBody.operator.userId,
+            systemId: "finance",
+            permissions: ["audit"],
+          }),
+        });
+        expect(grantAudit.status).toBe(200);
+        const allowedAudit = await fetch(`${baseUrl}/api/audit-log`, {
+          headers: { authorization: `Bearer ${operatorBody.token}` },
+        });
+        expect(allowedAudit.status).toBe(200);
       },
     );
   });

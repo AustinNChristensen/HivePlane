@@ -1220,10 +1220,16 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
 
       const cancelJobMatch = /^\/api\/jobs\/([^/]+)\/cancel$/.exec(url.pathname);
       if (request.method === "POST" && cancelJobMatch) {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
         const jobId = decodeURIComponent(cancelJobMatch[1] ?? "");
         const existing = findJob(state.jobsState, jobId);
         if (!existing) return sendJson(response, 404, { error: "not_found" });
+        if (
+          !requireSystemPermissionOrSend(response, state, actor, jobTargetSystemId(existing), "run")
+        ) {
+          return;
+        }
         if (["succeeded", "failed", "cancelled", "timed_out"].includes(existing.status)) {
           return sendJson(response, 409, {
             error: "job_not_cancellable",
@@ -1247,10 +1253,16 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
 
       const retryJobMatch = /^\/api\/jobs\/([^/]+)\/retry$/.exec(url.pathname);
       if (request.method === "POST" && retryJobMatch) {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
         const jobId = decodeURIComponent(retryJobMatch[1] ?? "");
         const source = findJob(state.jobsState, jobId);
         if (!source) return sendJson(response, 404, { error: "not_found" });
+        if (
+          !requireSystemPermissionOrSend(response, state, actor, jobTargetSystemId(source), "run")
+        ) {
+          return;
+        }
         if (!["failed", "cancelled", "timed_out"].includes(source.status)) {
           return sendJson(response, 409, {
             error: "job_not_retryable",
@@ -1485,14 +1497,20 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
       }
 
       if (request.method === "GET" && url.pathname === "/api/automations") {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
         scheduleDueAutomations(state, now());
         markDirty();
-        return sendJson(response, 200, { automations: serializeAutomations(state) });
+        return sendJson(response, 200, {
+          automations: serializeAutomations(state).filter((automation) =>
+            hasSystemPermission(state, actor, automation.targetSystemId || "public", "view"),
+          ),
+        });
       }
 
       if (request.method === "POST" && url.pathname === "/api/automations") {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
         const { body } = await readJson(request);
         const parsed = CreateHiveAutomationRequestSchema.safeParse(body);
         if (!parsed.success) {
@@ -1506,6 +1524,11 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
             error: "bad_request",
             reason: "interval automations require everySeconds",
           });
+        }
+        if (
+          !requireSystemPermissionOrSend(response, state, actor, parsed.data.targetSystemId, "run")
+        ) {
+          return;
         }
         const current = now();
         const automation = createHiveAutomation(state, parsed.data, current);
@@ -1522,11 +1545,25 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
       const automationActionMatch =
         /^\/api\/automations\/([^/]+)\/(pause|resume|run|trigger)$/.exec(url.pathname);
       if (request.method === "POST" && automationActionMatch) {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
         const automationId = decodeURIComponent(automationActionMatch[1] ?? "");
         const action = automationActionMatch[2] as "pause" | "resume" | "run" | "trigger";
         const automation = state.automations.get(automationId);
         if (!automation) return sendJson(response, 404, { error: "not_found" });
+        const requiredPermission: HiveSystemPermission =
+          action === "pause" || action === "resume" ? "admin" : "run";
+        if (
+          !requireSystemPermissionOrSend(
+            response,
+            state,
+            actor,
+            automation.targetSystemId || "public",
+            requiredPermission,
+          )
+        ) {
+          return;
+        }
         const current = now();
         let task: HiveTaskRecord | undefined;
         if (action === "pause") {
@@ -1564,7 +1601,9 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
       }
 
       if (request.method === "GET" && url.pathname === "/api/audit-log") {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
+        if (!requireAnySystemPermissionOrSend(response, state, actor, "audit")) return;
         return sendJson(response, 200, { entries: serializeAuditLog(state) });
       }
 
@@ -1595,10 +1634,22 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
 
       const retryTaskMatch = /^\/api\/tasks\/([^/]+)\/retry$/.exec(url.pathname);
       if (request.method === "POST" && retryTaskMatch) {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
         const taskId = decodeURIComponent(retryTaskMatch[1] ?? "");
         const task = state.tasks.get(taskId);
         if (!task) return sendJson(response, 404, { error: "not_found" });
+        if (
+          !requireSystemPermissionOrSend(
+            response,
+            state,
+            actor,
+            task.targetSystemId || "public",
+            "run",
+          )
+        ) {
+          return;
+        }
         if (task.status === "assigned" || task.status === "running" || task.status === "queued") {
           return sendJson(response, 409, {
             error: "task_not_retryable",
@@ -1624,10 +1675,22 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
 
       const cancelTaskMatch = /^\/api\/tasks\/([^/]+)\/cancel$/.exec(url.pathname);
       if (request.method === "POST" && cancelTaskMatch) {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
         const taskId = decodeURIComponent(cancelTaskMatch[1] ?? "");
         const task = state.tasks.get(taskId);
         if (!task) return sendJson(response, 404, { error: "not_found" });
+        if (
+          !requireSystemPermissionOrSend(
+            response,
+            state,
+            actor,
+            task.targetSystemId || "public",
+            "run",
+          )
+        ) {
+          return;
+        }
         if (["succeeded", "failed", "cancelled"].includes(task.status)) {
           return sendJson(response, 409, {
             error: "task_not_cancellable",
@@ -1708,12 +1771,17 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
       }
 
       if (request.method === "GET" && url.pathname === "/api/incidents") {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
+        if (!requireAnySystemPermissionOrSend(response, state, actor, "audit")) return;
         return sendJson(response, 200, { incidents: serializeIncidents(state, now()) });
       }
 
       if (request.method === "POST" && url.pathname === "/api/incidents/notifications/deliver") {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken, {
+          minRole: "admin",
+        });
+        if (!actor) return;
         if (!incidentNotifier) {
           return sendJson(response, 503, {
             error: "notification_delivery_disabled",
@@ -1929,6 +1997,27 @@ function requireSystemPermissionOrSend(
     return false;
   }
   return true;
+}
+
+function requireAnySystemPermissionOrSend(
+  response: ServerResponse,
+  state: HiveServerState,
+  actor: AuthenticatedOperator,
+  permission: HiveSystemPermission,
+): boolean {
+  if (actor.adminToken || actor.role === "owner" || actor.role === "admin") return true;
+  if (
+    [...state.systems.keys()].some((systemId) =>
+      hasSystemPermission(state, actor, systemId, permission),
+    )
+  ) {
+    return true;
+  }
+  sendJson(response, 403, {
+    error: "forbidden",
+    reason: `operator lacks ${permission} permission on any System`,
+  });
+  return false;
 }
 
 function beeCanAccessSystem(state: HiveServerState, beeId: string, systemId: string): boolean {

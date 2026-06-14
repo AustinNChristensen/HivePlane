@@ -119,6 +119,23 @@ Live approval dogfood:
 - approval response included `hiveApproval` with `approvedBy=admin-token`;
 - Bee accepted and completed the job successfully because local policy recognized the Hive approval marker.
 
+### 2026-06-14 — Scoped Control Surfaces
+
+Shipped another #32 enforcement slice:
+
+- job cancel/retry now require operator auth plus `run` on the job target System;
+- task retry/cancel now require operator auth plus `run` on the task target System;
+- automation list filters by System `view`;
+- automation create/run/trigger require `run` on the automation target System;
+- automation pause/resume require `admin` on the automation target System;
+- audit log and incident list require `audit` on at least one System;
+- incident notification delivery remains admin-role gated.
+
+Verification:
+
+- full `pnpm format:check`, `pnpm typecheck`, and `pnpm test` passed;
+- server tests cover a finance-scoped operator creating/cancelling tasks, creating/listing automations, being denied audit without `audit`, then being allowed after an audit grant.
+
 ### 2026-06-14 — Ollama Backend Adapter
 
 Shipped the first #39 implementation:
