@@ -74,6 +74,19 @@ The Hive should route tasks by matching request requirements to Bee capabilities
 
 The task scheduler should never treat all Bees as equivalent generic workers. A laptop Bee, local-model server, customer-support box, and finance-connected machine should have different permissions, expectations, and routing behavior.
 
+### OpenClaw Task Adapter
+
+The first concrete sub-agent runtime adapter is OpenClaw:
+
+- Hive task requirements can include `runtimes: ["openclaw"]`.
+- The scheduler only assigns that task to a healthy Bee that reports OpenClaw capability.
+- The Bee daemon invokes `openclaw agent --json` with a dedicated `hiveplane-task-<taskId>` session key.
+- The prompt includes the Hive task title, instructions, requester, and requirements.
+- stdout/stderr stream back as job events, and the final OpenClaw JSON/text result is stored on the job output.
+- The OpenClaw run does not use `--deliver`; HivePlane owns delivery of the result or escalation.
+
+This is intentionally runtime-specific instead of a generic shell escape hatch. Each runtime adapter should expose a small, auditable contract that Hive can route to and reason about.
+
 ## Key Components
 
 | Component        | Responsibility                                             |

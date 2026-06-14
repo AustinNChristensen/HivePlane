@@ -273,6 +273,103 @@ describe("JobExecutor", () => {
     });
   });
 
+  it("runs OpenClaw-backed Hive sub-agent tasks", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const spawnImpl = makeSpawn({
+      stdoutChunks: [
+        JSON.stringify({
+          runId: "run_123",
+          status: "ok",
+          summary: "completed",
+          result: {
+            payloads: [{ text: "done" }],
+            meta: {
+              durationMs: 1234,
+              agentMeta: {
+                sessionId: "sess_123",
+                provider: "openai",
+                model: "gpt-test",
+                agentHarnessId: "codex",
+                usage: { input: 10, output: 2, total: 12 },
+                verboseInternalBlob: "drop me",
+              },
+              systemPromptReport: { shouldNotPersist: true },
+            },
+          },
+        }) + "\n",
+      ],
+      exitCode: 0,
+    }) as unknown as typeof import("node:child_process").spawn;
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      daemonVersion: "0.0.1-test",
+      policy: { runCommand: { allow: [], unsafeAllowAll: false } },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl,
+      openclawPathOverride: "/tmp/openclaw-test",
+    });
+
+    await executor.execute(
+      makeJob({
+        type: "agent_task",
+        timeoutSeconds: 120,
+        payload: {
+          taskId: "task_openclaw",
+          title: "Summarize repo",
+          instructions: "Find the important files.",
+          requestedBy: "unit-test",
+          requirements: { runtimes: ["openclaw"], tools: [], models: [] },
+        },
+      }),
+    );
+
+    expect(spawnImpl).toHaveBeenCalledWith(
+      "/tmp/openclaw-test",
+      expect.arrayContaining([
+        "agent",
+        "--session-key",
+        "hiveplane-task-task_openclaw",
+        "--json",
+        "--timeout",
+        "120",
+      ]),
+      expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+    );
+    const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
+    expect(body.status).toBe("succeeded");
+    expect(body.output).toMatchObject({
+      taskId: "task_openclaw",
+      title: "Summarize repo",
+      runtime: "openclaw",
+      sessionKey: "hiveplane-task-task_openclaw",
+      result: {
+        runId: "run_123",
+        status: "ok",
+        summary: "completed",
+        finalText: "done",
+        durationMs: 1234,
+        agent: {
+          sessionId: "sess_123",
+          provider: "openai",
+          model: "gpt-test",
+          harness: "codex",
+          usage: { input: 10, output: 2, total: 12 },
+        },
+      },
+    });
+    expect(body.output.result.agent.verboseInternalBlob).toBeUndefined();
+    expect(body.output.result.systemPromptReport).toBeUndefined();
+  });
+
   it("openclaw_status completes through the adapter path", async () => {
     const identity = await makeIdentity();
     const session = makeSession();

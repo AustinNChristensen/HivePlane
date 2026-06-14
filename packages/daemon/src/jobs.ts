@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { sign as edSign } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { userInfo } from "node:os";
 import {
@@ -30,6 +30,8 @@ export type JobExecutorOptions = {
   fetchImpl?: typeof fetch;
   /** Override for tests. Defaults to spawning a real child process. */
   spawnImpl?: typeof spawn;
+  /** Override for tests. Production resolves the local OpenClaw binary from fixed paths. */
+  openclawPathOverride?: string;
   scheduleRestart?: boolean;
 };
 
@@ -252,8 +254,24 @@ export class JobExecutor {
     const title = typeof job.payload.title === "string" ? job.payload.title : "Hive task";
     const instructions =
       typeof job.payload.instructions === "string" ? job.payload.instructions : "";
+    const requestedBy =
+      typeof job.payload.requestedBy === "string" ? job.payload.requestedBy : "hive";
+    const requirements = readTaskRequirements(job.payload.requirements);
+    const runtime =
+      typeof job.payload.runtime === "string" ? job.payload.runtime : requirements.runtimes[0];
 
     await this.emit(job, "info", "agent_task.accepted", { taskId, title });
+
+    if (runtime === "openclaw") {
+      return await this.runOpenClawAgentTask(job, {
+        taskId,
+        title,
+        instructions,
+        requestedBy,
+        requirements,
+      });
+    }
+
     await this.emit(job, "info", "agent_task.scaffold", {
       message: "Bee accepted a Hive sub-agent task. Runtime-specific execution will be wired next.",
     });
@@ -264,10 +282,122 @@ export class JobExecutor {
         taskId,
         title,
         instructions,
+        requestedBy,
+        requirements,
         runtime: "scaffold",
         message: "Hive sub-agent task accepted by Bee.",
       },
     };
+  }
+
+  private async runOpenClawAgentTask(
+    job: Job,
+    task: {
+      taskId: string;
+      title: string;
+      instructions: string;
+      requestedBy: string;
+      requirements: TaskRequirements;
+    },
+  ): Promise<JobOutcome> {
+    const openclawPath =
+      this.options.openclawPathOverride ??
+      findExecutable(["/opt/homebrew/bin/openclaw", "/usr/local/bin/openclaw"]);
+    if (!openclawPath) {
+      await this.emit(job, "error", "agent_task.openclaw.missing", {
+        message: "openclaw CLI not found on this Bee",
+      });
+      return {
+        status: "failed",
+        error: {
+          code: "openclaw_not_found",
+          message: "openclaw CLI not found on this Bee",
+        },
+      };
+    }
+
+    const timeoutSeconds = typeof job.timeoutSeconds === "number" ? job.timeoutSeconds : 600;
+    const prompt = buildOpenClawTaskPrompt(task);
+    const sessionKey = `hiveplane-task-${task.taskId}`;
+    const args = [
+      "agent",
+      "--session-key",
+      sessionKey,
+      "--message",
+      prompt,
+      "--json",
+      "--timeout",
+      String(timeoutSeconds),
+    ];
+
+    await this.emit(job, "info", "agent_task.openclaw.start", {
+      taskId: task.taskId,
+      sessionKey,
+      timeoutSeconds,
+      command: openclawPath,
+    });
+
+    const child = this.spawnImpl(openclawPath, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    });
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+    const pendingEventPosts: Promise<void>[] = [];
+    const queueEvent = (level: JobEvent["level"], type: string, data: Record<string, JsonValue>) =>
+      pendingEventPosts.push(this.emit(job, level, type, data));
+
+    child.stdout?.on("data", (data: Buffer) => {
+      const text = data.toString("utf8");
+      stdoutChunks.push(text);
+      queueEvent("debug", "agent_task.openclaw.stdout", { text });
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      const text = data.toString("utf8");
+      stderrChunks.push(text);
+      queueEvent("debug", "agent_task.openclaw.stderr", { text });
+    });
+
+    return await new Promise<JobOutcome>((resolve) => {
+      child.once("error", async (err) => {
+        await Promise.allSettled(pendingEventPosts);
+        resolve({
+          status: "failed",
+          error: { code: "openclaw_spawn_error", message: err.message },
+        });
+      });
+      child.once("close", async (exitCode, signal) => {
+        await Promise.allSettled(pendingEventPosts);
+        const stdout = stdoutChunks.join("");
+        const stderr = stderrChunks.join("");
+        const parsed = parseJsonObject(stdout);
+        const compactResult = parsed ? compactOpenClawResult(parsed) : undefined;
+        const summary: Record<string, JsonValue> = {
+          taskId: task.taskId,
+          title: task.title,
+          runtime: "openclaw",
+          sessionKey,
+          exitCode: exitCode ?? -1,
+          signal: signal ?? null,
+          stdout: truncateText(stdout, 8_000),
+          stderr: truncateText(stderr, 8_000),
+          ...(compactResult ? { result: compactResult } : {}),
+        };
+
+        if (exitCode === 0) {
+          resolve({ status: "succeeded", output: summary });
+          return;
+        }
+        resolve({
+          status: "failed",
+          error: {
+            code: "openclaw_agent_failed",
+            message: `openclaw agent exited ${exitCode}`,
+            ...summary,
+          },
+        });
+      });
+    });
   }
 
   private async runUpdateCommand(
@@ -432,4 +562,119 @@ export class JobExecutor {
       }
     }, 1_000).unref();
   }
+}
+
+type TaskRequirements = {
+  runtimes: string[];
+  tools: string[];
+  models: string[];
+};
+
+function readTaskRequirements(value: JsonValue | undefined): TaskRequirements {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { runtimes: [], tools: [], models: [] };
+  }
+  return {
+    runtimes: readStringArray(value.runtimes),
+    tools: readStringArray(value.tools),
+    models: readStringArray(value.models),
+  };
+}
+
+function readStringArray(value: JsonValue | undefined): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function buildOpenClawTaskPrompt(task: {
+  taskId: string;
+  title: string;
+  instructions: string;
+  requestedBy: string;
+  requirements: TaskRequirements;
+}): string {
+  return [
+    "You are running as a HivePlane Bee sub-agent task.",
+    "Return a concise result for HivePlane. Do not deliver messages externally unless the task instructions explicitly require it and local policy allows it.",
+    "",
+    `Task ID: ${task.taskId}`,
+    `Title: ${task.title}`,
+    `Requested by: ${task.requestedBy}`,
+    `Requirements: ${JSON.stringify(task.requirements)}`,
+    "",
+    "Instructions:",
+    task.instructions,
+  ].join("\n");
+}
+
+function parseJsonObject(stdout: string): Record<string, JsonValue> | undefined {
+  const trimmed = stdout.trim();
+  if (!trimmed) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, JsonValue>;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function compactOpenClawResult(parsed: Record<string, JsonValue>): Record<string, JsonValue> {
+  const result = readObject(parsed.result);
+  const meta = readObject(result?.meta);
+  const agentMeta = readObject(meta?.agentMeta);
+  const compact: Record<string, JsonValue> = {};
+  const finalText = readOpenClawFinalText(parsed);
+  if (typeof parsed.runId === "string") compact.runId = parsed.runId;
+  if (typeof parsed.status === "string") compact.status = parsed.status;
+  if (typeof parsed.summary === "string") compact.summary = parsed.summary;
+  if (finalText) compact.finalText = finalText;
+  if (typeof meta?.durationMs === "number") compact.durationMs = meta.durationMs;
+  if (agentMeta) {
+    const agent: Record<string, JsonValue> = {};
+    if (typeof agentMeta.sessionId === "string") agent.sessionId = agentMeta.sessionId;
+    if (typeof agentMeta.provider === "string") agent.provider = agentMeta.provider;
+    if (typeof agentMeta.model === "string") agent.model = agentMeta.model;
+    if (typeof agentMeta.agentHarnessId === "string") agent.harness = agentMeta.agentHarnessId;
+    const usage = readObject(agentMeta.usage);
+    if (usage) agent.usage = usage;
+    compact.agent = agent;
+  }
+  return compact;
+}
+
+function readOpenClawFinalText(parsed: Record<string, JsonValue>): string | undefined {
+  if (typeof parsed.finalAssistantVisibleText === "string") return parsed.finalAssistantVisibleText;
+  const result = readObject(parsed.result);
+  const payloads = result?.payloads;
+  if (!Array.isArray(payloads)) return undefined;
+  for (const payload of payloads) {
+    const item = readObject(payload);
+    if (typeof item?.text === "string" && item.text.trim()) return item.text;
+  }
+  return undefined;
+}
+
+function readObject(value: JsonValue | undefined): Record<string, JsonValue> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, JsonValue>)
+    : undefined;
+}
+
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength)}\n...[truncated ${value.length - maxLength} chars]`;
+}
+
+function findExecutable(paths: string[]): string | undefined {
+  return paths.find((candidate) => {
+    try {
+      return existsSync(candidate) && statSync(candidate).isFile();
+    } catch {
+      return false;
+    }
+  });
 }
