@@ -186,6 +186,10 @@ export type HiveServerState = {
   incidents: Map<string, IncidentRecord>;
 };
 
+type DeviceProfilePatchResult =
+  | { profile: BeeDeviceProfile; warnings: string[] }
+  | { error: string; reason: string };
+
 export type IncidentNotificationPayload = {
   incident: IncidentRecord;
   notification: IncidentNotification;
@@ -539,9 +543,16 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           return sendJson(response, 404, { error: "not_found", reason: "bee not registered" });
         }
         const { body } = await readJson(request);
-        bee.profile = parseDeviceProfilePatch(body, bee.profile);
+        const parsed = parseDeviceProfilePatch(body, bee.profile);
+        if ("error" in parsed) {
+          return sendJson(response, 400, parsed);
+        }
+        bee.profile = parsed.profile;
         markDirty();
-        return sendJson(response, 200, { bee: serializeBee(bee, now()) });
+        return sendJson(response, 200, {
+          bee: serializeBee(bee, now()),
+          warnings: parsed.warnings,
+        });
       }
 
       if (request.method === "POST" && url.pathname === "/api/bootstrap-tokens") {
@@ -1219,12 +1230,17 @@ function serializeBee(bee: HiveBeeRecord, now: Date, state?: HiveServerState): H
       }
     : undefined;
   const lastSeenMs = new Date(bee.lastSeenAt).getTime();
+  const offlineAfterMs = beeOfflineAfterMs(bee);
   const status =
-    Number.isFinite(lastSeenMs) && now.getTime() - lastSeenMs > OFFLINE_AFTER_MS
+    Number.isFinite(lastSeenMs) && now.getTime() - lastSeenMs > offlineAfterMs
       ? "offline"
       : bee.status;
   const withStatus = rescue ? { ...bee, status, rescue } : { ...bee, status };
   return { ...withStatus, operationalState: computeOperationalState(withStatus, now, state) };
+}
+
+function beeOfflineAfterMs(bee: HiveBeeRecord): number {
+  return Math.min(OFFLINE_AFTER_MS, bee.profile.offlineGraceSeconds * 1000);
 }
 
 function serializeIncidents(state: HiveServerState, _now: Date): IncidentRecord[] {
@@ -1253,41 +1269,133 @@ function defaultDeviceProfile(labels: Record<string, string> = {}, beeName = "")
   };
 }
 
-function parseDeviceProfilePatch(body: unknown, existing: BeeDeviceProfile): BeeDeviceProfile {
-  if (!body || typeof body !== "object") return existing;
+function parseDeviceProfilePatch(
+  body: unknown,
+  existing: BeeDeviceProfile,
+): DeviceProfilePatchResult {
+  if (!body || typeof body !== "object") {
+    return { error: "bad_request", reason: "profile patch must be a JSON object" };
+  }
   const input = body as Record<string, unknown>;
-  const availabilityClass =
-    typeof input.availabilityClass === "string"
-      ? (parseAvailabilityClass(input.availabilityClass) ?? existing.availabilityClass)
-      : existing.availabilityClass;
-  const offlineGraceSeconds =
-    typeof input.offlineGraceSeconds === "number" &&
-    Number.isInteger(input.offlineGraceSeconds) &&
-    input.offlineGraceSeconds > 0
-      ? input.offlineGraceSeconds
-      : existing.offlineGraceSeconds;
-  const expectedWindows = Array.isArray(input.expectedWindows)
-    ? input.expectedWindows.filter((value): value is string => typeof value === "string")
-    : existing.expectedWindows;
-  const criticalServices = Array.isArray(input.criticalServices)
-    ? input.criticalServices.filter((value): value is string => typeof value === "string")
-    : existing.criticalServices;
-  const activeJobPolicy =
-    input.activeJobPolicy === "watch" || input.activeJobPolicy === "escalate"
-      ? input.activeJobPolicy
-      : existing.activeJobPolicy;
+  let availabilityClass = existing.availabilityClass;
+  if (input.availabilityClass !== undefined) {
+    if (typeof input.availabilityClass !== "string") {
+      return { error: "bad_request", reason: "availabilityClass must be a string" };
+    }
+    const parsed = parseAvailabilityClass(input.availabilityClass);
+    if (!parsed) return { error: "bad_request", reason: "availabilityClass is invalid" };
+    availabilityClass = parsed;
+  }
 
-  return {
+  let offlineGraceSeconds = existing.offlineGraceSeconds;
+  if (input.offlineGraceSeconds !== undefined) {
+    if (
+      typeof input.offlineGraceSeconds !== "number" ||
+      !Number.isInteger(input.offlineGraceSeconds) ||
+      input.offlineGraceSeconds < 30 ||
+      input.offlineGraceSeconds > 7 * 24 * 60 * 60
+    ) {
+      return {
+        error: "bad_request",
+        reason: "offlineGraceSeconds must be an integer from 30 seconds to 7 days",
+      };
+    }
+    offlineGraceSeconds = input.offlineGraceSeconds;
+  }
+
+  const expectedWindows =
+    input.expectedWindows !== undefined
+      ? parseProfileStringList(input.expectedWindows, "expectedWindows")
+      : { values: existing.expectedWindows };
+  if ("error" in expectedWindows) return expectedWindows;
+
+  const criticalServices =
+    input.criticalServices !== undefined
+      ? parseProfileStringList(input.criticalServices, "criticalServices")
+      : { values: existing.criticalServices };
+  if ("error" in criticalServices) return criticalServices;
+
+  let activeJobPolicy = existing.activeJobPolicy;
+  if (input.activeJobPolicy !== undefined) {
+    if (input.activeJobPolicy !== "watch" && input.activeJobPolicy !== "escalate") {
+      return { error: "bad_request", reason: "activeJobPolicy must be watch or escalate" };
+    }
+    activeJobPolicy = input.activeJobPolicy;
+  }
+
+  if (input.autoRepairWhenOnline !== undefined && typeof input.autoRepairWhenOnline !== "boolean") {
+    return { error: "bad_request", reason: "autoRepairWhenOnline must be a boolean" };
+  }
+
+  const profile = {
     availabilityClass,
     offlineGraceSeconds,
-    expectedWindows,
-    criticalServices,
+    expectedWindows: expectedWindows.values,
+    criticalServices: criticalServices.values,
     activeJobPolicy,
     autoRepairWhenOnline:
       typeof input.autoRepairWhenOnline === "boolean"
         ? input.autoRepairWhenOnline
         : existing.autoRepairWhenOnline,
   };
+  return { profile, warnings: getDeviceProfileWarnings(profile) };
+}
+
+function parseProfileStringList(
+  value: unknown,
+  field: "expectedWindows" | "criticalServices",
+): { values: string[] } | { error: string; reason: string } {
+  if (!Array.isArray(value)) {
+    return { error: "bad_request", reason: `${field} must be an array of strings` };
+  }
+  const values: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") {
+      return { error: "bad_request", reason: `${field} must contain only strings` };
+    }
+    const trimmed = item.trim();
+    if (!trimmed) continue;
+    if (trimmed.length > 80) {
+      return { error: "bad_request", reason: `${field} entries must be 80 characters or less` };
+    }
+    if (!values.includes(trimmed)) values.push(trimmed);
+  }
+  if (values.length > 50) {
+    return { error: "bad_request", reason: `${field} can contain at most 50 entries` };
+  }
+  return { values };
+}
+
+function getDeviceProfileWarnings(profile: BeeDeviceProfile): string[] {
+  const warnings: string[] = [];
+  if (
+    (profile.availabilityClass === "critical" || profile.availabilityClass === "always_on") &&
+    profile.offlineGraceSeconds > 10 * 60
+  ) {
+    warnings.push("Always-on and critical Bees usually need a grace window under 10 minutes.");
+  }
+  if (
+    profile.availabilityClass === "critical" &&
+    profile.offlineGraceSeconds > defaultOfflineGraceSeconds("critical")
+  ) {
+    warnings.push("Critical Bees default to a 60 second grace window.");
+  }
+  if (
+    (profile.availabilityClass === "critical" || profile.availabilityClass === "always_on") &&
+    !profile.autoRepairWhenOnline
+  ) {
+    warnings.push("Auto repair is disabled, so server-like Bees will alert instead of self-heal.");
+  }
+  if (profile.availabilityClass === "critical" && profile.criticalServices.length === 0) {
+    warnings.push("Critical profiles are more useful when at least one critical service is set.");
+  }
+  if (
+    (profile.availabilityClass === "intermittent" || profile.availabilityClass === "ephemeral") &&
+    profile.activeJobPolicy === "watch"
+  ) {
+    warnings.push("Watch mode will not escalate quickly if this Bee disappears with active jobs.");
+  }
+  return warnings;
 }
 
 function parseAvailabilityClass(value: string | undefined): BeeAvailabilityClass | undefined {
@@ -1350,7 +1458,7 @@ function computeOperationalState(
     const staleMs = now.getTime() - new Date(bee.lastSeenAt).getTime();
     const graceMs = bee.profile.offlineGraceSeconds * 1000;
     if (bee.activeJobs > 0 && bee.profile.activeJobPolicy === "escalate") return "degraded";
-    if (staleMs <= OFFLINE_AFTER_MS) return "healthy";
+    if (staleMs <= beeOfflineAfterMs(bee)) return "healthy";
     if (staleMs <= graceMs) return "expected_offline";
     return bee.profile.availabilityClass === "intermittent" ||
       bee.profile.availabilityClass === "ephemeral"

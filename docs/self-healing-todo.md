@@ -72,3 +72,4 @@ Goal: HivePlane should operate AI agent machines with an AI brain and constraine
 
 - Dogfood more safe failure simulations now that real iMessage alerting is active: stop Bee, stop OpenClaw gateway, deny a risky repair, and force a verification failure.
 - Dogfood the dashboard profile editor across a few real profile changes and add any validation hints that prove useful.
+- Track the hardening pass in `docs/break-recover-test-matrix.md`; release is gated on either passing each scenario or writing a concrete follow-up issue.

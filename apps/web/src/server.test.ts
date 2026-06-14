@@ -242,6 +242,42 @@ describe("Hive server", () => {
     );
   });
 
+  it("honors short offline grace windows before the default stale threshold", async () => {
+    const state = createHiveServerState();
+    const bee = upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_short_grace",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      healthChecks: [],
+    });
+    bee.profile = {
+      availabilityClass: "critical",
+      offlineGraceSeconds: 30,
+      expectedWindows: [],
+      criticalServices: [],
+      activeJobPolicy: "escalate",
+      autoRepairWhenOnline: true,
+    };
+
+    await withServer(
+      { state, now: () => new Date("2026-05-09T08:00:45.000Z") },
+      async (baseUrl) => {
+        const body = (await (await fetch(`${baseUrl}/api/bees`)).json()) as {
+          bees: Array<{ beeId: string; status: string; operationalState: string }>;
+        };
+
+        expect(body.bees[0]).toMatchObject({
+          beeId: "bee_short_grace",
+          status: "offline",
+          operationalState: "unresolved_incident",
+        });
+      },
+    );
+  });
+
   it("queues a safe Rescue recovery job when an always-on Bee is stale", async () => {
     const state = createHiveServerState();
     upsertBeeHeartbeat(state, {
@@ -570,6 +606,7 @@ describe("Hive server", () => {
 
       expect(response.status).toBe(200);
       const body = (await response.json()) as {
+        warnings: string[];
         bee: {
           profile: {
             availabilityClass: string;
@@ -583,6 +620,75 @@ describe("Hive server", () => {
         offlineGraceSeconds: 60,
         criticalServices: ["openclaw-gateway"],
       });
+      expect(body.warnings).toEqual([]);
+    });
+  });
+
+  it("rejects invalid Bee profile patches", async () => {
+    const state = createHiveServerState();
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_bad_profile",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      healthChecks: [],
+    });
+
+    await withServer({ state, adminToken: "secret" }, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/bees/bee_bad_profile/profile`, {
+        method: "PATCH",
+        headers: { authorization: "Bearer secret", "content-type": "application/json" },
+        body: JSON.stringify({
+          availabilityClass: "critical",
+          offlineGraceSeconds: 0,
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { error: string; reason: string };
+      expect(body).toMatchObject({
+        error: "bad_request",
+        reason: "offlineGraceSeconds must be an integer from 30 seconds to 7 days",
+      });
+    });
+  });
+
+  it("returns warnings for risky Bee profile combinations", async () => {
+    const state = createHiveServerState();
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_warn_profile",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      healthChecks: [],
+    });
+
+    await withServer({ state, adminToken: "secret" }, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/bees/bee_warn_profile/profile`, {
+        method: "PATCH",
+        headers: { authorization: "Bearer secret", "content-type": "application/json" },
+        body: JSON.stringify({
+          availabilityClass: "critical",
+          offlineGraceSeconds: 3600,
+          autoRepairWhenOnline: false,
+          criticalServices: [],
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { warnings: string[] };
+      expect(body.warnings).toEqual(
+        expect.arrayContaining([
+          "Always-on and critical Bees usually need a grace window under 10 minutes.",
+          "Critical Bees default to a 60 second grace window.",
+          "Auto repair is disabled, so server-like Bees will alert instead of self-heal.",
+          "Critical profiles are more useful when at least one critical service is set.",
+        ]),
+      );
     });
   });
 

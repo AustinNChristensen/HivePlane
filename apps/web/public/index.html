@@ -340,6 +340,15 @@
         align-items: flex-end;
         margin-top: 12px;
       }
+      .profile-hints {
+        flex: 1 1 100%;
+        color: var(--warn);
+        font-size: 12px;
+      }
+      .profile-hints ul {
+        margin: 4px 0 0;
+        padding-left: 18px;
+      }
       .token-display {
         margin: 0 18px 18px;
         padding: 14px 16px;
@@ -1251,6 +1260,14 @@
         const activeJobPolicy = profile.activeJobPolicy || "escalate";
         const criticalServices = (profile.criticalServices || []).join("\n");
         const expectedWindows = (profile.expectedWindows || []).join("\n");
+        const hints = getProfileWarnings({
+          availabilityClass,
+          offlineGraceSeconds: Number(profile.offlineGraceSeconds ?? 120),
+          activeJobPolicy,
+          autoRepairWhenOnline: profile.autoRepairWhenOnline !== false,
+          criticalServices: profile.criticalServices || [],
+          expectedWindows: profile.expectedWindows || [],
+        });
         return `
           <form class="profile-form" data-action="profile-form" data-bee-id="${escapeHtml(bee.beeId)}">
             <div class="form-field compact">
@@ -1288,6 +1305,7 @@
               <label>Expected windows</label>
               <textarea name="expectedWindows" spellcheck="false">${escapeHtml(expectedWindows)}</textarea>
             </div>
+            <div class="profile-hints" data-role="profile-hints">${renderProfileHints(hints)}</div>
             <button class="action" type="submit">Save Profile</button>
           </form>
         `;
@@ -1333,6 +1351,21 @@
           criticalServices: splitProfileList(String(data.get("criticalServices") || "")),
           expectedWindows: splitProfileList(String(data.get("expectedWindows") || "")),
         };
+        const hints = form.querySelector("[data-role='profile-hints']");
+        const warnings = getProfileWarnings(payload);
+        if (!Number.isInteger(payload.offlineGraceSeconds)) {
+          hints.innerHTML = renderProfileHints(["Grace seconds must be a whole number."]);
+          button.disabled = false;
+          return;
+        }
+        if (payload.offlineGraceSeconds < 30 || payload.offlineGraceSeconds > 7 * 24 * 60 * 60) {
+          hints.innerHTML = renderProfileHints([
+            "Grace seconds must be from 30 seconds to 7 days.",
+          ]);
+          button.disabled = false;
+          return;
+        }
+        hints.innerHTML = renderProfileHints(warnings);
         try {
           const res = await fetch(`/api/bees/${encodeURIComponent(beeId)}/profile`, {
             method: "PATCH",
@@ -1344,8 +1377,11 @@
             els.beesMeta.textContent = "admin token rejected — paste the current token";
             return;
           }
-          if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-          els.beesMeta.textContent = "profile saved";
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.reason || body.message || `HTTP ${res.status}`);
+          els.beesMeta.textContent = body.warnings?.length
+            ? `profile saved with ${body.warnings.length} warning${body.warnings.length === 1 ? "" : "s"}`
+            : "profile saved";
           await refreshBees();
         } catch (err) {
           els.beesMeta.textContent = `profile save failed: ${err.message}`;
@@ -1358,6 +1394,46 @@
           .split(/[\n,]/)
           .map((part) => part.trim())
           .filter(Boolean);
+      }
+      function getProfileWarnings(profile) {
+        const warnings = [];
+        if (
+          ["always_on", "critical"].includes(profile.availabilityClass) &&
+          profile.offlineGraceSeconds > 10 * 60
+        ) {
+          warnings.push(
+            "Always-on and critical Bees usually need a grace window under 10 minutes.",
+          );
+        }
+        if (profile.availabilityClass === "critical" && profile.offlineGraceSeconds > 60) {
+          warnings.push("Critical Bees default to a 60 second grace window.");
+        }
+        if (
+          ["always_on", "critical"].includes(profile.availabilityClass) &&
+          !profile.autoRepairWhenOnline
+        ) {
+          warnings.push(
+            "Auto repair is disabled, so server-like Bees will alert instead of self-heal.",
+          );
+        }
+        if (profile.availabilityClass === "critical" && !profile.criticalServices.length) {
+          warnings.push(
+            "Critical profiles are more useful when at least one critical service is set.",
+          );
+        }
+        if (
+          ["intermittent", "ephemeral"].includes(profile.availabilityClass) &&
+          profile.activeJobPolicy === "watch"
+        ) {
+          warnings.push(
+            "Watch mode will not escalate quickly if this Bee disappears with active jobs.",
+          );
+        }
+        return warnings;
+      }
+      function renderProfileHints(warnings) {
+        if (!warnings.length) return "";
+        return `<ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>`;
       }
       async function queueHealthcheck(beeId, button) {
         if (!state.adminToken) {
