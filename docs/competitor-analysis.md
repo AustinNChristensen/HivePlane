@@ -1,6 +1,6 @@
 # HivePlane Competitor Analysis
 
-_Updated: 2026-06-13_
+_Updated: 2026-06-14_
 
 ## TL;DR
 
@@ -287,3 +287,170 @@ Promising, but only if we keep the wedge narrow.
 The market does not need another generic agent builder. It does need operational tooling for the weird reality of running agents on local/private machines with gateways, models, credentials, long-running jobs, and flaky integrations.
 
 HivePlane's differentiated story is credible if we make the connect/govern/manage/recover loop excellent before chasing broad orchestration.
+
+## June 14 Feature Check After #74-#78
+
+HivePlane now has more of the competitive wedge in-product:
+
+- Permission profiles for common Bee roles.
+- Work context and agent-session continuity.
+- Job artifacts and incident evidence links.
+- Background interval/signal automations.
+- First-class connector capabilities and connector-aware routing/policy.
+
+That makes the story much stronger than yesterday's "promising architecture." The product now demonstrates a concrete loop:
+
+1. Pair machines.
+2. See capabilities/connectors/sessions.
+3. Route work by runtime/model/connector/context.
+4. Run scheduled or signal-triggered work.
+5. Capture evidence.
+6. Recover or escalate with policy.
+
+The core positioning still holds:
+
+> HivePlane is not another agent framework. It is the control plane for the owned machines, local apps, models, connectors, and recovery loops those agents depend on.
+
+## Current Competitive Bar
+
+Recent market signals raise the adoption bar:
+
+- CrewAI AMP is explicitly selling enterprise agent discovery, build/deploy/govern, observability, optimization, and scale, with Fortune 500 credibility. Source: https://crewai.com/agent-management-platform
+- LangSmith sets the observability expectation: full traces, agent decisions, cost/latency dashboards, evals, alerts, and AI-assisted trace analysis. Source: https://www.langchain.com/langsmith-platform
+- OpenHands Cloud/Enterprise sets the open-source coding-agent expectation: GitHub/GitLab onboarding, Slack/Jira/Linear integrations, multi-user collaboration, RBAC, and private deployment. Sources: https://github.com/OpenHands/OpenHands and https://docs.openhands.dev/enterprise
+- E2B and adjacent sandbox providers frame the runtime alternative: secure, isolated, fast-starting agent computers with SDKs. Source: https://e2b.dev/
+- Okta and other IAM vendors are moving toward AI-agent identity, discovery, access control, and central kill-switch language. Source: https://www.techradar.com/pro/security/okta-unveils-new-framework-to-secure-and-protect-enterprise-ai-agents
+- The OpenClaw vulnerability coverage reinforces the buyer pain: unmanaged local agents with broad workstation access are now a security story, not just a productivity story. Source: https://www.techradar.com/pro/what-the-openclaw-vulnerability-reveals-about-the-future-of-agentic-ai-security
+
+## Adoption-Blocking Gaps
+
+These are the gaps that could stop a serious user from adopting HivePlane even if they like the thesis.
+
+### 1. Real Operator Identity And Authorization
+
+Status: launch blocker.
+
+Admin-token-only is no longer credible for a product that controls machines, connectors, and automations. Buyers will expect:
+
+- user login;
+- owner/admin/operator/viewer roles;
+- per-system permissions;
+- approval permission checks;
+- actor-specific audit entries;
+- revocation/session management.
+
+Related issues: #72, #32, #33.
+
+Why it blocks adoption: without identity and scoped authorization, HivePlane itself becomes the risky shadow-agent control plane it claims to govern.
+
+### 2. Production-Grade Runtime Adapters
+
+Status: launch blocker for the "run real work" promise.
+
+OpenClaw/Hermes/Ollama are still not deep enough as managed runtime records. Competitive products show a real agent/workflow runtime with health, config, versions, status, logs, and lifecycle actions.
+
+Related issues: #11, #12, #36, #37, #39.
+
+Why it blocks adoption: users will not keep HivePlane installed if it can show machines but cannot reliably configure and operate the actual agents/models they care about.
+
+### 3. Onboarding And Provisioning Trust
+
+Status: launch blocker for open-source adoption.
+
+The install/pair path is much better, but buyers compare against polished cloud agents, CLIs, and sandbox SDKs. HivePlane needs:
+
+- one-command local install that rarely fails;
+- signed/notarized Mac package or Homebrew trust path;
+- SSH remote provisioning;
+- clear upgrade/rollback path;
+- first-run checklist that proves value in under 10 minutes.
+
+Related issue: #19. CI remains #21 once GitHub workflow scope is fixed.
+
+Why it blocks adoption: if the first setup is confusing, users will choose E2B/OpenHands/Codex-style cloud paths even if HivePlane's local-machine thesis is better.
+
+### 4. Trace-Level Observability
+
+Status: major adoption gap, but not necessarily alpha blocker.
+
+Artifacts are now a good start, but LangSmith/Langfuse/Laminar-style users expect run traces:
+
+- model calls;
+- tool calls;
+- token/cost/latency;
+- browser/app steps;
+- eval/quality markers;
+- replayable timelines.
+
+Why it blocks adoption for teams: operations people need evidence; developers need debugging. Job events and artifacts help, but do not yet replace agent-native traces.
+
+### 5. Enterprise Connectors And Integrations
+
+Status: major adoption gap.
+
+Connector capability reporting is now in place, but the connectors are mostly detected, not operated end-to-end. The competitive minimum for team adoption includes:
+
+- GitHub issue/PR loop;
+- Slack notifications/commands;
+- Linear/Jira work intake;
+- PagerDuty/Opsgenie style alerts;
+- Tailscale/Fleet/Kolide integration instead of duplicating device posture;
+- secret manager integration.
+
+Why it blocks adoption: without a work intake and notification surface users already live in, HivePlane becomes a dashboard they must remember to check.
+
+### 6. Hosted/Multi-Tenant Product Surface
+
+Status: business-model blocker, not dogfood blocker.
+
+Self-host remains the right wedge, but a competitive product eventually needs:
+
+- org/team model;
+- billing;
+- hosted control plane;
+- fleet grouping;
+- audit retention;
+- backups/export;
+- status page / support posture.
+
+Why it blocks adoption: teams evaluating tools need a path from hobby install to team rollout.
+
+## What Is No Longer A Top Gap
+
+These moved from "missing" to "good enough to demo" after #74-#78:
+
+- Permission profiles.
+- Session/work continuity.
+- Job artifact/evidence metadata.
+- Background automations.
+- Connector-aware capability routing.
+
+They still need polish, but they are now believable product primitives rather than roadmap promises.
+
+## Revised Priority Recommendation
+
+1. Finish #72, #32, and #33 as one permission/auth push.
+   - This is the biggest trust gap and the most aligned with the agent-governance market.
+
+2. Finish one complete runtime path, preferably OpenClaw + Ollama.
+   - #11, #36, and #39 should prove: detect, configure, run, inspect, smoke-test, recover.
+
+3. Build one externally visible work loop.
+   - Best candidate: GitHub issue -> routed Bee -> agent task -> artifact/evidence -> PR/link/result.
+   - This makes HivePlane legible to users who currently compare against Codex/OpenHands/Devin.
+
+4. Polish onboarding.
+   - The product has enough primitives now. The next adoption risk is failure to reach "aha" quickly.
+
+## Bottom Line
+
+HivePlane is now meaningfully differentiated on local/private AI operations. The launch risk is not "do we have enough ideas?" It is whether the trust layer and first complete runtime/work loop are polished enough that a user will keep it installed.
+
+For a launch-ready alpha, the minimum should be:
+
+- authenticated operators;
+- scoped system permissions;
+- one complete managed runtime;
+- one complete connector-driven workflow;
+- clear install/provisioning;
+- evidence-rich incident/job timeline.
