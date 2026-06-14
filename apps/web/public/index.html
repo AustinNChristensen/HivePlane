@@ -355,6 +355,11 @@
       .form-field.wide textarea {
         width: 100%;
       }
+      .task-hint {
+        margin: 0 18px 18px;
+        color: var(--muted);
+        font-size: 12px;
+      }
       .checkbox-row {
         display: flex;
         align-items: center;
@@ -699,7 +704,9 @@
             </div>
             <div class="form-field">
               <label for="taskPreferredBee">Bee</label>
-              <input id="taskPreferredBee" placeholder="any healthy Bee" />
+              <select id="taskPreferredBee">
+                <option value="">Any matching Bee</option>
+              </select>
             </div>
             <div class="form-field">
               <label for="taskRuntime">Runtime</label>
@@ -719,6 +726,7 @@
             <label for="taskInstructions">Instructions</label>
             <textarea id="taskInstructions" spellcheck="false"></textarea>
           </div>
+          <div class="task-hint" id="taskBeeHint">Bee capabilities load with the task list.</div>
           <div id="tasksBody"></div>
         </div>
       </section>
@@ -791,6 +799,7 @@
         tasksBody: document.getElementById("tasksBody"),
         taskTitle: document.getElementById("taskTitle"),
         taskPreferredBee: document.getElementById("taskPreferredBee"),
+        taskBeeHint: document.getElementById("taskBeeHint"),
         taskRuntime: document.getElementById("taskRuntime"),
         taskTools: document.getElementById("taskTools"),
         taskModels: document.getElementById("taskModels"),
@@ -1665,6 +1674,8 @@
       }
 
       // --- tasks view ----------------------------------------------------------
+      els.taskPreferredBee.addEventListener("change", renderTaskBeeHint);
+
       els.createTask.addEventListener("click", async () => {
         if (!state.adminToken) {
           els.tasksMeta.textContent = "set an admin token (top right) to assign tasks";
@@ -1728,15 +1739,23 @@
           return;
         }
         try {
-          const res = await fetch("/api/tasks", { headers: authHeaders() });
-          if (res.status === 401) {
+          const [tasksRes, beesRes] = await Promise.all([
+            fetch("/api/tasks", { headers: authHeaders() }),
+            fetch("/api/bees"),
+          ]);
+          if (tasksRes.status === 401) {
             clearRejectedAdminToken();
             els.tasksBody.innerHTML = `<div class="empty">Admin token rejected. Paste the current token from <code>~/.hiveplane/hive-config.json</code> and save again.</div>`;
             els.tasksMeta.textContent = "—";
             return;
           }
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const { tasks } = await res.json();
+          if (!tasksRes.ok) throw new Error(`HTTP ${tasksRes.status}`);
+          if (beesRes.ok) {
+            const { bees } = await beesRes.json();
+            state.bees = bees ?? [];
+            renderTaskBeeOptions();
+          }
+          const { tasks } = await tasksRes.json();
           state.tasks = tasks ?? [];
           if (
             state.selectedTaskId &&
@@ -1747,6 +1766,7 @@
             state.selectedTaskJob = null;
           }
           if (state.selectedTaskId) await refreshSelectedTask(false);
+          renderTaskBeeHint();
           renderTasks(state.tasks);
           els.tasksMeta.textContent = `${state.tasks.length} tasks · updated ${new Date().toLocaleTimeString()}`;
         } catch (err) {
@@ -1759,6 +1779,56 @@
           .split(",")
           .map((part) => part.trim())
           .filter(Boolean);
+      }
+
+      function renderTaskBeeOptions() {
+        const selected = els.taskPreferredBee.value;
+        const bees = [...state.bees].sort((a, b) => {
+          const aUsable = a.status === "online" && a.operationalState === "healthy";
+          const bUsable = b.status === "online" && b.operationalState === "healthy";
+          if (aUsable !== bUsable) return aUsable ? -1 : 1;
+          return beeDisplayName(a.beeId).localeCompare(beeDisplayName(b.beeId));
+        });
+        els.taskPreferredBee.innerHTML = [
+          `<option value="">Any matching Bee</option>`,
+          ...bees.map((bee) => {
+            const usable = bee.status === "online" && bee.operationalState === "healthy";
+            const label = `${beeDisplayName(bee.beeId)} · ${bee.status || "unknown"} / ${bee.operationalState || "unknown"} · ${bee.activeJobs ?? 0} active`;
+            return `<option value="${escapeHtml(bee.beeId)}" ${bee.beeId === selected ? "selected" : ""}>${escapeHtml(label)}${usable ? "" : " (not currently assignable)"}</option>`;
+          }),
+        ].join("");
+        if (selected && !state.bees.some((bee) => bee.beeId === selected)) {
+          els.taskPreferredBee.insertAdjacentHTML(
+            "beforeend",
+            `<option value="${escapeHtml(selected)}" selected>Unknown Bee (${escapeHtml(shortId(selected))})</option>`,
+          );
+        }
+      }
+
+      function renderTaskBeeHint() {
+        const selectedBeeId = els.taskPreferredBee.value;
+        if (!selectedBeeId) {
+          els.taskBeeHint.textContent =
+            "Any matching healthy Bee can claim this task. Use requirements to narrow routing.";
+          return;
+        }
+        const bee = beeById(selectedBeeId);
+        if (!bee) {
+          els.taskBeeHint.textContent = "Selected Bee is not in the current heartbeat list.";
+          return;
+        }
+        const caps = bee.capabilities || {};
+        const runtimes = summarizeCaps(caps.runtimes);
+        const tools = summarizeCaps(caps.tools);
+        const models = summarizeCaps(caps.models);
+        els.taskBeeHint.textContent = `${beeDisplayName(selectedBeeId)} capabilities: runtimes ${runtimes}; tools ${tools}; models ${models}.`;
+      }
+
+      function summarizeCaps(values) {
+        const items = Array.isArray(values) ? values.filter(Boolean) : [];
+        if (!items.length) return "—";
+        const shown = items.slice(0, 4).join(", ");
+        return items.length > 4 ? `${shown}, +${items.length - 4}` : shown;
       }
 
       function renderTasks(tasks) {
