@@ -350,12 +350,12 @@ export class JobExecutor {
     child.stdout?.on("data", (data: Buffer) => {
       const text = sanitizeProcessText(data.toString("utf8"));
       stdoutChunks.push(text);
-      queueEvent("debug", "agent_task.openclaw.stdout", { text });
+      queueEvent("debug", "agent_task.openclaw.stdout", { text: truncateText(text, 4_000) });
     });
     child.stderr?.on("data", (data: Buffer) => {
       const text = sanitizeProcessText(data.toString("utf8"));
       stderrChunks.push(text);
-      queueEvent("debug", "agent_task.openclaw.stderr", { text });
+      queueEvent("debug", "agent_task.openclaw.stderr", { text: truncateText(text, 4_000) });
     });
 
     return await new Promise<JobOutcome>((resolve) => {
