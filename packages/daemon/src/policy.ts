@@ -85,6 +85,10 @@ const OBSERVE_JOBS: JobType[] = [
   "ollama_list_models",
 ];
 const AGENT_JOBS: JobType[] = [...OBSERVE_JOBS, "agent_task", "openclaw_subagent_smoke_test"];
+const MANAGED_SUB_AGENT_JOBS: JobType[] = [
+  "openclaw_subagent_configure",
+  "openclaw_subagent_delete",
+];
 
 export const POLICY_PROFILES: Record<PolicyProfileId, PolicyProfile> = {
   read_only_observer: {
@@ -128,7 +132,11 @@ export const POLICY_PROFILES: Record<PolicyProfileId, PolicyProfile> = {
         requireApproval: ["open", "osascript", "curl", "gh"],
         unsafeAllowAll: false,
       },
-      jobs: { allow: AGENT_JOBS, deny: [], requireApproval: APPROVAL_REQUIRED_JOB_TYPES },
+      jobs: {
+        allow: [...AGENT_JOBS, ...MANAGED_SUB_AGENT_JOBS],
+        deny: [],
+        requireApproval: APPROVAL_REQUIRED_JOB_TYPES,
+      },
       connectors: {
         allow: ["filesystem", "calendar"],
         deny: [],
@@ -149,7 +157,11 @@ export const POLICY_PROFILES: Record<PolicyProfileId, PolicyProfile> = {
         requireApproval: ["curl", "gh", "git"],
         unsafeAllowAll: false,
       },
-      jobs: { allow: AGENT_JOBS, deny: [], requireApproval: APPROVAL_REQUIRED_JOB_TYPES },
+      jobs: {
+        allow: [...AGENT_JOBS, ...MANAGED_SUB_AGENT_JOBS],
+        deny: [],
+        requireApproval: APPROVAL_REQUIRED_JOB_TYPES,
+      },
       connectors: {
         allow: ["browser_automation", "filesystem"],
         deny: [],
@@ -170,7 +182,13 @@ export const POLICY_PROFILES: Record<PolicyProfileId, PolicyProfile> = {
         unsafeAllowAll: false,
       },
       jobs: {
-        allow: [...AGENT_JOBS, "restart_bee", "collect_bee_logs", "diagnose_incident"],
+        allow: [
+          ...AGENT_JOBS,
+          ...MANAGED_SUB_AGENT_JOBS,
+          "restart_bee",
+          "collect_bee_logs",
+          "diagnose_incident",
+        ],
         deny: [],
         requireApproval: APPROVAL_REQUIRED_JOB_TYPES,
       },
@@ -208,6 +226,7 @@ export const POLICY_PROFILES: Record<PolicyProfileId, PolicyProfile> = {
       jobs: {
         allow: [
           ...AGENT_JOBS,
+          ...MANAGED_SUB_AGENT_JOBS,
           "configure_model",
           "restart_bee",
           "collect_bee_logs",

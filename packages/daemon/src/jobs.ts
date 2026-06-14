@@ -843,6 +843,10 @@ export class JobExecutor {
       typeof job.payload.instructions === "string" ? job.payload.instructions : "";
     const requestedBy =
       typeof job.payload.requestedBy === "string" ? job.payload.requestedBy : "hive";
+    const subAgentId =
+      typeof job.payload.subAgentId === "string" && job.payload.subAgentId.trim()
+        ? job.payload.subAgentId.trim()
+        : undefined;
     const requirements = readTaskRequirements(job.payload.requirements);
     const runtime =
       typeof job.payload.runtime === "string" ? job.payload.runtime : requirements.runtimes[0];
@@ -857,6 +861,7 @@ export class JobExecutor {
           title,
           instructions,
           requestedBy,
+          subAgentId,
           requirements,
         },
         signal,
@@ -888,6 +893,7 @@ export class JobExecutor {
       title: string;
       instructions: string;
       requestedBy: string;
+      subAgentId?: string | undefined;
       requirements: TaskRequirements;
     },
     signal?: AbortSignal,
@@ -909,8 +915,15 @@ export class JobExecutor {
     }
 
     const timeoutSeconds = typeof job.timeoutSeconds === "number" ? job.timeoutSeconds : 600;
-    const prompt = buildOpenClawTaskPrompt(task);
-    const sessionKey = `hiveplane-task-${task.taskId}`;
+    const configuredSubAgent = task.subAgentId
+      ? readOpenClawSubAgentRegistry(this.options.configDir).find(
+          (candidate) => candidate.id === task.subAgentId,
+        )
+      : undefined;
+    const prompt = buildOpenClawTaskPrompt(task, configuredSubAgent);
+    const sessionKey = configuredSubAgent
+      ? `hiveplane-subagent-${configuredSubAgent.id}-task-${task.taskId}`
+      : `hiveplane-task-${task.taskId}`;
     const workingDirectory = process.cwd();
     const args = [
       "agent",
@@ -926,6 +939,7 @@ export class JobExecutor {
     await this.emit(job, "info", "agent_task.openclaw.start", {
       taskId: task.taskId,
       sessionKey,
+      ...(configuredSubAgent ? { subAgentId: configuredSubAgent.id } : {}),
       workingDirectory,
       timeoutSeconds,
       command: openclawPath,
@@ -938,7 +952,10 @@ export class JobExecutor {
       taskId: task.taskId,
       workingDirectory,
       updatedAt: new Date().toISOString(),
-      metadata: { jobId: job.id },
+      metadata: {
+        jobId: job.id,
+        ...(configuredSubAgent ? { subAgentId: configuredSubAgent.id } : {}),
+      },
     });
 
     const child = this.spawnImpl(openclawPath, args, {
@@ -986,6 +1003,7 @@ export class JobExecutor {
           sessionId: sessionKey,
           sessionKey,
           workingDirectory,
+          ...(configuredSubAgent ? { subAgentId: configuredSubAgent.id } : {}),
           exitCode: exitCode ?? -1,
           signal: exitSignal ?? null,
           stdout: truncateText(stdout, 8_000),
@@ -1002,7 +1020,11 @@ export class JobExecutor {
             taskId: task.taskId,
             workingDirectory,
             updatedAt: new Date().toISOString(),
-            metadata: { jobId: job.id, exitCode: exitCode ?? -1 },
+            metadata: {
+              jobId: job.id,
+              exitCode: exitCode ?? -1,
+              ...(configuredSubAgent ? { subAgentId: configuredSubAgent.id } : {}),
+            },
           });
           resolve({ status: "succeeded", output: summary });
           return;
@@ -1030,6 +1052,7 @@ export class JobExecutor {
           metadata: {
             jobId: job.id,
             exitCode: exitCode ?? -1,
+            ...(configuredSubAgent ? { subAgentId: configuredSubAgent.id } : {}),
             ...(exitSignal ? { signal: exitSignal } : {}),
           },
         });
@@ -1293,13 +1316,27 @@ function readStringArray(value: JsonValue | undefined): string[] {
     : [];
 }
 
-function buildOpenClawTaskPrompt(task: {
-  taskId: string;
-  title: string;
-  instructions: string;
-  requestedBy: string;
-  requirements: TaskRequirements;
-}): string {
+function buildOpenClawTaskPrompt(
+  task: {
+    taskId: string;
+    title: string;
+    instructions: string;
+    requestedBy: string;
+    subAgentId?: string | undefined;
+    requirements: TaskRequirements;
+  },
+  subAgent?: {
+    id: string;
+    name: string;
+    runtime: string;
+    systemId?: string | undefined;
+    modelProvider?: string | undefined;
+    model?: string | undefined;
+    tools: string[];
+    skills: string[];
+    workingDirectories: string[];
+  },
+): string {
   return [
     "You are running as a HivePlane Bee sub-agent task.",
     "Return a concise result for HivePlane. Do not deliver messages externally unless the task instructions explicitly require it and local policy allows it.",
@@ -1307,6 +1344,20 @@ function buildOpenClawTaskPrompt(task: {
     `Task ID: ${task.taskId}`,
     `Title: ${task.title}`,
     `Requested by: ${task.requestedBy}`,
+    ...(subAgent
+      ? [
+          `Sub-agent ID: ${subAgent.id}`,
+          `Sub-agent name: ${subAgent.name}`,
+          `Sub-agent System: ${subAgent.systemId ?? "unspecified"}`,
+          `Sub-agent model provider: ${subAgent.modelProvider ?? "runtime default"}`,
+          `Sub-agent model: ${subAgent.model ?? "runtime default"}`,
+          `Sub-agent tools: ${JSON.stringify(subAgent.tools)}`,
+          `Sub-agent skills: ${JSON.stringify(subAgent.skills)}`,
+          `Sub-agent working directories: ${JSON.stringify(subAgent.workingDirectories)}`,
+        ]
+      : task.subAgentId
+        ? [`Requested sub-agent ID: ${task.subAgentId} (not found in local registry)`]
+        : []),
     `Requirements: ${JSON.stringify(task.requirements)}`,
     "",
     "Instructions:",

@@ -597,6 +597,100 @@ describe("JobExecutor", () => {
     );
   });
 
+  it("runs OpenClaw tasks through a configured named sub-agent", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const configDir = mkdtempSync(join(tmpdir(), "hp-openclaw-agent-task-"));
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const spawnMock = makeSpawn({
+      stdoutChunks: [
+        JSON.stringify({
+          runId: "run_subagent",
+          status: "ok",
+          result: { payloads: [{ text: "done" }] },
+        }) + "\n",
+      ],
+      exitCode: 0,
+    });
+    const spawnImpl = spawnMock as unknown as typeof import("node:child_process").spawn;
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      configDir,
+      daemonVersion: "0.0.1-test",
+      policy: {
+        runCommand: { allow: [], unsafeAllowAll: false },
+        jobs: { allow: ["openclaw_subagent_configure", "agent_task"] },
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl,
+      openclawPathOverride: "/tmp/openclaw-test",
+    });
+
+    await executor.execute(
+      makeJob({
+        id: "job_configure",
+        type: "openclaw_subagent_configure",
+        payload: {
+          id: "subagent_repo",
+          name: "Repo reviewer",
+          runtime: "openclaw",
+          systemId: "dev",
+          model: "gemma4:12b",
+          tools: ["github"],
+          workingDirectories: ["/repo"],
+        },
+      }),
+    );
+    await executor.execute(
+      makeJob({
+        id: "job_task",
+        type: "agent_task",
+        timeoutSeconds: 120,
+        payload: {
+          taskId: "task_subagent",
+          title: "Review repo",
+          instructions: "Find risky code.",
+          subAgentId: "subagent_repo",
+          requestedBy: "unit-test",
+          requirements: { runtimes: ["openclaw"], tools: ["github"] },
+        },
+      }),
+    );
+
+    expect(spawnImpl).toHaveBeenCalledWith(
+      "/tmp/openclaw-test",
+      expect.arrayContaining([
+        "agent",
+        "--session-key",
+        "hiveplane-subagent-subagent_repo-task-task_subagent",
+      ]),
+      expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+    );
+    const calls = spawnMock.mock.calls as unknown as Array<[string, string[], unknown]>;
+    const agentCall = calls[0];
+    const args = agentCall?.[1] ?? [];
+    expect(args.join("\n")).toContain("Sub-agent name: Repo reviewer");
+
+    const completedBodies = (fetchImpl.mock.calls as unknown as Array<[URL, RequestInit]>)
+      .map((call) => JSON.parse(Buffer.from(call[1].body as Uint8Array).toString("utf8")))
+      .filter((payload) => payload.type === "job.complete");
+    expect(completedBodies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          jobId: "job_task",
+          status: "succeeded",
+          output: expect.objectContaining({
+            subAgentId: "subagent_repo",
+            sessionKey: "hiveplane-subagent-subagent_repo-task-task_subagent",
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("openclaw_status completes through the adapter path", async () => {
     const identity = await makeIdentity();
     const session = makeSession();
