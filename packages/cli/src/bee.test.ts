@@ -88,4 +88,31 @@ describe("bee CLI", () => {
       code: 2,
     });
   });
+
+  it("policy show prints the local policy and file path", async () => {
+    const dir = newDir();
+    const { stdout } = await runCli(["policy", "show"], dir);
+
+    expect(stdout).toContain('"runCommand"');
+    expect(stdout).toContain('"hostname"');
+    expect(stdout).toContain("Policy file:");
+    expect(stdout).toContain(join(dir, "policy.json"));
+  });
+
+  it("policy allow appends a command basename to policy.json", async () => {
+    const dir = newDir();
+    const { stdout } = await runCli(["policy", "allow", "/usr/bin/git"], dir);
+
+    expect(stdout).toContain("Allowed run_command: git");
+    const policy = JSON.parse(readFileSync(join(dir, "policy.json"), "utf8")) as {
+      runCommand?: { allow?: string[] };
+    };
+    expect(policy.runCommand?.allow).toContain("git");
+
+    await runCli(["policy", "allow", "git"], dir);
+    const after = JSON.parse(readFileSync(join(dir, "policy.json"), "utf8")) as {
+      runCommand?: { allow?: string[] };
+    };
+    expect(after.runCommand?.allow?.filter((value) => value === "git")).toHaveLength(1);
+  });
 });

@@ -7,7 +7,7 @@
 // live under `hive selfhost <verb>` now live on the `hive` binary at the
 // top level, installed by `hive.sh`.)
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { hostname as osHostname } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,10 +16,13 @@ import {
   clearHiveUrl,
   getDefaultHivePlaneConfigDir,
   getHivePlaneConfigPaths,
+  getPolicyPath,
   loadOrCreateBeeIdentity,
   readHivePlaneConfig,
   readHiveSession,
+  readBeePolicy,
   registerBeeWithHive,
+  type BeePolicy,
   writeHivePlaneConfig,
   writeHiveSession,
 } from "@hiveplane/daemon";
@@ -100,6 +103,9 @@ async function main(): Promise<void> {
       return;
     case "identity":
       await runIdentity(parsed);
+      return;
+    case "policy":
+      await runPolicy(parsed);
       return;
     case "help":
       printHelp();
@@ -534,6 +540,46 @@ async function runIdentity(parsed: ArgvParseResult): Promise<void> {
   }
 }
 
+async function runPolicy(parsed: ArgvParseResult): Promise<void> {
+  const sub = parsed.positional[0];
+  if (sub === "show") {
+    const policy = readBeePolicy(parsed.configDir);
+    console.log(JSON.stringify(policy, null, 2));
+    console.log(`Policy file: ${getPolicyPath(parsed.configDir)}`);
+    return;
+  }
+  if (sub === "allow") {
+    const command = parsed.positional[1]?.trim();
+    if (!command) {
+      console.error("Usage: bee policy allow <command>");
+      process.exit(2);
+    }
+    const policy = readBeePolicy(parsed.configDir);
+    const basename = command.split("/").pop() || command;
+    const allow = new Set(policy.runCommand.allow);
+    allow.add(basename);
+    const next: BeePolicy = {
+      ...policy,
+      runCommand: {
+        ...policy.runCommand,
+        allow: [...allow].sort((a, b) => a.localeCompare(b)),
+      },
+    };
+    writeBeePolicy(next, parsed.configDir);
+    console.log(`Allowed run_command: ${basename}`);
+    console.log(`Policy file: ${getPolicyPath(parsed.configDir)}`);
+    return;
+  }
+  console.error("Usage: bee policy (show|allow <command>)");
+  process.exit(2);
+}
+
+function writeBeePolicy(policy: BeePolicy, configDir?: string): void {
+  const path = getPolicyPath(configDir);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(policy, null, 2)}\n`, { mode: 0o600 });
+}
+
 /**
  * Pull a credential off `--token` or `--pairing-key`, in that order. Both flags
  * accept either form — we sniff the prefix downstream — so a user pasting from
@@ -575,6 +621,8 @@ Usage:
   bee logs [rescue] [stderr] [-f]
                              Print/tail daemon logs (default Bee stdout)
   bee identity init|show     Generate or print the Bee Ed25519 identity
+  bee policy show            Print local command policy JSON + file path
+  bee policy allow <command> Allow a run_command basename on this Bee
   bee --version              Print version
   bee --help                 Print this help
 
