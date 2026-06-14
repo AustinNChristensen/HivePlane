@@ -158,4 +158,28 @@ describe("policyDecisionForJob", () => {
     expect(decision.allowed).toBe(false);
     if (!decision.allowed) expect(decision.risk).toBe("credentialed");
   });
+
+  it("enforces connector policy before dispatch", () => {
+    const decision = policyDecisionForJob(
+      {
+        ...DEFAULT_POLICY,
+        connectors: { allow: ["filesystem"], deny: ["imessage"], requireApproval: ["github"] },
+      },
+      job("agent_task", { requirements: { connectors: ["github"] } }),
+    );
+    expect(decision.allowed).toBe(false);
+    if (!decision.allowed) {
+      expect(decision.requiresApproval).toBe(true);
+      expect(decision.reason).toContain("github");
+    }
+
+    const denied = policyDecisionForJob(
+      {
+        ...DEFAULT_POLICY,
+        connectors: { allow: ["filesystem"], deny: ["imessage"], requireApproval: [] },
+      },
+      job("agent_task", { connectors: ["imessage"] }),
+    );
+    expect(denied.allowed).toBe(false);
+  });
 });

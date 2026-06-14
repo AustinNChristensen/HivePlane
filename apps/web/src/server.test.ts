@@ -91,6 +91,7 @@ describe("Hive heartbeat state", () => {
       permissions: {
         runCommand: { allow: ["hostname"], deny: [], requireApproval: [], unsafeAllowAll: false },
         jobs: { allow: [], deny: [], requireApproval: [] },
+        connectors: { allow: ["filesystem"], deny: [], requireApproval: [] },
       },
       healthChecks: [],
     });
@@ -109,6 +110,7 @@ describe("Hive heartbeat state", () => {
           unsafeAllowAll: false,
         },
         jobs: { allow: [], deny: [], requireApproval: [] },
+        connectors: { allow: ["filesystem"], deny: [], requireApproval: [] },
       },
       healthChecks: [
         {
@@ -771,6 +773,99 @@ describe("Hive server", () => {
         assignedBeeId: "bee_automation",
       });
     });
+  });
+
+  it("routes Hive tasks by connector requirements", async () => {
+    const state = createHiveServerState();
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_files",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      capabilities: {
+        runtimes: ["openclaw"],
+        modelBackends: [],
+        models: [],
+        localModels: [],
+        connectors: [
+          {
+            id: "filesystem",
+            label: "Filesystem",
+            kind: "filesystem",
+            status: "available",
+            details: {},
+          },
+        ],
+        tools: ["filesystem"],
+        networking: [],
+        hardware: {
+          platform: "darwin-arm64",
+          hostname: "bee-files",
+          cpuCores: 10,
+          memoryGb: 32,
+        },
+      },
+      healthChecks: [],
+    });
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_github",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 2,
+      capabilities: {
+        runtimes: ["openclaw"],
+        modelBackends: [],
+        models: [],
+        localModels: [],
+        connectors: [
+          {
+            id: "filesystem",
+            label: "Filesystem",
+            kind: "filesystem",
+            status: "available",
+            details: {},
+          },
+          { id: "github", label: "GitHub", kind: "cloud", status: "available", details: {} },
+        ],
+        tools: ["filesystem"],
+        networking: [],
+        hardware: {
+          platform: "darwin-arm64",
+          hostname: "bee-github",
+          cpuCores: 10,
+          memoryGb: 32,
+        },
+      },
+      healthChecks: [],
+    });
+
+    await withServer(
+      { state, adminToken: "secret", now: () => new Date("2026-05-09T08:00:05.000Z") },
+      async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            title: "Open PR",
+            instructions: "Use GitHub.",
+            requirements: { runtimes: ["openclaw"], connectors: ["github"] },
+          }),
+        });
+
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as {
+          task: { assignedBeeId: string; requirements: { connectors: string[] } };
+        };
+        expect(body.task).toMatchObject({
+          assignedBeeId: "bee_github",
+          requirements: { connectors: ["github"] },
+        });
+      },
+    );
   });
 
   it("cancels Hive tasks and ignores late Bee completion status", async () => {

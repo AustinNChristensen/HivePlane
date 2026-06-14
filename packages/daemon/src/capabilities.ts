@@ -33,6 +33,7 @@ export async function collectBeeCapabilities(
     models: [],
     localModels: [],
     agentSessions: readAgentSessionRegistry(options.configDir),
+    connectors: collectConnectorCapabilities(),
     tools: [],
     networking: [],
     hardware: toCapabilitiesHardware(hardware),
@@ -77,6 +78,71 @@ export async function collectBeeCapabilities(
   }
 
   return capabilities;
+}
+
+export function collectConnectorCapabilities(): NonNullable<BeeCapabilities["connectors"]> {
+  const checkedAt = new Date().toISOString();
+  const connectors: NonNullable<BeeCapabilities["connectors"]> = [
+    {
+      id: "filesystem",
+      label: "Filesystem",
+      kind: "filesystem",
+      status: "available",
+      lastCheckedAt: checkedAt,
+      details: {},
+    },
+  ];
+  if (findExecutable(["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"])) {
+    connectors.push({
+      id: "github",
+      label: "GitHub",
+      kind: "cloud",
+      status: "available",
+      lastCheckedAt: checkedAt,
+      details: {},
+    });
+  }
+  if (findExecutable(["/opt/homebrew/bin/imsg", "/usr/local/bin/imsg"])) {
+    connectors.push({
+      id: "imessage",
+      label: "iMessage",
+      kind: "messaging",
+      status: "available",
+      lastCheckedAt: checkedAt,
+      details: {},
+    });
+  }
+  if (existsSync("/System/Applications/Mail.app") || existsSync("/Applications/Mail.app")) {
+    connectors.push({
+      id: "mail",
+      label: "Mail",
+      kind: "local_app",
+      status: "available",
+      lastCheckedAt: checkedAt,
+      details: {},
+    });
+  }
+  if (existsSync("/System/Applications/Calendar.app") || existsSync("/Applications/Calendar.app")) {
+    connectors.push({
+      id: "calendar",
+      label: "Calendar",
+      kind: "local_app",
+      status: "available",
+      lastCheckedAt: checkedAt,
+      details: {},
+    });
+  }
+  if (findExecutable(["/opt/homebrew/bin/openclaw", "/usr/local/bin/openclaw"])) {
+    connectors.push({
+      id: "browser_automation",
+      label: "Browser automation",
+      kind: "browser",
+      status: "available",
+      lastCheckedAt: checkedAt,
+      details: {},
+    });
+  }
+  return connectors;
 }
 
 export function getAgentSessionRegistryPath(configDir = getDefaultHivePlaneConfigDir()): string {

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  collectConnectorCapabilities,
   readAgentSessionRegistry,
   upsertAgentSessionRegistry,
   getAgentSessionRegistryPath,
@@ -37,5 +38,13 @@ describe("agent session registry", () => {
         workingDirectory: "/repo",
       }),
     ]);
+  });
+});
+
+describe("connector capabilities", () => {
+  it("always reports filesystem as an available connector", () => {
+    expect(collectConnectorCapabilities()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "filesystem", status: "available" })]),
+    );
   });
 });

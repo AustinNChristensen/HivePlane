@@ -26,6 +26,7 @@ export const BeePolicySchema = z.object({
     })
     .default({ allow: [], deny: [], requireApproval: [], unsafeAllowAll: false }),
   jobs: JobPolicySchema,
+  connectors: JobPolicySchema,
 });
 
 export type BeePolicy = z.input<typeof BeePolicySchema>;
@@ -41,6 +42,11 @@ export const DEFAULT_POLICY: NormalizedBeePolicy = {
     unsafeAllowAll: false,
   },
   jobs: { allow: [], deny: [], requireApproval: [] },
+  connectors: {
+    allow: ["filesystem"],
+    deny: ["mail", "calendar", "imessage", "github", "browser_automation"],
+    requireApproval: [],
+  },
 };
 
 export const APPROVAL_REQUIRED_JOB_TYPES: JobType[] = [
@@ -99,6 +105,11 @@ export const POLICY_PROFILES: Record<PolicyProfileId, PolicyProfile> = {
         unsafeAllowAll: false,
       },
       jobs: { allow: AGENT_JOBS, deny: [], requireApproval: APPROVAL_REQUIRED_JOB_TYPES },
+      connectors: {
+        allow: ["filesystem"],
+        deny: ["mail", "calendar", "imessage"],
+        requireApproval: ["github", "browser_automation"],
+      },
     },
   },
   personal_assistant: {
@@ -115,6 +126,11 @@ export const POLICY_PROFILES: Record<PolicyProfileId, PolicyProfile> = {
         unsafeAllowAll: false,
       },
       jobs: { allow: AGENT_JOBS, deny: [], requireApproval: APPROVAL_REQUIRED_JOB_TYPES },
+      connectors: {
+        allow: ["filesystem", "calendar"],
+        deny: [],
+        requireApproval: ["mail", "imessage", "github", "browser_automation"],
+      },
     },
   },
   browser_worker: {
@@ -131,6 +147,11 @@ export const POLICY_PROFILES: Record<PolicyProfileId, PolicyProfile> = {
         unsafeAllowAll: false,
       },
       jobs: { allow: AGENT_JOBS, deny: [], requireApproval: APPROVAL_REQUIRED_JOB_TYPES },
+      connectors: {
+        allow: ["browser_automation", "filesystem"],
+        deny: [],
+        requireApproval: ["mail", "calendar", "imessage", "github"],
+      },
     },
   },
   server_worker: {
@@ -149,6 +170,11 @@ export const POLICY_PROFILES: Record<PolicyProfileId, PolicyProfile> = {
         allow: [...AGENT_JOBS, "restart_bee", "collect_bee_logs", "diagnose_incident"],
         deny: [],
         requireApproval: APPROVAL_REQUIRED_JOB_TYPES,
+      },
+      connectors: {
+        allow: ["filesystem"],
+        deny: ["mail", "calendar", "imessage"],
+        requireApproval: ["github", "browser_automation"],
       },
     },
   },
@@ -191,6 +217,11 @@ export const POLICY_PROFILES: Record<PolicyProfileId, PolicyProfile> = {
           "update_bee",
           "connect_to_host_gateway",
         ],
+      },
+      connectors: {
+        allow: ["filesystem", "github", "browser_automation"],
+        deny: [],
+        requireApproval: ["mail", "calendar", "imessage"],
       },
     },
   },
@@ -257,6 +288,8 @@ export function policyAllowsCommand(policy: BeePolicy, command: string): PolicyD
 
 export function policyDecisionForJob(policy: BeePolicy, job: Job): PolicyDecision {
   const normalized = BeePolicySchema.parse(policy);
+  const connectorDecision = policyDecisionForConnectors(normalized, job);
+  if (!connectorDecision.allowed) return connectorDecision;
   const jobs = normalized.jobs;
   if (jobs.deny.includes(job.type)) {
     return { allowed: false, reason: `local policy explicitly denied job type '${job.type}'` };
@@ -283,6 +316,54 @@ export function policyDecisionForJob(policy: BeePolicy, job: Job): PolicyDecisio
     };
   }
   return { allowed: true };
+}
+
+function policyDecisionForConnectors(policy: NormalizedBeePolicy, job: Job): PolicyDecision {
+  const requested = requestedConnectorsForJob(job);
+  for (const connector of requested) {
+    if (policy.connectors.deny.includes(connector)) {
+      return {
+        allowed: false,
+        reason: `local policy explicitly denied connector '${connector}'`,
+      };
+    }
+    if (policy.connectors.requireApproval.includes(connector)) {
+      return {
+        allowed: false,
+        requiresApproval: true,
+        risk: "external",
+        reason: `local policy requires approval for connector '${connector}'`,
+      };
+    }
+    if (policy.connectors.allow.length > 0 && !policy.connectors.allow.includes(connector)) {
+      return {
+        allowed: false,
+        reason: `local policy denied connector '${connector}'. Add it to ~/.hiveplane/policy.json connectors.allow`,
+      };
+    }
+  }
+  return { allowed: true };
+}
+
+function requestedConnectorsForJob(job: Job): string[] {
+  const values: string[] = [];
+  const direct = job.payload.connectors;
+  if (Array.isArray(direct)) {
+    for (const value of direct)
+      if (typeof value === "string" && !values.includes(value)) values.push(value);
+  }
+  const requirements =
+    job.payload.requirements &&
+    typeof job.payload.requirements === "object" &&
+    !Array.isArray(job.payload.requirements)
+      ? (job.payload.requirements as Record<string, unknown>)
+      : undefined;
+  if (Array.isArray(requirements?.connectors)) {
+    for (const value of requirements.connectors) {
+      if (typeof value === "string" && !values.includes(value)) values.push(value);
+    }
+  }
+  return values;
 }
 
 function policyRiskForJob(job: Job): string {

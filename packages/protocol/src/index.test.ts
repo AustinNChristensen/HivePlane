@@ -33,6 +33,16 @@ const capabilities: BeeCapabilities = {
       metadata: {},
     },
   ],
+  connectors: [
+    {
+      id: "github",
+      label: "GitHub",
+      kind: "cloud",
+      status: "available",
+      lastCheckedAt: "2026-05-08T20:00:00.000Z",
+      details: {},
+    },
+  ],
   tools: ["shell", "filesystem"],
   networking: ["tailscale"],
   hardware: {
@@ -62,6 +72,10 @@ describe("bee registration", () => {
     expect(parsed.capabilities.agentSessions?.[0]).toMatchObject({
       id: "hiveplane-task-task_123",
       runtime: "openclaw",
+    });
+    expect(parsed.capabilities.connectors?.[0]).toMatchObject({
+      id: "github",
+      status: "available",
     });
   });
 

@@ -44,12 +44,22 @@ export const AgentSessionCapabilitySchema = z.object({
   metadata: JsonObjectSchema.default({}),
 });
 
+export const ConnectorCapabilitySchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  kind: z.enum(["local_app", "cloud", "filesystem", "repo", "browser", "messaging", "model"]),
+  status: z.enum(["available", "degraded", "unavailable", "unknown"]).default("unknown"),
+  lastCheckedAt: IsoDateTimeSchema.optional(),
+  details: JsonObjectSchema.default({}),
+});
+
 export const BeeCapabilitiesSchema = z.object({
   runtimes: z.array(z.string().min(1)).default([]),
   modelBackends: z.array(z.string().min(1)).default([]),
   models: z.array(z.string().min(1)).default([]),
   localModels: z.array(LocalModelCapabilitySchema).default([]),
   agentSessions: z.array(AgentSessionCapabilitySchema).optional(),
+  connectors: z.array(ConnectorCapabilitySchema).optional(),
   tools: z.array(z.string().min(1)).default([]),
   networking: z.array(z.string().min(1)).default([]),
   hardware: BeeHardwareSchema,
@@ -72,6 +82,13 @@ export const BeePermissionsSchema = z.object({
     })
     .default({ allow: [], deny: [], requireApproval: [], unsafeAllowAll: false }),
   jobs: z
+    .object({
+      allow: z.array(z.string().min(1)).default([]),
+      deny: z.array(z.string().min(1)).default([]),
+      requireApproval: z.array(z.string().min(1)).default([]),
+    })
+    .default({ allow: [], deny: [], requireApproval: [] }),
+  connectors: z
     .object({
       allow: z.array(z.string().min(1)).default([]),
       deny: z.array(z.string().min(1)).default([]),
@@ -350,6 +367,7 @@ export type BeeStatus = z.infer<typeof BeeStatusSchema>;
 export type BeeHardware = z.infer<typeof BeeHardwareSchema>;
 export type LocalModelCapability = z.infer<typeof LocalModelCapabilitySchema>;
 export type AgentSessionCapability = z.infer<typeof AgentSessionCapabilitySchema>;
+export type ConnectorCapability = z.infer<typeof ConnectorCapabilitySchema>;
 export type BeeCapabilities = z.infer<typeof BeeCapabilitiesSchema>;
 export type BeeHealthCheck = z.infer<typeof BeeHealthCheckSchema>;
 export type BeePermissions = z.input<typeof BeePermissionsSchema>;

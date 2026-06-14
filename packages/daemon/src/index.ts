@@ -81,6 +81,7 @@ export function createDaemonState(config: DaemonConfig): DaemonState {
       models: [],
       localModels: [],
       agentSessions: [],
+      connectors: [],
       tools: [],
       networking: [],
       hardware: capabilitiesHardware,

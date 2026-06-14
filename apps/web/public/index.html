@@ -1370,6 +1370,10 @@
                   <select id="taskModels" multiple size="4"></select>
                 </div>
                 <div class="form-field">
+                  <label for="taskConnectors">Connectors</label>
+                  <select id="taskConnectors" multiple size="4"></select>
+                </div>
+                <div class="form-field">
                   <label for="taskSessionId">Session</label>
                   <input id="taskSessionId" placeholder="optional session id" />
                 </div>
@@ -1521,6 +1525,7 @@
         taskRuntime: document.getElementById("taskRuntime"),
         taskTools: document.getElementById("taskTools"),
         taskModels: document.getElementById("taskModels"),
+        taskConnectors: document.getElementById("taskConnectors"),
         taskSessionId: document.getElementById("taskSessionId"),
         taskWorkingDirectory: document.getElementById("taskWorkingDirectory"),
         taskRepeatMinutes: document.getElementById("taskRepeatMinutes"),
@@ -2632,6 +2637,7 @@
             ${capGroup("Models", capabilities.models)}
             ${capGroup("Tools", capabilities.tools)}
             ${capGroup("Networking", capabilities.networking)}
+            ${connectorGroup(capabilities.connectors || [])}
             ${agentSessionGroup(capabilities.agentSessions || [])}
           </div>
         `;
@@ -2822,6 +2828,18 @@
           })
           .join("");
         return `<div class="kv-list">${kv("Agent sessions", `<div class="stack">${rows}</div>`)}</div>`;
+      }
+      function connectorGroup(connectors) {
+        if (!connectors.length) {
+          return `<div class="kv-list">${kv("Connectors", '<span class="mono">—</span>')}</div>`;
+        }
+        const rows = connectors
+          .map(
+            (connector) =>
+              `<div>${pill(connector.status || "unknown")} <span class="mono">${escapeHtml(connector.id)}</span> · ${escapeHtml(connector.label || connector.kind || "connector")}</div>`,
+          )
+          .join("");
+        return `<div class="kv-list">${kv("Connectors", `<div class="stack">${rows}</div>`)}</div>`;
       }
       function capList(values) {
         if (!values.length) return '<span class="mono">—</span>';
@@ -3099,6 +3117,7 @@
         const repeatMinutes = Number(els.taskRepeatMinutes.value || 0);
         const tools = selectedValues(els.taskTools);
         const models = selectedValues(els.taskModels);
+        const connectors = selectedValues(els.taskConnectors);
         if (!title || !instructions) {
           els.tasksMeta.textContent = "title and instructions are required";
           return;
@@ -3110,7 +3129,7 @@
             instructions,
             requestedBy: "dashboard",
             ...(preferredBeeId ? { preferredBeeId } : {}),
-            requirements: { runtimes: runtime ? [runtime] : [], tools, models },
+            requirements: { runtimes: runtime ? [runtime] : [], tools, models, connectors },
             context: {
               ...(sessionId ? { sessionId } : {}),
               ...(runtime ? { runtime } : {}),
@@ -3147,6 +3166,7 @@
           els.taskRepeatMinutes.value = "";
           setSelectedValues(els.taskTools, []);
           setSelectedValues(els.taskModels, []);
+          setSelectedValues(els.taskConnectors, []);
           els.taskInstructions.value = "";
           state.selectedTaskId = body.task?.id || state.selectedTaskId;
           state.selectedTask = null;
@@ -3241,15 +3261,18 @@
         const selectedRuntime = els.taskRuntime.value;
         const selectedTools = selectedValues(els.taskTools);
         const selectedModels = selectedValues(els.taskModels);
+        const selectedConnectors = selectedValues(els.taskConnectors);
         const runtimes = taskCapabilityValues("runtimes", selectedRuntime ? [selectedRuntime] : []);
         const tools = taskCapabilityValues("tools", selectedTools);
         const models = taskCapabilityValues("models", selectedModels);
+        const connectors = taskConnectorValues(selectedConnectors);
         els.taskRuntime.innerHTML = [
           `<option value="">Any runtime</option>`,
           ...runtimes.map((runtime) => optionHtml(runtime, runtime === selectedRuntime)),
         ].join("");
         renderMultiSelectOptions(els.taskTools, tools, selectedTools);
         renderMultiSelectOptions(els.taskModels, models, selectedModels);
+        renderMultiSelectOptions(els.taskConnectors, connectors, selectedConnectors);
       }
 
       function renderTaskBeeHint() {
@@ -3268,8 +3291,9 @@
         const runtimes = summarizeCaps(caps.runtimes);
         const tools = summarizeCaps(caps.tools);
         const models = summarizeCaps(caps.models);
+        const connectors = summarizeConnectors(caps.connectors || []);
         const sessions = summarizeAgentSessions(caps.agentSessions || []);
-        els.taskBeeHint.textContent = `${beeDisplayName(selectedBeeId)} capabilities: runtimes ${runtimes}; tools ${tools}; models ${models}; sessions ${sessions}.`;
+        els.taskBeeHint.textContent = `${beeDisplayName(selectedBeeId)} capabilities: runtimes ${runtimes}; tools ${tools}; models ${models}; connectors ${connectors}; sessions ${sessions}.`;
       }
 
       function applySelectedBeeRequirements() {
@@ -3280,6 +3304,7 @@
           els.taskWorkingDirectory.value = "";
           setSelectedValues(els.taskTools, []);
           setSelectedValues(els.taskModels, []);
+          setSelectedValues(els.taskConnectors, []);
           renderTaskBeeHint();
           return;
         }
@@ -3290,6 +3315,10 @@
         els.taskWorkingDirectory.value = session?.workingDirectory || "";
         setSelectedValues(els.taskTools, caps.tools || []);
         setSelectedValues(els.taskModels, caps.models || []);
+        setSelectedValues(
+          els.taskConnectors,
+          (caps.connectors || []).map((connector) => connector.id),
+        );
         renderTaskBeeHint();
       }
 
@@ -3311,6 +3340,16 @@
         return items.length > 4 ? `${shown}, +${items.length - 4}` : shown;
       }
 
+      function summarizeConnectors(connectors) {
+        const items = Array.isArray(connectors) ? connectors.filter(Boolean) : [];
+        if (!items.length) return "—";
+        const shown = items
+          .slice(0, 4)
+          .map((connector) => `${connector.id}:${connector.status || "unknown"}`)
+          .join(", ");
+        return items.length > 4 ? `${shown}, +${items.length - 4}` : shown;
+      }
+
       function capCsv(values) {
         return Array.isArray(values) ? values.filter(Boolean)[0] || "" : "";
       }
@@ -3318,6 +3357,18 @@
       function taskCapabilityValues(key, keep = []) {
         return [...state.bees, { capabilities: { [key]: keep } }]
           .flatMap((bee) => bee.capabilities?.[key] || [])
+          .filter(Boolean)
+          .filter((value, index, values) => values.indexOf(value) === index)
+          .sort((a, b) => String(a).localeCompare(String(b)));
+      }
+
+      function taskConnectorValues(keep = []) {
+        return [
+          ...state.bees
+            .flatMap((bee) => bee.capabilities?.connectors || [])
+            .map((connector) => connector.id),
+          ...keep,
+        ]
           .filter(Boolean)
           .filter((value, index, values) => values.indexOf(value) === index)
           .sort((a, b) => String(a).localeCompare(String(b)));
