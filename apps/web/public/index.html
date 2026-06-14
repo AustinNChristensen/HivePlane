@@ -349,6 +349,9 @@
       .form-field.compact select {
         min-width: 140px;
       }
+      .form-field select[multiple] {
+        min-height: 92px;
+      }
       .form-field.wide {
         flex: 1 1 260px;
       }
@@ -711,15 +714,17 @@
             <button class="ghost" id="fillTaskRequirements">Load Caps</button>
             <div class="form-field">
               <label for="taskRuntime">Runtime</label>
-              <input id="taskRuntime" placeholder="openclaw" />
+              <select id="taskRuntime">
+                <option value="">Any runtime</option>
+              </select>
             </div>
             <div class="form-field">
               <label for="taskTools">Tools</label>
-              <input id="taskTools" placeholder="github, filesystem" />
+              <select id="taskTools" multiple size="4"></select>
             </div>
             <div class="form-field">
               <label for="taskModels">Models</label>
-              <input id="taskModels" placeholder="gemma4:12b" />
+              <select id="taskModels" multiple size="4"></select>
             </div>
             <button class="action" id="createTask">Assign Task</button>
           </div>
@@ -1688,8 +1693,8 @@
         const instructions = els.taskInstructions.value.trim();
         const runtime = els.taskRuntime.value.trim();
         const preferredBeeId = els.taskPreferredBee.value.trim();
-        const tools = parseCsv(els.taskTools.value);
-        const models = parseCsv(els.taskModels.value);
+        const tools = selectedValues(els.taskTools);
+        const models = selectedValues(els.taskModels);
         if (!title || !instructions) {
           els.tasksMeta.textContent = "title and instructions are required";
           return;
@@ -1718,8 +1723,8 @@
           els.taskTitle.value = "";
           els.taskPreferredBee.value = "";
           els.taskRuntime.value = "";
-          els.taskTools.value = "";
-          els.taskModels.value = "";
+          setSelectedValues(els.taskTools, []);
+          setSelectedValues(els.taskModels, []);
           els.taskInstructions.value = "";
           state.selectedTaskId = body.task?.id || state.selectedTaskId;
           state.selectedTask = null;
@@ -1757,6 +1762,7 @@
             const { bees } = await beesRes.json();
             state.bees = bees ?? [];
             renderTaskBeeOptions();
+            renderTaskRequirementOptions();
           }
           const { tasks } = await tasksRes.json();
           state.tasks = tasks ?? [];
@@ -1775,13 +1781,6 @@
         } catch (err) {
           els.tasksBody.innerHTML = `<div class="empty">Failed to load tasks: ${escapeHtml(err.message)}</div>`;
         }
-      }
-
-      function parseCsv(value) {
-        return value
-          .split(",")
-          .map((part) => part.trim())
-          .filter(Boolean);
       }
 
       function renderTaskBeeOptions() {
@@ -1806,6 +1805,21 @@
             `<option value="${escapeHtml(selected)}" selected>Unknown Bee (${escapeHtml(shortId(selected))})</option>`,
           );
         }
+      }
+
+      function renderTaskRequirementOptions() {
+        const selectedRuntime = els.taskRuntime.value;
+        const selectedTools = selectedValues(els.taskTools);
+        const selectedModels = selectedValues(els.taskModels);
+        const runtimes = taskCapabilityValues("runtimes", selectedRuntime ? [selectedRuntime] : []);
+        const tools = taskCapabilityValues("tools", selectedTools);
+        const models = taskCapabilityValues("models", selectedModels);
+        els.taskRuntime.innerHTML = [
+          `<option value="">Any runtime</option>`,
+          ...runtimes.map((runtime) => optionHtml(runtime, runtime === selectedRuntime)),
+        ].join("");
+        renderMultiSelectOptions(els.taskTools, tools, selectedTools);
+        renderMultiSelectOptions(els.taskModels, models, selectedModels);
       }
 
       function renderTaskBeeHint() {
@@ -1835,8 +1849,8 @@
         }
         const caps = bee.capabilities || {};
         els.taskRuntime.value = capCsv(caps.runtimes);
-        els.taskTools.value = capCsv(caps.tools);
-        els.taskModels.value = capCsv(caps.models);
+        setSelectedValues(els.taskTools, caps.tools || []);
+        setSelectedValues(els.taskModels, caps.models || []);
         els.taskBeeHint.textContent = `Loaded ${beeDisplayName(bee.beeId)} capabilities into the requirements fields.`;
       }
 
@@ -1848,7 +1862,40 @@
       }
 
       function capCsv(values) {
-        return Array.isArray(values) ? values.filter(Boolean).join(", ") : "";
+        return Array.isArray(values) ? values.filter(Boolean)[0] || "" : "";
+      }
+
+      function taskCapabilityValues(key, keep = []) {
+        return [...state.bees, { capabilities: { [key]: keep } }]
+          .flatMap((bee) => bee.capabilities?.[key] || [])
+          .filter(Boolean)
+          .filter((value, index, values) => values.indexOf(value) === index)
+          .sort((a, b) => String(a).localeCompare(String(b)));
+      }
+
+      function renderMultiSelectOptions(select, values, selected) {
+        if (!values.length) {
+          select.innerHTML = `<option value="" disabled>No options reported</option>`;
+          return;
+        }
+        select.innerHTML = values
+          .map((value) => optionHtml(value, selected.includes(value)))
+          .join("");
+      }
+
+      function optionHtml(value, selected) {
+        return `<option value="${escapeHtml(value)}" ${selected ? "selected" : ""}>${escapeHtml(value)}</option>`;
+      }
+
+      function selectedValues(select) {
+        return [...select.selectedOptions].map((option) => option.value).filter(Boolean);
+      }
+
+      function setSelectedValues(select, values) {
+        const wanted = new Set(Array.isArray(values) ? values.filter(Boolean) : []);
+        [...select.options].forEach((option) => {
+          option.selected = wanted.has(option.value);
+        });
       }
 
       function renderTasks(tasks) {
