@@ -30,6 +30,30 @@ The control plane can request work, but the worker node daemon must enforce loca
 | Recipe abuse      | Signed/checksummed recipes + visible logs    |
 | Artifact leakage  | Explicit artifact upload rules               |
 
+## Transport Security
+
+HTTP is acceptable only when Bee-to-Hive traffic stays on an encrypted Tailnet such as Tailscale or on a trusted LAN. Do not expose a plain HTTP Hive to the public internet: bootstrap tokens, session tokens, job payloads, and logs can all contain sensitive data.
+
+Native TLS is enabled by passing certificate and key paths to the Hive runtime:
+
+```bash
+HIVEPLANE_TLS_CERT=/etc/letsencrypt/live/hive.example.com/fullchain.pem \
+HIVEPLANE_TLS_KEY=/etc/letsencrypt/live/hive.example.com/privkey.pem \
+HIVEPLANE_HIVE_HOST=0.0.0.0 \
+HIVEPLANE_HIVE_PORT=4483 \
+pnpm --filter @hiveplane/web start -- --no-open
+```
+
+For production self-hosting, a reverse proxy is also fine. Bind the Hive to loopback and terminate TLS in front:
+
+```caddyfile
+hive.example.com {
+  reverse_proxy 127.0.0.1:4483
+}
+```
+
+When running behind a proxy, set the Hive bind host to `127.0.0.1` and give Bees the public `https://hive.example.com` URL.
+
 ## Device Identity
 
 Each worker node generates a keypair locally during registration. The private key never leaves the node.

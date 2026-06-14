@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { readHiveOnDiskConfig } from "./config.js";
 import { attachPersistence, getDefaultHiveStatePath, loadHiveServerState } from "./persistence.js";
 import {
@@ -23,6 +24,12 @@ const resolvedAuthRequired =
   process.env.HIVEPLANE_AUTH_REQUIRED !== undefined
     ? process.env.HIVEPLANE_AUTH_REQUIRED === "true" || process.env.HIVEPLANE_AUTH_REQUIRED === "1"
     : onDiskConfig.authRequired;
+const tlsCertPath = process.env.HIVEPLANE_TLS_CERT ?? onDiskConfig.tlsCertPath;
+const tlsKeyPath = process.env.HIVEPLANE_TLS_KEY ?? onDiskConfig.tlsKeyPath;
+const tls =
+  tlsCertPath && tlsKeyPath
+    ? { cert: readFileSync(tlsCertPath), key: readFileSync(tlsKeyPath) }
+    : undefined;
 const incidentNotifier =
   createIncidentNotifierFromEnv() ??
   (onDiskConfig.incidentNotificationCommand?.length
@@ -55,6 +62,7 @@ const server = createHiveServer({
   // sensible URL for remote Bees without the operator having to guess.
   bindHost: host,
   bindPort: port,
+  ...(tls ? { tls } : {}),
 });
 
 // Flush pending writes before the process exits. SIGTERM is what launchd /
@@ -85,9 +93,10 @@ server.listen(port, host, () => {
   // 0.0.0.0 / :: aren't navigable; substitute localhost.
   const visitHost =
     boundHost === "0.0.0.0" || boundHost === "::" || boundHost === "" ? "localhost" : boundHost;
-  const url = `http://${visitHost}:${boundPort}`;
+  const scheme = tls ? "https" : "http";
+  const url = `${scheme}://${visitHost}:${boundPort}`;
 
-  console.log(`HivePlane Hive v${VERSION} listening on http://${boundHost}:${boundPort}`);
+  console.log(`HivePlane Hive v${VERSION} listening on ${scheme}://${boundHost}:${boundPort}`);
   console.log(`Dashboard:   ${url}/`);
   console.log(`Health:      ${url}/healthz`);
   console.log(`API root:    ${url}/api/bees`);

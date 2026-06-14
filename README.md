@@ -102,7 +102,7 @@ On both the Hive machine and each Bee machine:
 
 - **Node 20+** (`node -v`).
 - **git** on PATH.
-- **A reachable network path** from each Bee to the Hive's URL. The recommended setup is [Tailscale](https://tailscale.com) on every machine — gives you stable `*.ts.net` hostnames and encryption at the network layer with no public ports. LAN works too. Public-internet exposure works but currently does not provide TLS — see [#49](https://github.com/AustinNChristensen/HivePlane/issues/49).
+- **A reachable network path** from each Bee to the Hive's URL. The recommended setup is [Tailscale](https://tailscale.com) on every machine — gives you stable `*.ts.net` hostnames and encryption at the network layer with no public ports. LAN works too. If you expose the Hive on the public internet, use native TLS (`HIVEPLANE_TLS_CERT` + `HIVEPLANE_TLS_KEY`) or terminate TLS at a reverse proxy.
 
 Everything else (pnpm, the daemon binary, identity keypair, service unit) is set up by the install scripts.
 

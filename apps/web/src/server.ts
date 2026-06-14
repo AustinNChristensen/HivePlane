@@ -1,7 +1,12 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  createServer as createHttpServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -279,6 +284,11 @@ export type CreateHiveServerOptions = {
    */
   bindHost?: string;
   bindPort?: number;
+  /** Optional native TLS material. When set, the Hive listens with HTTPS. */
+  tls?: {
+    cert: string | Buffer;
+    key: string | Buffer;
+  };
   /** Optional sink for unresolved / approval-needed incident alerts. */
   incidentNotifier?: IncidentNotifier | null;
 };
@@ -530,7 +540,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
   const bindHost = options.bindHost ?? "0.0.0.0";
   const bindPort = options.bindPort ?? 4483;
 
-  return createServer(async (request, response) => {
+  const handler = async (request: IncomingMessage, response: ServerResponse) => {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
 
@@ -1158,7 +1168,11 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         message: error instanceof Error ? error.message : "Unknown error",
       });
     }
-  });
+  };
+
+  return options.tls
+    ? createHttpsServer({ cert: options.tls.cert, key: options.tls.key }, handler)
+    : createHttpServer(handler);
 }
 
 function checkAdmin(

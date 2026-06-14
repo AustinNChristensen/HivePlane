@@ -33,6 +33,8 @@ describe("HiveOnDiskConfig", () => {
       port: 4483,
       authRequired: true,
       openBrowser: false,
+      tlsCertPath: "/etc/letsencrypt/live/hive.example.com/fullchain.pem",
+      tlsKeyPath: "/etc/letsencrypt/live/hive.example.com/privkey.pem",
       incidentNotificationWebhookUrl: "https://example.com/hive-alerts",
       incidentNotificationCommand: ["/usr/local/bin/hive-alert", "--target", "+15555550123"],
     };
