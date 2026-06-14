@@ -234,6 +234,45 @@ describe("JobExecutor", () => {
     expect(body.output.beeId).toBe("bee_test");
   });
 
+  it("accepts scaffolded Hive sub-agent tasks", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      daemonVersion: "0.0.1-test",
+      policy: { runCommand: { allow: [], unsafeAllowAll: false } },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl: makeSpawn({}) as unknown as typeof import("node:child_process").spawn,
+    });
+
+    await executor.execute(
+      makeJob({
+        type: "agent_task",
+        payload: {
+          taskId: "task_123",
+          title: "Summarize repo",
+          instructions: "Find the important files.",
+        },
+      }),
+    );
+
+    const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
+    expect(body.status).toBe("succeeded");
+    expect(body.output).toMatchObject({
+      taskId: "task_123",
+      title: "Summarize repo",
+      runtime: "scaffold",
+    });
+  });
+
   it("openclaw_status completes through the adapter path", async () => {
     const identity = await makeIdentity();
     const session = makeSession();

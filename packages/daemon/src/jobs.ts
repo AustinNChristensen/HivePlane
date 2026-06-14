@@ -69,6 +69,9 @@ export class JobExecutor {
         case "update_bee":
           outcome = await this.runBeeUpdate(job);
           break;
+        case "agent_task":
+          outcome = await this.runAgentTask(job);
+          break;
         default:
           outcome = {
             status: "failed",
@@ -240,6 +243,29 @@ export class JobExecutor {
         git: git.summary,
         install: install.summary,
         restartScheduled: true,
+      },
+    };
+  }
+
+  private async runAgentTask(job: Job): Promise<JobOutcome> {
+    const taskId = typeof job.payload.taskId === "string" ? job.payload.taskId : job.id;
+    const title = typeof job.payload.title === "string" ? job.payload.title : "Hive task";
+    const instructions =
+      typeof job.payload.instructions === "string" ? job.payload.instructions : "";
+
+    await this.emit(job, "info", "agent_task.accepted", { taskId, title });
+    await this.emit(job, "info", "agent_task.scaffold", {
+      message: "Bee accepted a Hive sub-agent task. Runtime-specific execution will be wired next.",
+    });
+
+    return {
+      status: "succeeded",
+      output: {
+        taskId,
+        title,
+        instructions,
+        runtime: "scaffold",
+        message: "Hive sub-agent task accepted by Bee.",
       },
     };
   }

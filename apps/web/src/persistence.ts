@@ -8,6 +8,7 @@ import {
   createHiveServerState,
   type HiveBeeRecord,
   type HiveServerState,
+  type HiveTaskRecord,
   type IncidentRecord,
 } from "./server.js";
 
@@ -165,6 +166,7 @@ type PersistedSnapshot = {
   sessions: Array<[string, PersistedSession]>;
   jobs: Array<[string, PersistedJob]>;
   incidents?: Array<[string, IncidentRecord]>;
+  tasks?: Array<[string, HiveTaskRecord]>;
 };
 
 type PersistedBootstrapToken = Omit<BootstrapTokenRecord, "expiresAt" | "consumedAt"> & {
@@ -192,6 +194,7 @@ function serialize(state: HiveServerState): PersistedSnapshot {
     sessions: [...state.sessions.entries()].map(([k, v]) => [k, serializeSession(v)]),
     jobs: [...state.jobsState.jobs.entries()].map(([k, v]) => [k, serializeJob(v)]),
     incidents: [...state.incidents.entries()],
+    tasks: [...state.tasks.entries()],
   };
 }
 
@@ -226,6 +229,7 @@ function rehydrate(snapshot: PersistedSnapshot): HiveServerState {
       })),
     });
   }
+  for (const [k, v] of snapshot.tasks ?? []) state.tasks.set(k, v);
   return state;
 }
 

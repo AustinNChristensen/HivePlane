@@ -190,6 +190,7 @@ describe("jobs and events", () => {
       "restart_openclaw_gateway",
       "restart_hermes_gateway",
       "repair_imessage_bridge",
+      "agent_task",
     ]) {
       const job = JobSchema.parse({
         id: `job_${type}`,

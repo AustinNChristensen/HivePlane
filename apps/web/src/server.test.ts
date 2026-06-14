@@ -346,6 +346,118 @@ describe("Hive server", () => {
     );
   });
 
+  it("creates Hive tasks and assigns them to matching healthy Bees", async () => {
+    const state = createHiveServerState();
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_agent",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      capabilities: {
+        runtimes: ["openclaw"],
+        modelBackends: ["ollama"],
+        models: ["gemma4:12b"],
+        tools: ["github", "filesystem"],
+        networking: ["tailscale"],
+        hardware: {
+          platform: "darwin-arm64",
+          hostname: "bee-agent",
+          cpuCores: 10,
+          memoryGb: 32,
+        },
+      },
+      healthChecks: [],
+    });
+
+    await withServer(
+      { state, adminToken: "secret", now: () => new Date("2026-05-09T08:00:05.000Z") },
+      async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            title: "Summarize repo",
+            instructions: "Inspect the repo and report the next task.",
+            requestedBy: "Austin",
+            requirements: { runtimes: ["openclaw"], tools: ["github"] },
+          }),
+        });
+
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as {
+          task: { status: string; assignedBeeId: string; jobId: string };
+        };
+        expect(body.task).toMatchObject({
+          status: "assigned",
+          assignedBeeId: "bee_agent",
+        });
+
+        const jobs = (await (
+          await fetch(`${baseUrl}/api/jobs`, {
+            headers: { authorization: "Bearer secret" },
+          })
+        ).json()) as { jobs: Array<{ id: string; type: string; payload: { taskId?: string } }> };
+        expect(jobs.jobs[0]).toMatchObject({
+          id: body.task.jobId,
+          type: "agent_task",
+          payload: { taskId: expect.any(String) },
+        });
+      },
+    );
+  });
+
+  it("blocks Hive tasks when no healthy Bee matches requirements", async () => {
+    const state = createHiveServerState();
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_basic",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      capabilities: {
+        runtimes: ["openclaw"],
+        modelBackends: [],
+        models: [],
+        tools: ["filesystem"],
+        networking: [],
+        hardware: {
+          platform: "darwin-arm64",
+          hostname: "bee-basic",
+          cpuCores: 10,
+          memoryGb: 32,
+        },
+      },
+      healthChecks: [],
+    });
+
+    await withServer(
+      { state, adminToken: "secret", now: () => new Date("2026-05-09T08:00:05.000Z") },
+      async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            title: "Run model task",
+            instructions: "Use a local model.",
+            requirements: { models: ["gemma4:12b"] },
+          }),
+        });
+
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as {
+          task: { status: string; lastError: string };
+        };
+        expect(body.task).toMatchObject({
+          status: "blocked",
+          lastError: "No healthy Bee currently matches the task requirements.",
+        });
+      },
+    );
+  });
+
   it("verifies a successful repair before resolving an incident", async () => {
     const state = createHiveServerState();
     upsertBeeHeartbeat(state, {

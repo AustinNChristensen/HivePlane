@@ -175,6 +175,7 @@ export const JobTypeSchema = z.enum([
   "restart_openclaw_gateway",
   "restart_hermes_gateway",
   "repair_imessage_bridge",
+  "agent_task",
 ]);
 
 export const JobSchema = z.object({

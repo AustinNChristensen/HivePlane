@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
@@ -54,6 +55,7 @@ import {
   type JobRecord,
   type JobsState,
 } from "./jobs.js";
+import { z } from "zod";
 
 export type HiveBeeRecord = {
   beeId: string;
@@ -184,11 +186,36 @@ export type HiveServerState = {
   jobsState: JobsState;
   /** Incidents keyed by deterministic bee/kind IDs. */
   incidents: Map<string, IncidentRecord>;
+  /** Hive-level tasks assigned to Bees as sub-agent work. */
+  tasks: Map<string, HiveTaskRecord>;
 };
 
 type DeviceProfilePatchResult =
   | { profile: BeeDeviceProfile; warnings: string[] }
   | { error: string; reason: string };
+
+export type HiveTaskStatus = "queued" | "assigned" | "running" | "succeeded" | "failed" | "blocked";
+
+export type HiveTaskRequirements = {
+  runtimes: string[];
+  tools: string[];
+  models: string[];
+};
+
+export type HiveTaskRecord = {
+  id: string;
+  title: string;
+  instructions: string;
+  requestedBy?: string;
+  preferredBeeId?: string;
+  requirements: HiveTaskRequirements;
+  status: HiveTaskStatus;
+  assignedBeeId?: string;
+  jobId?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastError?: string;
+};
 
 export type IncidentNotificationPayload = {
   incident: IncidentRecord;
@@ -240,6 +267,7 @@ export function createHiveServerState(): HiveServerState {
     pairingAttempts: new Map(),
     jobsState: createJobsState(),
     incidents: new Map(),
+    tasks: new Map(),
   };
 }
 
@@ -414,6 +442,20 @@ const INCIDENT_ATTEMPT_COOLDOWN_MS = 5 * 60 * 1000;
 const INCIDENT_MAX_ATTEMPTS = 3;
 const INCIDENT_NOTIFICATION_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
 const INCIDENT_NOTIFICATION_MAX_ATTEMPTS = 5;
+const TaskRequirementsSchema = z
+  .object({
+    runtimes: z.array(z.string().min(1)).default([]),
+    tools: z.array(z.string().min(1)).default([]),
+    models: z.array(z.string().min(1)).default([]),
+  })
+  .default({});
+const CreateHiveTaskRequestSchema = z.object({
+  title: z.string().min(1).max(120),
+  instructions: z.string().min(1).max(8000),
+  requestedBy: z.string().min(1).max(120).optional(),
+  preferredBeeId: z.string().min(1).optional(),
+  requirements: TaskRequirementsSchema,
+});
 
 const HIVE_VERSION = "0.0.7";
 const RESCUE_JOB_TYPES: readonly JobType[] = [
@@ -633,6 +675,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         const bee = upsertBeeHeartbeat(state, heartbeat, now());
         const current = now();
         evaluateBeeAutomation(state, heartbeat.beeId, current);
+        scheduleOpenHiveTasks(state, current);
         await deliverPendingIncidentNotifications(current);
         // Hand back any pending jobs and mark them as assigned.
         const jobs = claimPendingJobs(state.jobsState, heartbeat.beeId, current, {
@@ -659,6 +702,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         const current = now();
         const bee = upsertRescueHeartbeat(state, heartbeat, current);
         evaluateBeeAutomation(state, heartbeat.beeId, current);
+        scheduleOpenHiveTasks(state, current);
         await deliverPendingIncidentNotifications(current);
         const jobs = claimPendingJobs(state.jobsState, heartbeat.beeId, current, {
           types: RESCUE_JOB_TYPES,
@@ -763,6 +807,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         const current = now();
         const updated = completeJob(state.jobsState, jobId, parsed.data, current);
         if (updated) onJobCompleted(state, updated, current);
+        if (updated) updateHiveTaskFromJob(state, updated, current);
         await deliverPendingIncidentNotifications(current);
         markDirty();
         return sendJson(response, 200, { job: updated ? serializeJob(updated) : null });
@@ -784,6 +829,28 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         const beeId = url.searchParams.get("beeId") ?? undefined;
         const jobs = listJobs(state.jobsState, beeId ? { beeId } : undefined).map(serializeJob);
         return sendJson(response, 200, { jobs });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/tasks") {
+        if (!checkAdmin(request, response, adminToken)) return;
+        return sendJson(response, 200, { tasks: serializeTasks(state) });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/tasks") {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const { body } = await readJson(request);
+        const parsed = CreateHiveTaskRequestSchema.safeParse(body);
+        if (!parsed.success) {
+          return sendJson(response, 400, {
+            error: "bad_request",
+            message: parsed.error.message,
+          });
+        }
+        const current = now();
+        const task = createHiveTask(state, parsed.data, current);
+        scheduleHiveTask(state, task, current);
+        markDirty();
+        return sendJson(response, 200, { task: serializeTask(task) });
       }
 
       if (request.method === "GET" && url.pathname === "/api/incidents") {
@@ -1245,6 +1312,154 @@ function beeOfflineAfterMs(bee: HiveBeeRecord): number {
 
 function serializeIncidents(state: HiveServerState, _now: Date): IncidentRecord[] {
   return [...state.incidents.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+function serializeTasks(state: HiveServerState): HiveTaskRecord[] {
+  return [...state.tasks.values()]
+    .map(serializeTask)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+function serializeTask(task: HiveTaskRecord): HiveTaskRecord {
+  return { ...task, requirements: { ...task.requirements } };
+}
+
+function generateTaskId(): string {
+  return `task_${randomBytes(8).toString("hex")}`;
+}
+
+function normalizeTaskRequirements(requirements: HiveTaskRequirements): HiveTaskRequirements {
+  return {
+    runtimes: dedupeStrings(requirements.runtimes),
+    tools: dedupeStrings(requirements.tools),
+    models: dedupeStrings(requirements.models),
+  };
+}
+
+function dedupeStrings(values: string[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (trimmed && !out.includes(trimmed)) out.push(trimmed);
+  }
+  return out;
+}
+
+function createHiveTask(
+  state: HiveServerState,
+  request: z.infer<typeof CreateHiveTaskRequestSchema>,
+  now: Date,
+): HiveTaskRecord {
+  const task: HiveTaskRecord = {
+    id: generateTaskId(),
+    title: request.title.trim(),
+    instructions: request.instructions.trim(),
+    ...(request.requestedBy ? { requestedBy: request.requestedBy.trim() } : {}),
+    ...(request.preferredBeeId ? { preferredBeeId: request.preferredBeeId } : {}),
+    requirements: normalizeTaskRequirements(request.requirements),
+    status: "queued",
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+  };
+  state.tasks.set(task.id, task);
+  return task;
+}
+
+function scheduleOpenHiveTasks(state: HiveServerState, now: Date): void {
+  for (const task of state.tasks.values()) {
+    if (task.status === "queued" || task.status === "blocked") {
+      scheduleHiveTask(state, task, now);
+    }
+  }
+}
+
+function scheduleHiveTask(state: HiveServerState, task: HiveTaskRecord, now: Date): void {
+  if (task.jobId && state.jobsState.jobs.get(task.jobId)?.status !== "cancelled") return;
+  const bee = selectBeeForTask(state, task, now);
+  if (!bee) {
+    task.status = "blocked";
+    task.updatedAt = now.toISOString();
+    task.lastError = "No healthy Bee currently matches the task requirements.";
+    delete task.assignedBeeId;
+    delete task.jobId;
+    return;
+  }
+
+  const job = createJob(
+    state.jobsState,
+    bee.beeId,
+    {
+      type: "agent_task",
+      payload: {
+        taskId: task.id,
+        title: task.title,
+        instructions: task.instructions,
+        requestedBy: task.requestedBy ?? "hive",
+        requirements: task.requirements,
+      },
+    },
+    now,
+  );
+  task.status = "assigned";
+  task.assignedBeeId = bee.beeId;
+  task.jobId = job.id;
+  task.updatedAt = now.toISOString();
+  delete task.lastError;
+}
+
+function selectBeeForTask(
+  state: HiveServerState,
+  task: HiveTaskRecord,
+  now: Date,
+): HiveBeeRecord | null {
+  const candidates = [...state.bees.values()]
+    .map((bee) => serializeBee(bee, now, state))
+    .filter((bee) => {
+      if (task.preferredBeeId && bee.beeId !== task.preferredBeeId) return false;
+      if (bee.status !== "online") return false;
+      if (bee.operationalState !== "healthy") return false;
+      if (!matchesTaskRequirements(bee, task.requirements)) return false;
+      return true;
+    })
+    .sort((a, b) => (a.activeJobs ?? 0) - (b.activeJobs ?? 0));
+  return candidates[0] ?? null;
+}
+
+function matchesTaskRequirements(bee: HiveBeeRecord, requirements: HiveTaskRequirements): boolean {
+  if (
+    requirements.runtimes.length === 0 &&
+    requirements.tools.length === 0 &&
+    requirements.models.length === 0
+  ) {
+    return true;
+  }
+  const capabilities = bee.capabilities;
+  if (!capabilities) return false;
+  return (
+    requirements.runtimes.every((runtime) => capabilities.runtimes.includes(runtime)) &&
+    requirements.tools.every((tool) => capabilities.tools.includes(tool)) &&
+    requirements.models.every((model) => capabilities.models.includes(model))
+  );
+}
+
+function updateHiveTaskFromJob(state: HiveServerState, job: JobRecord, now: Date): void {
+  const taskId = typeof job.payload.taskId === "string" ? job.payload.taskId : "";
+  if (!taskId) return;
+  const task = state.tasks.get(taskId);
+  if (!task) return;
+  if (job.status === "succeeded") {
+    task.status = "succeeded";
+    delete task.lastError;
+  } else if (job.status === "failed" || job.status === "timed_out" || job.status === "cancelled") {
+    task.status = "failed";
+    task.lastError =
+      typeof job.error?.message === "string"
+        ? job.error.message
+        : `${job.type} ended with status ${job.status}`;
+  } else if (job.status === "running" || job.status === "assigned") {
+    task.status = "running";
+  }
+  task.updatedAt = now.toISOString();
 }
 
 function defaultDeviceProfile(labels: Record<string, string> = {}, beeName = ""): BeeDeviceProfile {

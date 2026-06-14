@@ -598,6 +598,7 @@
 
     <nav class="tabs">
       <button class="tab active" data-tab="bees">Bees</button>
+      <button class="tab" data-tab="tasks">Tasks</button>
       <button class="tab" data-tab="jobs">Jobs</button>
       <button class="tab" data-tab="tokens">Tokens</button>
     </nav>
@@ -634,6 +635,31 @@
             <span class="meta" id="incidentsMeta">—</span>
           </div>
           <div id="incidentsBody"></div>
+        </div>
+      </section>
+
+      <section data-view="tasks" hidden>
+        <div class="panel">
+          <div class="panel-header">
+            <span>Hive Tasks</span>
+            <span class="meta" id="tasksMeta">—</span>
+          </div>
+          <div class="form-row">
+            <div class="form-field">
+              <label for="taskTitle">Title</label>
+              <input id="taskTitle" placeholder="Summarize this repo" />
+            </div>
+            <div class="form-field">
+              <label for="taskRuntime">Runtime</label>
+              <input id="taskRuntime" placeholder="openclaw" />
+            </div>
+            <button class="action" id="createTask">Assign Task</button>
+          </div>
+          <div class="form-field wide">
+            <label for="taskInstructions">Instructions</label>
+            <textarea id="taskInstructions" spellcheck="false"></textarea>
+          </div>
+          <div id="tasksBody"></div>
         </div>
       </section>
 
@@ -683,6 +709,7 @@
         bees: [],
         incidents: [],
         jobs: [],
+        tasks: [],
         selectedJob: null,
       };
 
@@ -696,6 +723,12 @@
         incidentsBody: document.getElementById("incidentsBody"),
         jobsMeta: document.getElementById("jobsMeta"),
         jobsBody: document.getElementById("jobsBody"),
+        tasksMeta: document.getElementById("tasksMeta"),
+        tasksBody: document.getElementById("tasksBody"),
+        taskTitle: document.getElementById("taskTitle"),
+        taskRuntime: document.getElementById("taskRuntime"),
+        taskInstructions: document.getElementById("taskInstructions"),
+        createTask: document.getElementById("createTask"),
         tokenBeeName: document.getElementById("tokenBeeName"),
         mintToken: document.getElementById("mintToken"),
         tokenResult: document.getElementById("tokenResult"),
@@ -1564,6 +1597,120 @@
         });
       }
 
+      // --- tasks view ----------------------------------------------------------
+      els.createTask.addEventListener("click", async () => {
+        if (!state.adminToken) {
+          els.tasksMeta.textContent = "set an admin token (top right) to assign tasks";
+          return;
+        }
+        const title = els.taskTitle.value.trim();
+        const instructions = els.taskInstructions.value.trim();
+        const runtime = els.taskRuntime.value.trim();
+        if (!title || !instructions) {
+          els.tasksMeta.textContent = "title and instructions are required";
+          return;
+        }
+        els.createTask.disabled = true;
+        try {
+          const payload = {
+            title,
+            instructions,
+            requestedBy: "dashboard",
+            requirements: { runtimes: runtime ? [runtime] : [], tools: [], models: [] },
+          };
+          const res = await fetch("/api/tasks", {
+            method: "POST",
+            headers: { ...authHeaders(), "content-type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            els.tasksMeta.textContent = "admin token rejected — paste the current token";
+            return;
+          }
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.reason || body.message || `HTTP ${res.status}`);
+          els.taskTitle.value = "";
+          els.taskInstructions.value = "";
+          state.selectedJobId = body.task?.jobId || state.selectedJobId;
+          els.tasksMeta.textContent =
+            body.task?.status === "blocked" ? body.task.lastError : "task assigned";
+          await refreshTasks();
+        } catch (err) {
+          els.tasksMeta.textContent = `task failed: ${err.message}`;
+        } finally {
+          els.createTask.disabled = false;
+        }
+      });
+
+      async function refreshTasks() {
+        if (!state.adminToken) {
+          els.tasksBody.innerHTML = `<div class="empty">Set an admin token (top right) to view tasks.</div>`;
+          els.tasksMeta.textContent = "—";
+          return;
+        }
+        try {
+          const res = await fetch("/api/tasks", { headers: authHeaders() });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            els.tasksBody.innerHTML = `<div class="empty">Admin token rejected. Paste the current token from <code>~/.hiveplane/hive-config.json</code> and save again.</div>`;
+            els.tasksMeta.textContent = "—";
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const { tasks } = await res.json();
+          state.tasks = tasks ?? [];
+          renderTasks(state.tasks);
+          els.tasksMeta.textContent = `${state.tasks.length} tasks · updated ${new Date().toLocaleTimeString()}`;
+        } catch (err) {
+          els.tasksBody.innerHTML = `<div class="empty">Failed to load tasks: ${escapeHtml(err.message)}</div>`;
+        }
+      }
+
+      function renderTasks(tasks) {
+        if (!tasks.length) {
+          els.tasksBody.innerHTML = `<div class="empty">No Hive tasks yet.</div>`;
+          return;
+        }
+        els.tasksBody.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Title</th>
+                <th>Bee</th>
+                <th>Runtime</th>
+                <th>Job</th>
+                <th>Updated</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tasks
+                .map(
+                  (task) => `
+                    <tr>
+                      <td>${pill(task.status || "queued")}</td>
+                      <td>${escapeHtml(task.title || "—")}</td>
+                      <td>${task.assignedBeeId ? renderBeeName(task.assignedBeeId) : "—"}</td>
+                      <td>${capList(task.requirements?.runtimes || [])}</td>
+                      <td>${task.jobId ? `<button class="ghost" data-action="task-job" data-job-id="${escapeHtml(task.jobId)}">${escapeHtml(shortId(task.jobId))}</button>` : "—"}</td>
+                      <td title="${escapeHtml(task.updatedAt || "")}">${relativeTime(task.updatedAt)}</td>
+                      <td>${escapeHtml(task.lastError || task.instructions || "—")}</td>
+                    </tr>`,
+                )
+                .join("")}
+            </tbody>
+          </table>`;
+        els.tasksBody.querySelectorAll("[data-action='task-job']").forEach((button) => {
+          button.addEventListener("click", () => {
+            state.selectedJobId = button.dataset.jobId;
+            showJobsTab();
+            refreshJobs();
+          });
+        });
+      }
+
       // --- jobs view -----------------------------------------------------------
       async function refreshJobs() {
         if (!state.adminToken) {
@@ -1870,6 +2017,8 @@
         if (state.activeTab === "bees") {
           refreshBees();
           refreshPairingCard();
+        } else if (state.activeTab === "tasks") {
+          refreshTasks();
         } else if (state.activeTab === "jobs") {
           refreshJobs();
         }

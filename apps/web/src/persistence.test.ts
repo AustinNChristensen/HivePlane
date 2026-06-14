@@ -92,6 +92,18 @@ function buildPopulatedState(): HiveServerState {
     ],
   });
 
+  state.tasks.set("task_aaaa", {
+    id: "task_aaaa",
+    title: "Persist task",
+    instructions: "Keep this task across restarts.",
+    requirements: { runtimes: ["openclaw"], tools: ["filesystem"], models: [] },
+    status: "assigned",
+    assignedBeeId: "bee_persist",
+    jobId: "job_aaaa",
+    createdAt: "2026-05-09T20:09:00.000Z",
+    updatedAt: "2026-05-09T20:10:00.000Z",
+  });
+
   return state;
 }
 
@@ -167,6 +179,13 @@ describe("attachPersistence — round-trip", () => {
     expect(job?.assignedAt).toBeInstanceOf(Date);
     expect(job?.events).toHaveLength(1);
     expect(job?.events[0]?.type).toBe("job.started");
+
+    // Hive task
+    expect(reloaded.tasks.get("task_aaaa")).toMatchObject({
+      status: "assigned",
+      assignedBeeId: "bee_persist",
+      jobId: "job_aaaa",
+    });
   });
 
   it("writes the snapshot file with mode 0600", async () => {
