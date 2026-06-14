@@ -5,7 +5,9 @@ flags or paths.
 
 ## Bee (worker node)
 
-Three commands total: install, login, start.
+Fast path: copy the one-command installer from the dashboard's **Pair a new Bee** card. It passes `HIVEPLANE_HIVE_URL` and `HIVEPLANE_PAIRING_KEY` into `bee.sh`, so the script installs, pairs, and starts the Bee in one pass.
+
+Manual path: install, login, start.
 
 ```sh
 # 1. install (no args needed)
@@ -39,7 +41,8 @@ What `bee.sh` does:
 - generates a persistent Ed25519 Bee identity under `~/.hiveplane`.
 
 It does **not** start anything or contact a Hive — that happens via
-`bee login <url>` followed by `bee start`.
+`bee login <url>` followed by `bee start`, unless `HIVEPLANE_HIVE_URL` plus
+`HIVEPLANE_PAIRING_KEY` or `HIVEPLANE_BOOTSTRAP_TOKEN` are supplied.
 
 The script is idempotent. Re-running it pulls the latest `main` and reinstalls
 deps, but keeps your identity and config.

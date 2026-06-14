@@ -738,6 +738,23 @@
         border-radius: 4px;
         font-family: var(--mono);
       }
+      .pairing-card .pairing-command {
+        grid-column: 1 / -1;
+        display: block;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.22);
+        color: var(--text);
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      .pairing-card .pairing-command:empty {
+        display: none;
+      }
       .pairing-card .pairing-meta {
         grid-column: 1 / -1;
         font-size: 12px;
@@ -1220,13 +1237,15 @@
                   — set an admin token to load —
                 </div>
                 <div class="pairing-actions">
-                  <button class="ghost" id="copyPairing" disabled>Copy</button>
+                  <button class="ghost" id="copyPairing" disabled>Copy Key</button>
+                  <button class="action" id="copyInstallCommand" disabled>Copy Install</button>
                   <button class="action" id="rotatePairing">Rotate</button>
                 </div>
                 <div class="pairing-instructions" id="pairingInstructions">
                   On the Bee, run <code>bee login</code> and paste the key when prompted (or
                   <code>bee login &lt;hive-url&gt; --pairing-key &lt;key&gt;</code>).
                 </div>
+                <code class="pairing-command" id="pairingCommand"></code>
               </div>
             </div>
             <div class="panel">
@@ -1396,13 +1415,15 @@
         pairingCode: document.getElementById("pairingCode"),
         pairingMeta: document.getElementById("pairingMeta"),
         pairingInstructions: document.getElementById("pairingInstructions"),
+        pairingCommand: document.getElementById("pairingCommand"),
         copyPairing: document.getElementById("copyPairing"),
+        copyInstallCommand: document.getElementById("copyInstallCommand"),
         rotatePairing: document.getElementById("rotatePairing"),
       };
 
       // Holds the most recently loaded pairing key so Copy + the countdown
       // ticker can find it without re-fetching.
-      const pairing = { record: null, countdownTimer: null };
+      const pairing = { record: null, installCommand: "", countdownTimer: null };
 
       // --- tabs ----------------------------------------------------------------
       document.querySelectorAll("nav.tabs button.tab").forEach((btn) => {
@@ -1566,6 +1587,9 @@
           els.pairingCode.classList.add("unset");
           els.pairingMeta.textContent = err.message;
           els.copyPairing.disabled = true;
+          els.copyInstallCommand.disabled = true;
+          els.pairingCommand.textContent = "";
+          pairing.installCommand = "";
           stopPairingCountdown();
         }
       }
@@ -1576,11 +1600,19 @@
         els.pairingCode.classList.remove("unset");
         els.copyPairing.disabled = false;
         const hiveUrl = await resolveHiveUrl();
+        const normalizedHiveUrl = hiveUrl.replace(/\/$/, "");
+        const installUrl = `${normalizedHiveUrl}/install/bee.sh`;
+        pairing.installCommand = `curl -fsSL ${shellQuote(installUrl)} | HIVEPLANE_HIVE_URL=${shellQuote(normalizedHiveUrl)} HIVEPLANE_PAIRING_KEY=${shellQuote(body.code)} sh`;
+        els.copyInstallCommand.disabled = false;
+        els.pairingCommand.textContent = pairing.installCommand;
         els.pairingInstructions.innerHTML = `
-          On the Bee, run <code>bee login</code> and paste the key when prompted, or
-          <code>bee login ${escapeHtml(hiveUrl)} --pairing-key ${escapeHtml(body.code)}</code>.
-          Single-use — rotates after each successful pair.`;
+          Copy Install runs the full Bee install, pair, and start flow on the target machine.
+          Single-use key — rotates after each successful pair.`;
         startPairingCountdown();
+      }
+
+      function shellQuote(value) {
+        return `'${String(value).replace(/'/g, `'\\''`)}'`;
       }
 
       // Resolve the URL we'd recommend a remote Bee use. If the operator is
@@ -1643,6 +1675,14 @@
           const original = els.copyPairing.textContent;
           els.copyPairing.textContent = "Copied!";
           setTimeout(() => (els.copyPairing.textContent = original), 1200);
+        });
+      });
+      els.copyInstallCommand.addEventListener("click", () => {
+        if (!pairing.installCommand) return;
+        navigator.clipboard.writeText(pairing.installCommand).then(() => {
+          const original = els.copyInstallCommand.textContent;
+          els.copyInstallCommand.textContent = "Copied!";
+          setTimeout(() => (els.copyInstallCommand.textContent = original), 1200);
         });
       });
       els.rotatePairing.addEventListener("click", async () => {

@@ -1,11 +1,17 @@
 #!/bin/sh
 # HivePlane Bee installer.
 #
-# Installs the Bee daemon + the `bee` CLI on this machine without connecting
-# to any Hive yet. After install, configure with:
+# Installs the Bee daemon + the `bee` CLI on this machine.
+#
+# Default mode installs only. After install, configure with:
 #
 #   bee login <hive-url>
 #   bee start
+#
+# One-command mode installs, pairs, and starts when these env vars are supplied:
+#
+#   HIVEPLANE_HIVE_URL=http://hive.local:4483
+#   HIVEPLANE_PAIRING_KEY=K7RQ-2P9X
 #
 # Idempotent: safe to re-run to upgrade an existing install.
 
@@ -105,10 +111,46 @@ case ":$PATH:" in
      echo
      ;;
 esac
+
+if [ -n "${HIVEPLANE_HIVE_URL:-}" ] || [ -n "${HIVEPLANE_PAIRING_KEY:-}" ] || [ -n "${HIVEPLANE_BOOTSTRAP_TOKEN:-}" ]; then
+  [ -n "${HIVEPLANE_HIVE_URL:-}" ] || err "HIVEPLANE_HIVE_URL is required for one-command pairing."
+  if [ -n "${HIVEPLANE_PAIRING_KEY:-}" ] && [ -n "${HIVEPLANE_BOOTSTRAP_TOKEN:-}" ]; then
+    err "Set only one of HIVEPLANE_PAIRING_KEY or HIVEPLANE_BOOTSTRAP_TOKEN."
+  fi
+  if [ -z "${HIVEPLANE_PAIRING_KEY:-}" ] && [ -z "${HIVEPLANE_BOOTSTRAP_TOKEN:-}" ]; then
+    err "HIVEPLANE_PAIRING_KEY or HIVEPLANE_BOOTSTRAP_TOKEN is required for one-command pairing."
+  fi
+
+  log "pairing with Hive at $HIVEPLANE_HIVE_URL..."
+  set -- "$HIVEPLANE_HIVE_URL"
+  if [ -n "${HIVEPLANE_BEE_NAME:-}" ]; then
+    set -- "$@" --name "$HIVEPLANE_BEE_NAME"
+  fi
+  if [ -n "${HIVEPLANE_PAIRING_KEY:-}" ]; then
+    set -- "$@" --pairing-key "$HIVEPLANE_PAIRING_KEY"
+  else
+    set -- "$@" --token "$HIVEPLANE_BOOTSTRAP_TOKEN"
+  fi
+  if [ "${HIVEPLANE_NO_START:-}" = "1" ] || [ "${HIVEPLANE_NO_START:-}" = "true" ]; then
+    set -- "$@" --no-start
+  fi
+  "$BIN_DIR/bee" login "$@"
+  echo
+  log "Bee paired."
+  if [ "${HIVEPLANE_NO_START:-}" = "1" ] || [ "${HIVEPLANE_NO_START:-}" = "true" ]; then
+    echo "Next:"
+    echo "  bee start                 # auto-installs launchd/systemd unit + heartbeats"
+  else
+    echo "Next:"
+    echo "  bee status                # confirm session + service state"
+    echo "  bee logs -f               # follow daemon logs"
+  fi
+else
 echo "Next:"
 echo "  bee login <hive-url>      # e.g. http://hive.your-tailnet.ts.net:4483"
 echo "  bee start                 # auto-installs launchd/systemd unit + heartbeats"
 echo "  bee start --foreground    # or run as a child process for dev"
+fi
 
 # Reboot survival on Linux requires user-level systemd to keep running after
 # logout. `bee start` will also warn at runtime if linger is off; mentioning

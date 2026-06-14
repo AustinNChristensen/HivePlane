@@ -183,7 +183,9 @@ In `--foreground` mode the Hive prints the dashboard URL and auto-opens it in yo
 
 ### Step 2 — Read the pairing key off the dashboard
 
-After saving your admin token in the top-right field, the **Pair a new Bee** card appears at the top of the **Bees** tab with the current pairing key — an 8-character code like `K7RQ-2P9X`. Keys are single-use, default-15-minute TTL, and rotate automatically after each successful pair (or any time you click _Rotate_). That's all you need on the Hive side for the human-driven flow.
+After saving your admin token in the top-right field, the **Pair a new Bee** card appears at the top of the **Bees** tab with the current pairing key — an 8-character code like `K7RQ-2P9X`. Keys are single-use, default-15-minute TTL, and rotate automatically after each successful pair (or any time you click _Rotate_).
+
+For the fastest path, click **Copy Install** and run the copied command on the Bee machine. It installs HivePlane, pairs with this Hive, and starts the Bee service in one pass.
 
 For unattended/scripted Bee installs, mint a long-form bootstrap token instead via the dashboard's **Tokens** tab, or:
 
@@ -200,7 +202,7 @@ Bootstrap tokens are single-use and expire in 30 minutes by default.
 
 ### Step 3 — Install the Bee daemon
 
-On each Bee machine:
+On each Bee machine, either run the one-command install copied from the dashboard, or use the manual flow:
 
 ```bash
 curl -fsSL http://mac-mini.tailnet-name.ts.net:4483/install/bee.sh | sh
