@@ -1714,9 +1714,9 @@
             state.selectedTask = null;
             state.selectedTaskJob = null;
           }
+          if (state.selectedTaskId) await refreshSelectedTask(false);
           renderTasks(state.tasks);
           els.tasksMeta.textContent = `${state.tasks.length} tasks · updated ${new Date().toLocaleTimeString()}`;
-          if (state.selectedTaskId) await refreshSelectedTask();
         } catch (err) {
           els.tasksBody.innerHTML = `<div class="empty">Failed to load tasks: ${escapeHtml(err.message)}</div>`;
         }
@@ -1796,11 +1796,11 @@
         bindTaskDetailActions(els.tasksBody);
       }
 
-      async function refreshSelectedTask() {
+      async function refreshSelectedTask(rerender = true) {
         if (!state.selectedTaskId) {
           state.selectedTask = null;
           state.selectedTaskJob = null;
-          renderTasks(state.tasks);
+          if (rerender) renderTasks(state.tasks);
           return;
         }
         try {
@@ -1820,7 +1820,7 @@
           const { task, job } = await res.json();
           state.selectedTask = task;
           state.selectedTaskJob = job || null;
-          renderTasks(state.tasks);
+          if (rerender) renderTasks(state.tasks);
         } catch (err) {
           renderInlineTaskError(`Failed to load task detail: ${err.message}`);
         }
