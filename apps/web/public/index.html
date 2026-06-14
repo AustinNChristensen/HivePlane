@@ -765,7 +765,6 @@
                 <option value="">Any matching Bee</option>
               </select>
             </div>
-            <button class="ghost" id="fillTaskRequirements">Load Caps</button>
             <div class="form-field">
               <label for="taskRuntime">Runtime</label>
               <select id="taskRuntime">
@@ -860,7 +859,6 @@
         taskTitle: document.getElementById("taskTitle"),
         taskPreferredBee: document.getElementById("taskPreferredBee"),
         taskBeeHint: document.getElementById("taskBeeHint"),
-        fillTaskRequirements: document.getElementById("fillTaskRequirements"),
         taskRuntime: document.getElementById("taskRuntime"),
         taskTools: document.getElementById("taskTools"),
         taskModels: document.getElementById("taskModels"),
@@ -1735,8 +1733,7 @@
       }
 
       // --- tasks view ----------------------------------------------------------
-      els.taskPreferredBee.addEventListener("change", renderTaskBeeHint);
-      els.fillTaskRequirements.addEventListener("click", fillTaskRequirementsFromSelectedBee);
+      els.taskPreferredBee.addEventListener("change", applySelectedBeeRequirements);
 
       els.createTask.addEventListener("click", async () => {
         if (!state.adminToken) {
@@ -1895,17 +1892,20 @@
         els.taskBeeHint.textContent = `${beeDisplayName(selectedBeeId)} capabilities: runtimes ${runtimes}; tools ${tools}; models ${models}.`;
       }
 
-      function fillTaskRequirementsFromSelectedBee() {
+      function applySelectedBeeRequirements() {
         const bee = beeById(els.taskPreferredBee.value);
         if (!bee) {
-          els.taskBeeHint.textContent = "Choose a Bee first, then load its capabilities.";
+          els.taskRuntime.value = "";
+          setSelectedValues(els.taskTools, []);
+          setSelectedValues(els.taskModels, []);
+          renderTaskBeeHint();
           return;
         }
         const caps = bee.capabilities || {};
         els.taskRuntime.value = capCsv(caps.runtimes);
         setSelectedValues(els.taskTools, caps.tools || []);
         setSelectedValues(els.taskModels, caps.models || []);
-        els.taskBeeHint.textContent = `Loaded ${beeDisplayName(bee.beeId)} capabilities into the requirements fields.`;
+        renderTaskBeeHint();
       }
 
       function summarizeCaps(values) {
