@@ -124,7 +124,11 @@ function findExecutable(paths: string[]): string | undefined {
   });
 }
 
-async function runCommand(command: string, args: string[], timeoutMs: number): Promise<CommandResult> {
+async function runCommand(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<CommandResult> {
   try {
     const result = await execFileAsync(command, args, { timeout: timeoutMs, windowsHide: true });
     return { exitCode: 0, stdout: result.stdout, stderr: result.stderr };

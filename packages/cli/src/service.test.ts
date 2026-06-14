@@ -266,9 +266,7 @@ describe("installRescueService", () => {
     });
 
     expect(result.platform).toBe("darwin");
-    expect(result.unitPath).toBe(
-      join(homeDir, "Library/LaunchAgents/com.hiveplane.rescue.plist"),
-    );
+    expect(result.unitPath).toBe(join(homeDir, "Library/LaunchAgents/com.hiveplane.rescue.plist"));
     expect(getRescueUnitPath("darwin")).toBe(result.unitPath);
     expect(readFileSync(result.unitPath, "utf8")).toContain("LABEL=com.hiveplane.rescue");
   });
