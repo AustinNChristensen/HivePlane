@@ -708,6 +708,7 @@
                 <option value="">Any matching Bee</option>
               </select>
             </div>
+            <button class="ghost" id="fillTaskRequirements">Load Caps</button>
             <div class="form-field">
               <label for="taskRuntime">Runtime</label>
               <input id="taskRuntime" placeholder="openclaw" />
@@ -800,6 +801,7 @@
         taskTitle: document.getElementById("taskTitle"),
         taskPreferredBee: document.getElementById("taskPreferredBee"),
         taskBeeHint: document.getElementById("taskBeeHint"),
+        fillTaskRequirements: document.getElementById("fillTaskRequirements"),
         taskRuntime: document.getElementById("taskRuntime"),
         taskTools: document.getElementById("taskTools"),
         taskModels: document.getElementById("taskModels"),
@@ -1675,6 +1677,7 @@
 
       // --- tasks view ----------------------------------------------------------
       els.taskPreferredBee.addEventListener("change", renderTaskBeeHint);
+      els.fillTaskRequirements.addEventListener("click", fillTaskRequirementsFromSelectedBee);
 
       els.createTask.addEventListener("click", async () => {
         if (!state.adminToken) {
@@ -1824,11 +1827,28 @@
         els.taskBeeHint.textContent = `${beeDisplayName(selectedBeeId)} capabilities: runtimes ${runtimes}; tools ${tools}; models ${models}.`;
       }
 
+      function fillTaskRequirementsFromSelectedBee() {
+        const bee = beeById(els.taskPreferredBee.value);
+        if (!bee) {
+          els.taskBeeHint.textContent = "Choose a Bee first, then load its capabilities.";
+          return;
+        }
+        const caps = bee.capabilities || {};
+        els.taskRuntime.value = capCsv(caps.runtimes);
+        els.taskTools.value = capCsv(caps.tools);
+        els.taskModels.value = capCsv(caps.models);
+        els.taskBeeHint.textContent = `Loaded ${beeDisplayName(bee.beeId)} capabilities into the requirements fields.`;
+      }
+
       function summarizeCaps(values) {
         const items = Array.isArray(values) ? values.filter(Boolean) : [];
         if (!items.length) return "—";
         const shown = items.slice(0, 4).join(", ");
         return items.length > 4 ? `${shown}, +${items.length - 4}` : shown;
+      }
+
+      function capCsv(values) {
+        return Array.isArray(values) ? values.filter(Boolean).join(", ") : "";
       }
 
       function renderTasks(tasks) {
