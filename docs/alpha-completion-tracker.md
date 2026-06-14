@@ -32,7 +32,7 @@ Keep iterating until every item below is either shipped and verified on `main`, 
 5. **OpenClaw sub-agent management** — issue #36
    - Goal: support adding/listing OpenClaw sub-agents if the pitch is managing agent fleets, not just generic OpenClaw task execution.
    - Acceptance signal: an operator can define or discover OpenClaw sub-agents and route work to them through HivePlane.
-   - Status: first implementation shipped on 2026-06-14 with Hive sub-agent definitions, Sub-agents dashboard tab, Bee-reported sub-agent capabilities, daemon list/configure/delete/smoke adapter jobs, task routing by requested sub-agent, and daemon prompts/session keys that use the configured sub-agent. Live Chris Mac mini dogfood passed create -> reconcile -> approve -> configure -> heartbeat report. Remaining: smoke-test UI action if needed, cleanup/edit/delete UX, and any deeper native OpenClaw config integration once OpenClaw exposes a richer API.
+   - Status: first implementation shipped on 2026-06-14 with Hive sub-agent definitions, Sub-agents dashboard tab, Bee-reported sub-agent capabilities, daemon list/configure/delete/smoke adapter jobs, task routing by requested sub-agent, and daemon prompts/session keys that use the configured sub-agent. Live Chris Mac mini dogfood passed create -> reconcile -> approve -> configure -> heartbeat report -> named sub-agent task execution. Remaining polish can be tracked separately: smoke-test UI action if needed, cleanup/edit/delete UX, and any deeper native OpenClaw config integration once OpenClaw exposes a richer API.
 
 6. **CI workflow enablement** — issue #21
    - Goal: add GitHub Actions once repo workflow permissions allow it.
@@ -136,10 +136,10 @@ Shipped the first #36 implementation:
 - task creation accepts `requestedSubAgentId`, route preview accounts for reported sub-agents, and scheduler only assigns that task to a Bee reporting the requested sub-agent;
 - dashboard now has a Sub-agents tab for defining/reconciling OpenClaw sub-agents, and the task form can target one.
 
-Still left in this area:
+Polish left in this area:
 
-- dogfood task execution against the reported sub-agent if we want a live proof beyond unit coverage;
 - add a dashboard smoke action for configured sub-agents if it feels necessary after dogfood;
+- add edit/delete UX for definitions and cleanup of dogfood definitions;
 - replace the HivePlane-scoped registry with native OpenClaw config/list operations if/when OpenClaw exposes them.
 
 Live dogfood notes:
@@ -147,4 +147,5 @@ Live dogfood notes:
 - first reconcile attempt exposed that the live Bee's `~/.hiveplane/policy.json` was still strict `{ runCommand.allow }`; added a narrow local job allowlist for OpenClaw observe/sub-agent/agent-task jobs;
 - after Bee restart, sub-agent `subagent_18530298ed5b4f16` configured successfully via job `job_9d45e87e3d46cc8f`;
 - Chris Mac mini Bee heartbeat reported the configured sub-agent within five heartbeat checks.
+- live task `task_67d29386f649aacd` assigned to job `job_6fddb6893f854bea`, used session key `hiveplane-subagent-subagent_18530298ed5b4f16-task-task_67d29386f649aacd`, stored `subAgentId`, and returned `hiveplane-subagent-task-ok`.
 - add richer model metadata beyond names and endpoint URL.
