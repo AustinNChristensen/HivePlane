@@ -760,6 +760,7 @@ describe("JobExecutor", () => {
     const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
     const spawnImpl = makeSpawn({
       stdoutChunks: ["hiveplane-ollama-ok\n"],
+      stderrChunks: ["\u001b[?25lprogress\u0000\n"],
       exitCode: 0,
     }) as unknown as typeof import("node:child_process").spawn;
 
@@ -796,6 +797,25 @@ describe("JobExecutor", () => {
     const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
     expect(body.status).toBe("succeeded");
     expect(body.output.stdout).toContain("hiveplane-ollama-ok");
+    expect(body.output.stderr).toBe("progress\n");
+
+    const eventBodies = (fetchImpl.mock.calls as unknown as Array<[URL, RequestInit]>)
+      .map((call) => JSON.parse(Buffer.from(call[1].body as Uint8Array).toString("utf8")))
+      .filter((payload) => payload.type === "job.events.append");
+    expect(JSON.stringify(eventBodies)).not.toContain("\u001b");
+    expect(JSON.stringify(eventBodies)).not.toContain("\u0000");
+    expect(eventBodies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          events: expect.arrayContaining([
+            expect.objectContaining({
+              type: "ollama.smoke.stderr",
+              data: { text: "progress\n" },
+            }),
+          ]),
+        }),
+      ]),
+    );
   });
 
   it("install_model_backend dry-runs Ollama install plans", async () => {

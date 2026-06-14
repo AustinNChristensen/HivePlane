@@ -277,12 +277,12 @@ export class JobExecutor {
     };
 
     child.stdout?.on("data", (data: Buffer) => {
-      const text = data.toString("utf8");
+      const text = sanitizeProcessText(data.toString("utf8"));
       stdoutChunks.push(text);
       queueEvent("debug", eventTypes.stdout, { text });
     });
     child.stderr?.on("data", (data: Buffer) => {
-      const text = data.toString("utf8");
+      const text = sanitizeProcessText(data.toString("utf8"));
       stderrChunks.push(text);
       queueEvent("debug", eventTypes.stderr, { text });
     });

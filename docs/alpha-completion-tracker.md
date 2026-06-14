@@ -27,7 +27,7 @@ Keep iterating until every item below is either shipped and verified on `main`, 
 4. **Ollama backend adapter** — issue #39
    - Goal: make local model management product-grade instead of only reporting capabilities.
    - Acceptance signal: HivePlane can install/check Ollama, pull/list models, and expose usable model metadata for routing.
-   - Status: first implementation shipped on 2026-06-14 with explicit `install_model_backend`, `ollama_start`, `ollama_pull_model`, `ollama_list_models`, `ollama_status`, and `ollama_smoke_test` daemon paths plus dashboard actions. Remaining: live dogfood of pull/smoke/start and OpenClaw/Hermes config consumption.
+   - Status: first implementation shipped on 2026-06-14 with explicit `install_model_backend`, `ollama_start`, `ollama_pull_model`, `ollama_list_models`, `ollama_status`, and `ollama_smoke_test` daemon paths plus dashboard actions. Live Chris Mac mini dogfood has passed status, list, and smoke inference. Remaining: live pull/start dogfood and OpenClaw/Hermes config consumption.
 
 5. **OpenClaw sub-agent management** — issue #36
    - Goal: support adding/listing OpenClaw sub-agents if the pitch is managing agent fleets, not just generic OpenClaw task execution.
@@ -115,6 +115,12 @@ Shipped the first #39 implementation:
 
 Still left in this area:
 
-- dogfood a real pull/smoke/start path on a live Bee;
+- dogfood real pull/start paths on a live Bee;
 - configure OpenClaw/Hermes to consume the reported Ollama endpoint/model;
+
+Live dogfood notes:
+
+- Chris Mac mini Bee reported Ollama installed/running with version `0.30.7`, endpoint `http://127.0.0.1:11434`, and model `gemma4:12b`;
+- `ollama_status`, `ollama_list_models`, and `ollama_smoke_test` jobs succeeded against the live Bee;
+- follow-up daemon cleanup sanitizes Ollama progress escape sequences before storing stdout/stderr or event artifacts.
 - add richer model metadata beyond names and endpoint URL.
