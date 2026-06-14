@@ -1,7 +1,15 @@
 import { execFile, type ExecFileException } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import type { BeeCapabilities, BeeHardware, JsonValue } from "@hiveplane/protocol";
+import {
+  AgentSessionCapabilitySchema,
+  type AgentSessionCapability,
+  type BeeCapabilities,
+  type BeeHardware,
+  type JsonValue,
+} from "@hiveplane/protocol";
+import { getDefaultHivePlaneConfigDir } from "./identity.js";
 import type { BeeHardwareSnapshot } from "./index.js";
 
 const execFileAsync = promisify(execFile);
@@ -17,12 +25,14 @@ export type RuntimeStatus = {
 
 export async function collectBeeCapabilities(
   hardware: BeeHardwareSnapshot,
+  options: { configDir?: string } = {},
 ): Promise<BeeCapabilities> {
   const capabilities: BeeCapabilities = {
     runtimes: [],
     modelBackends: [],
     models: [],
     localModels: [],
+    agentSessions: readAgentSessionRegistry(options.configDir),
     tools: [],
     networking: [],
     hardware: toCapabilitiesHardware(hardware),
@@ -67,6 +77,39 @@ export async function collectBeeCapabilities(
   }
 
   return capabilities;
+}
+
+export function getAgentSessionRegistryPath(configDir = getDefaultHivePlaneConfigDir()): string {
+  return join(configDir, "agent-sessions.json");
+}
+
+export function readAgentSessionRegistry(configDir?: string): AgentSessionCapability[] {
+  const path = getAgentSessionRegistryPath(configDir);
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const sessions = Array.isArray(parsed) ? parsed : [];
+    return sessions
+      .map((session) => AgentSessionCapabilitySchema.safeParse(session))
+      .filter((result) => result.success)
+      .map((result) => result.data)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, 20);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    return [];
+  }
+}
+
+export function upsertAgentSessionRegistry(
+  session: AgentSessionCapability,
+  configDir?: string,
+): void {
+  const normalized = AgentSessionCapabilitySchema.parse(session);
+  const path = getAgentSessionRegistryPath(configDir);
+  const sessions = readAgentSessionRegistry(configDir).filter((item) => item.id !== normalized.id);
+  sessions.unshift(normalized);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, `${JSON.stringify(sessions.slice(0, 20), null, 2)}\n`, { mode: 0o600 });
 }
 
 export async function getOpenClawStatus(): Promise<RuntimeStatus> {

@@ -1137,6 +1137,10 @@
         flex-wrap: wrap;
         gap: 6px;
       }
+      .stack {
+        display: grid;
+        gap: 6px;
+      }
       .footer {
         padding-top: 18px;
         font-size: 12px;
@@ -1358,6 +1362,14 @@
                   <label for="taskModels">Models</label>
                   <select id="taskModels" multiple size="4"></select>
                 </div>
+                <div class="form-field">
+                  <label for="taskSessionId">Session</label>
+                  <input id="taskSessionId" placeholder="optional session id" />
+                </div>
+                <div class="form-field">
+                  <label for="taskWorkingDirectory">Working dir</label>
+                  <input id="taskWorkingDirectory" placeholder="/repo/path" />
+                </div>
                 <button class="action" id="createTask">Assign Task</button>
               </div>
               <div class="form-field wide">
@@ -1486,6 +1498,8 @@
         taskRuntime: document.getElementById("taskRuntime"),
         taskTools: document.getElementById("taskTools"),
         taskModels: document.getElementById("taskModels"),
+        taskSessionId: document.getElementById("taskSessionId"),
+        taskWorkingDirectory: document.getElementById("taskWorkingDirectory"),
         taskInstructions: document.getElementById("taskInstructions"),
         createTask: document.getElementById("createTask"),
         tokenBeeName: document.getElementById("tokenBeeName"),
@@ -2592,6 +2606,7 @@
             ${capGroup("Models", capabilities.models)}
             ${capGroup("Tools", capabilities.tools)}
             ${capGroup("Networking", capabilities.networking)}
+            ${agentSessionGroup(capabilities.agentSessions || [])}
           </div>
         `;
         const rescueSection = `
@@ -2766,6 +2781,21 @@
       }
       function capGroup(label, values) {
         return `<div class="kv-list">${kv(label, capList(values || []))}</div>`;
+      }
+      function agentSessionGroup(sessions) {
+        if (!sessions.length) {
+          return `<div class="kv-list">${kv("Agent sessions", '<span class="mono">—</span>')}</div>`;
+        }
+        const rows = sessions
+          .slice(0, 6)
+          .map((session) => {
+            const cwd = session.workingDirectory
+              ? ` <span class="mono">${escapeHtml(session.workingDirectory)}</span>`
+              : "";
+            return `<div>${pill(session.status || "recent")} <span class="mono">${escapeHtml(session.id)}</span> · ${escapeHtml(session.runtime || "agent")}${cwd}</div>`;
+          })
+          .join("");
+        return `<div class="kv-list">${kv("Agent sessions", `<div class="stack">${rows}</div>`)}</div>`;
       }
       function capList(values) {
         if (!values.length) return '<span class="mono">—</span>';
@@ -3038,6 +3068,8 @@
         const instructions = els.taskInstructions.value.trim();
         const runtime = els.taskRuntime.value.trim();
         const preferredBeeId = els.taskPreferredBee.value.trim();
+        const sessionId = els.taskSessionId.value.trim();
+        const workingDirectory = els.taskWorkingDirectory.value.trim();
         const tools = selectedValues(els.taskTools);
         const models = selectedValues(els.taskModels);
         if (!title || !instructions) {
@@ -3052,6 +3084,11 @@
             requestedBy: "dashboard",
             ...(preferredBeeId ? { preferredBeeId } : {}),
             requirements: { runtimes: runtime ? [runtime] : [], tools, models },
+            context: {
+              ...(sessionId ? { sessionId } : {}),
+              ...(runtime ? { runtime } : {}),
+              ...(workingDirectory ? { workingDirectory } : {}),
+            },
           };
           const res = await fetch("/api/tasks", {
             method: "POST",
@@ -3068,6 +3105,8 @@
           els.taskTitle.value = "";
           els.taskPreferredBee.value = "";
           els.taskRuntime.value = "";
+          els.taskSessionId.value = "";
+          els.taskWorkingDirectory.value = "";
           setSelectedValues(els.taskTools, []);
           setSelectedValues(els.taskModels, []);
           els.taskInstructions.value = "";
@@ -3183,13 +3222,16 @@
         const runtimes = summarizeCaps(caps.runtimes);
         const tools = summarizeCaps(caps.tools);
         const models = summarizeCaps(caps.models);
-        els.taskBeeHint.textContent = `${beeDisplayName(selectedBeeId)} capabilities: runtimes ${runtimes}; tools ${tools}; models ${models}.`;
+        const sessions = summarizeAgentSessions(caps.agentSessions || []);
+        els.taskBeeHint.textContent = `${beeDisplayName(selectedBeeId)} capabilities: runtimes ${runtimes}; tools ${tools}; models ${models}; sessions ${sessions}.`;
       }
 
       function applySelectedBeeRequirements() {
         const bee = beeById(els.taskPreferredBee.value);
         if (!bee) {
           els.taskRuntime.value = "";
+          els.taskSessionId.value = "";
+          els.taskWorkingDirectory.value = "";
           setSelectedValues(els.taskTools, []);
           setSelectedValues(els.taskModels, []);
           renderTaskBeeHint();
@@ -3197,9 +3239,23 @@
         }
         const caps = bee.capabilities || {};
         els.taskRuntime.value = capCsv(caps.runtimes);
+        const session = (caps.agentSessions || [])[0];
+        els.taskSessionId.value = session?.id || "";
+        els.taskWorkingDirectory.value = session?.workingDirectory || "";
         setSelectedValues(els.taskTools, caps.tools || []);
         setSelectedValues(els.taskModels, caps.models || []);
         renderTaskBeeHint();
+      }
+
+      function summarizeAgentSessions(sessions) {
+        const items = Array.isArray(sessions) ? sessions.filter(Boolean) : [];
+        if (!items.length) return "—";
+        const shown = items
+          .slice(0, 3)
+          .map((session) => session.id || session.label || session.runtime)
+          .filter(Boolean)
+          .join(", ");
+        return items.length > 3 ? `${shown}, +${items.length - 3}` : shown;
       }
 
       function summarizeCaps(values) {
@@ -3362,6 +3418,7 @@
             <summary>requirements</summary>
             <pre class="snippet">${escapeHtml(JSON.stringify(task.requirements || {}, null, 2))}</pre>
           </details>
+          ${renderWorkContextDetails("context", task.context || job?.context)}
           ${task.lastError ? `<details open><summary>task error</summary><pre class="snippet">${escapeHtml(task.lastError)}</pre></details>` : ""}
           ${
             finalText
@@ -3653,6 +3710,7 @@
             <summary>payload</summary>
             <pre class="snippet">${escapeHtml(payload)}</pre>
           </details>
+          ${renderWorkContextDetails("context", job.context)}
           ${result ? `<details open><summary>${job.error ? "error" : "output"}</summary><pre class="snippet">${escapeHtml(JSON.stringify(result, null, 2))}</pre></details>` : ""}
           ${
             job.status === "waiting_for_approval"
@@ -3686,6 +3744,20 @@
             }
           </div>
         `;
+      }
+      function renderWorkContextDetails(label, context) {
+        if (!context || typeof context !== "object") return "";
+        const hasContext =
+          context.sessionId ||
+          context.runtime ||
+          context.workingDirectory ||
+          (context.files || []).length ||
+          (context.artifacts || []).length;
+        if (!hasContext) return "";
+        return `<details>
+          <summary>${escapeHtml(label)}</summary>
+          <pre class="snippet">${escapeHtml(JSON.stringify(context, null, 2))}</pre>
+        </details>`;
       }
       function renderEventFilterControls() {
         const filters = [

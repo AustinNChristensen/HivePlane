@@ -16,6 +16,7 @@ import {
   findOllamaExecutable,
   listOllamaModels,
   runtimeStatusToJson,
+  upsertAgentSessionRegistry,
 } from "./capabilities.js";
 import type { BeeIdentity } from "./identity.js";
 import type { HiveSession } from "./session.js";
@@ -544,6 +545,7 @@ export class JobExecutor {
     const timeoutSeconds = typeof job.timeoutSeconds === "number" ? job.timeoutSeconds : 600;
     const prompt = buildOpenClawTaskPrompt(task);
     const sessionKey = `hiveplane-task-${task.taskId}`;
+    const workingDirectory = process.cwd();
     const args = [
       "agent",
       "--session-key",
@@ -558,8 +560,19 @@ export class JobExecutor {
     await this.emit(job, "info", "agent_task.openclaw.start", {
       taskId: task.taskId,
       sessionKey,
+      workingDirectory,
       timeoutSeconds,
       command: openclawPath,
+    });
+    this.recordAgentSession({
+      id: sessionKey,
+      runtime: "openclaw",
+      label: task.title,
+      status: "active",
+      taskId: task.taskId,
+      workingDirectory,
+      updatedAt: new Date().toISOString(),
+      metadata: { jobId: job.id },
     });
 
     const child = this.spawnImpl(openclawPath, args, {
@@ -604,7 +617,9 @@ export class JobExecutor {
           taskId: task.taskId,
           title: task.title,
           runtime: "openclaw",
+          sessionId: sessionKey,
           sessionKey,
+          workingDirectory,
           exitCode: exitCode ?? -1,
           signal: exitSignal ?? null,
           stdout: truncateText(stdout, 8_000),
@@ -613,6 +628,16 @@ export class JobExecutor {
         };
 
         if (exitCode === 0) {
+          this.recordAgentSession({
+            id: sessionKey,
+            runtime: "openclaw",
+            label: task.title,
+            status: "recent",
+            taskId: task.taskId,
+            workingDirectory,
+            updatedAt: new Date().toISOString(),
+            metadata: { jobId: job.id, exitCode: exitCode ?? -1 },
+          });
           resolve({ status: "succeeded", output: summary });
           return;
         }
@@ -628,8 +653,39 @@ export class JobExecutor {
             ...summary,
           },
         });
+        this.recordAgentSession({
+          id: sessionKey,
+          runtime: "openclaw",
+          label: task.title,
+          status: "recent",
+          taskId: task.taskId,
+          workingDirectory,
+          updatedAt: new Date().toISOString(),
+          metadata: {
+            jobId: job.id,
+            exitCode: exitCode ?? -1,
+            ...(exitSignal ? { signal: exitSignal } : {}),
+          },
+        });
       });
     });
+  }
+
+  private recordAgentSession(session: {
+    id: string;
+    runtime: string;
+    label?: string;
+    status: "active" | "recent" | "stale";
+    taskId?: string;
+    workingDirectory?: string;
+    updatedAt: string;
+    metadata: Record<string, JsonValue>;
+  }): void {
+    try {
+      upsertAgentSessionRegistry(session, this.options.configDir);
+    } catch {
+      // Session registry is advisory; job execution should not fail if it cannot be written.
+    }
   }
 
   private async runUpdateCommand(

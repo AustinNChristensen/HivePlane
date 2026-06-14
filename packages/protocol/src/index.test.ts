@@ -22,6 +22,17 @@ const capabilities: BeeCapabilities = {
       resourceHints: {},
     },
   ],
+  agentSessions: [
+    {
+      id: "hiveplane-task-task_123",
+      runtime: "openclaw",
+      status: "recent",
+      taskId: "task_123",
+      workingDirectory: "/repo",
+      updatedAt: "2026-05-08T20:00:00.000Z",
+      metadata: {},
+    },
+  ],
   tools: ["shell", "filesystem"],
   networking: ["tailscale"],
   hardware: {
@@ -48,6 +59,10 @@ describe("bee registration", () => {
     });
 
     expect(parsed.capabilities.modelBackends).toContain("ollama");
+    expect(parsed.capabilities.agentSessions?.[0]).toMatchObject({
+      id: "hiveplane-task-task_123",
+      runtime: "openclaw",
+    });
   });
 
   it("rejects an invalid hive URL", () => {

@@ -21,6 +21,7 @@ import {
   type BeeRegistrationRequest,
   type BeePermissions,
   type BootstrapTokenCreateRequest,
+  type WorkContext,
   type JsonValue,
   type JobType,
   type JobStatus,
@@ -249,6 +250,7 @@ export type HiveTaskRecord = {
   requestedBy?: string;
   preferredBeeId?: string;
   requirements: HiveTaskRequirements;
+  context?: WorkContext;
   status: HiveTaskStatus;
   assignedBeeId?: string;
   jobId?: string;
@@ -502,6 +504,16 @@ const CreateHiveTaskRequestSchema = z.object({
   requestedBy: z.string().min(1).max(120).optional(),
   preferredBeeId: z.string().min(1).optional(),
   requirements: TaskRequirementsSchema,
+  context: z
+    .object({
+      sessionId: z.string().min(1).optional(),
+      runtime: z.string().min(1).optional(),
+      workingDirectory: z.string().min(1).optional(),
+      files: z.array(z.string().min(1)).default([]),
+      artifacts: z.array(z.string().min(1)).default([]),
+      metadata: z.record(z.unknown()).default({}),
+    })
+    .default({}),
 });
 
 const HIVE_VERSION = "0.0.7";
@@ -1541,6 +1553,7 @@ function serializeJob(job: JobRecord): Record<string, unknown> {
     type: job.type,
     status: job.status,
     payload: job.payload,
+    ...(job.context ? { context: job.context } : {}),
     ...(job.timeoutSeconds !== undefined ? { timeoutSeconds: job.timeoutSeconds } : {}),
     createdAt: job.createdAt.toISOString(),
     ...(job.assignedAt ? { assignedAt: job.assignedAt.toISOString() } : {}),
@@ -1602,7 +1615,11 @@ function serializeTasks(state: HiveServerState): HiveTaskRecord[] {
 }
 
 function serializeTask(task: HiveTaskRecord): HiveTaskRecord {
-  return { ...task, requirements: { ...task.requirements } };
+  return {
+    ...task,
+    requirements: { ...task.requirements },
+    ...(task.context ? { context: { ...task.context } } : {}),
+  };
 }
 
 function serializeAuditLog(state: HiveServerState): AuditLogEntry[] {
@@ -1677,6 +1694,7 @@ function createHiveTask(
     ...(request.requestedBy ? { requestedBy: request.requestedBy.trim() } : {}),
     ...(request.preferredBeeId ? { preferredBeeId: request.preferredBeeId } : {}),
     requirements: normalizeTaskRequirements(request.requirements),
+    context: normalizeWorkContext(request.context as WorkContext),
     status: "queued",
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
@@ -1717,7 +1735,9 @@ function scheduleHiveTask(state: HiveServerState, task: HiveTaskRecord, now: Dat
         instructions: task.instructions,
         requestedBy: task.requestedBy ?? "hive",
         requirements: task.requirements,
+        context: task.context ?? emptyWorkContext(),
       },
+      ...(task.context ? { context: task.context } : {}),
     },
     now,
   );
@@ -1742,8 +1762,55 @@ function selectBeeForTask(
       if (!matchesTaskRequirements(bee, task.requirements)) return false;
       return true;
     })
-    .sort((a, b) => (a.activeJobs ?? 0) - (b.activeJobs ?? 0));
+    .sort((a, b) => {
+      const contextDelta =
+        beeContextScore(b, task.context ?? emptyWorkContext()) -
+        beeContextScore(a, task.context ?? emptyWorkContext());
+      if (contextDelta !== 0) return contextDelta;
+      return (a.activeJobs ?? 0) - (b.activeJobs ?? 0);
+    });
   return candidates[0] ?? null;
+}
+
+function normalizeWorkContext(context: WorkContext): WorkContext {
+  return {
+    ...(context.sessionId ? { sessionId: context.sessionId.trim() } : {}),
+    ...(context.runtime ? { runtime: context.runtime.trim() } : {}),
+    ...(context.workingDirectory ? { workingDirectory: context.workingDirectory.trim() } : {}),
+    files: dedupeStrings(context.files ?? []),
+    artifacts: dedupeStrings(context.artifacts ?? []),
+    metadata: context.metadata ?? {},
+  };
+}
+
+function emptyWorkContext(): WorkContext {
+  return { files: [], artifacts: [], metadata: {} };
+}
+
+function beeContextScore(bee: HiveBeeRecord, context: WorkContext): number {
+  const sessions = bee.capabilities?.agentSessions ?? [];
+  let score = 0;
+  if (context.sessionId && sessions.some((session) => session.id === context.sessionId)) {
+    score += 100;
+  }
+  if (context.runtime && bee.capabilities?.runtimes.includes(context.runtime)) score += 10;
+  if (
+    context.workingDirectory &&
+    sessions.some((session) => session.workingDirectory === context.workingDirectory)
+  ) {
+    score += 20;
+  }
+  if (
+    context.files.length > 0 &&
+    sessions.some(
+      (session) =>
+        session.workingDirectory &&
+        context.files.some((file) => file.startsWith(session.workingDirectory ?? "")),
+    )
+  ) {
+    score += 5;
+  }
+  return score;
 }
 
 function matchesTaskRequirements(bee: HiveBeeRecord, requirements: HiveTaskRequirements): boolean {
@@ -1775,6 +1842,14 @@ function updateHiveTaskFromJob(state: HiveServerState, job: JobRecord, now: Date
   if (!task) return;
   if (job.status === "succeeded") {
     task.status = "succeeded";
+    const learnedContext = contextFromJobResult(job);
+    if (learnedContext) {
+      task.context = normalizeWorkContext({
+        ...emptyWorkContext(),
+        ...task.context,
+        ...learnedContext,
+      });
+    }
     delete task.lastError;
   } else if (job.status === "failed" || job.status === "timed_out" || job.status === "cancelled") {
     task.status = job.status === "cancelled" ? "cancelled" : "failed";
@@ -1786,6 +1861,26 @@ function updateHiveTaskFromJob(state: HiveServerState, job: JobRecord, now: Date
     task.status = "running";
   }
   task.updatedAt = now.toISOString();
+}
+
+function contextFromJobResult(job: JobRecord): Partial<WorkContext> | null {
+  const result = job.output ?? job.error;
+  if (!result) return job.context ?? null;
+  const context: Partial<WorkContext> = {};
+  if (typeof result.sessionId === "string") context.sessionId = result.sessionId;
+  if (typeof result.sessionKey === "string") context.sessionId = result.sessionKey;
+  if (typeof result.runtime === "string") context.runtime = result.runtime;
+  if (typeof result.workingDirectory === "string") {
+    context.workingDirectory = result.workingDirectory;
+  }
+  if (Array.isArray(result.files)) {
+    context.files = result.files.filter((item): item is string => typeof item === "string");
+  }
+  if (Array.isArray(result.artifacts)) {
+    context.artifacts = result.artifacts.filter((item): item is string => typeof item === "string");
+  }
+  if (Object.keys(context).length === 0) return job.context ?? null;
+  return context;
 }
 
 function defaultDeviceProfile(labels: Record<string, string> = {}, beeName = ""): BeeDeviceProfile {

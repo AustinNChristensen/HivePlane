@@ -91,7 +91,10 @@ async function main(): Promise<void> {
     beforeHeartbeat: async () => {
       const [healthChecks, capabilities] = await Promise.all([
         collectBeeHealthChecks(),
-        collectBeeCapabilities(state.hardware),
+        collectBeeCapabilities(
+          state.hardware,
+          options.configDir ? { configDir: options.configDir } : {},
+        ),
       ]);
       state.healthChecks = healthChecks;
       state.capabilities = capabilities;

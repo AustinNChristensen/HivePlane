@@ -234,7 +234,25 @@ function rehydrate(snapshot: PersistedSnapshot): HiveServerState {
       })),
     });
   }
-  for (const [k, v] of snapshot.tasks ?? []) state.tasks.set(k, v);
+  for (const [k, v] of snapshot.tasks ?? []) {
+    state.tasks.set(k, {
+      ...v,
+      ...(v.context
+        ? {
+            context: {
+              ...(v.context.sessionId ? { sessionId: v.context.sessionId } : {}),
+              ...(v.context.runtime ? { runtime: v.context.runtime } : {}),
+              ...(v.context.workingDirectory
+                ? { workingDirectory: v.context.workingDirectory }
+                : {}),
+              files: v.context.files ?? [],
+              artifacts: v.context.artifacts ?? [],
+              metadata: v.context.metadata ?? {},
+            },
+          }
+        : {}),
+    });
+  }
   for (const [k, v] of snapshot.auditLog ?? []) state.auditLog.set(k, v);
   return state;
 }

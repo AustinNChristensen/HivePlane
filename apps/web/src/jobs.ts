@@ -6,6 +6,7 @@ import {
   JobTypeSchema,
   type Job,
   type JobCancelMessage,
+  type WorkContext,
   type JobEvent,
   type JobStatus,
   type JobType,
@@ -19,6 +20,7 @@ export type JobRecord = {
   type: Job["type"];
   status: JobStatus;
   payload: Record<string, JsonValue>;
+  context?: WorkContext;
   timeoutSeconds?: number;
   createdAt: Date;
   assignedAt?: Date;
@@ -41,6 +43,16 @@ export function createJobsState(): JobsState {
 export const CreateJobRequestSchema = z.object({
   type: JobTypeSchema,
   payload: z.record(z.unknown()).default({}),
+  context: z
+    .object({
+      sessionId: z.string().min(1).optional(),
+      runtime: z.string().min(1).optional(),
+      workingDirectory: z.string().min(1).optional(),
+      files: z.array(z.string().min(1)).default([]),
+      artifacts: z.array(z.string().min(1)).default([]),
+      metadata: z.record(z.unknown()).default({}),
+    })
+    .optional(),
   timeoutSeconds: z.number().int().positive().optional(),
 });
 
@@ -62,6 +74,9 @@ export function createJob(
     type: request.type,
     status: "queued",
     payload: request.payload as Record<string, JsonValue>,
+    ...(request.context
+      ? { context: request.context as unknown as WorkContext }
+      : deriveJobContext(request.payload as Record<string, JsonValue>)),
     ...(request.timeoutSeconds !== undefined ? { timeoutSeconds: request.timeoutSeconds } : {}),
     createdAt: now,
     events: [],
@@ -214,10 +229,40 @@ export function toJobProto(job: JobRecord): Job {
     beeId: job.beeId,
     status: job.status,
     payload: job.payload,
+    ...(job.context ? { context: job.context } : {}),
     ...(job.timeoutSeconds !== undefined ? { timeoutSeconds: job.timeoutSeconds } : {}),
     createdAt: job.createdAt.toISOString(),
     ...(job.assignedAt ? { assignedAt: job.assignedAt.toISOString() } : {}),
   });
+}
+
+function deriveJobContext(payload: Record<string, JsonValue>): { context: WorkContext } | {} {
+  const context: WorkContext = {
+    files: [],
+    artifacts: [],
+    metadata: {},
+  };
+  if (typeof payload.sessionId === "string") context.sessionId = payload.sessionId;
+  if (typeof payload.runtime === "string") context.runtime = payload.runtime;
+  if (typeof payload.workingDirectory === "string") {
+    context.workingDirectory = payload.workingDirectory;
+  }
+  if (typeof payload.cwd === "string") context.workingDirectory = payload.cwd;
+  if (Array.isArray(payload.files)) {
+    context.files = payload.files.filter((item): item is string => typeof item === "string");
+  }
+  if (Array.isArray(payload.artifacts)) {
+    context.artifacts = payload.artifacts.filter(
+      (item): item is string => typeof item === "string",
+    );
+  }
+  const hasContext =
+    context.sessionId ||
+    context.runtime ||
+    context.workingDirectory ||
+    context.files.length > 0 ||
+    context.artifacts.length > 0;
+  return hasContext ? { context } : {};
 }
 
 export const ParseJobEventBatch = JobEventBatchSchema;

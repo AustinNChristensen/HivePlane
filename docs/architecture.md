@@ -74,6 +74,12 @@ The Hive should route tasks by matching request requirements to Bee capabilities
 
 The task scheduler should never treat all Bees as equivalent generic workers. A laptop Bee, local-model server, customer-support box, and finance-connected machine should have different permissions, expectations, and routing behavior.
 
+### Work Context And Session Continuity
+
+Tasks and jobs can carry lightweight work context: agent session id, runtime, working directory, file references, artifact references, and metadata. Bees report recent agent sessions as capabilities, so follow-up work can route back to the machine that already has the relevant repo, model, or agent session warm.
+
+This context is metadata-first. The daemon should not scrape or upload private files by default; richer evidence belongs in explicit artifact flows.
+
 ### OpenClaw Task Adapter
 
 The first concrete sub-agent runtime adapter is OpenClaw:

@@ -612,6 +612,92 @@ describe("Hive server", () => {
     );
   });
 
+  it("prefers Bees that already hold the requested work context", async () => {
+    const state = createHiveServerState();
+    const baseCapabilities = {
+      runtimes: ["openclaw"],
+      modelBackends: [],
+      models: [],
+      localModels: [],
+      tools: ["filesystem"],
+      networking: [],
+      hardware: {
+        platform: "darwin-arm64" as const,
+        hostname: "bee",
+        cpuCores: 10,
+        memoryGb: 32,
+      },
+    };
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_empty",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      capabilities: { ...baseCapabilities, hardware: { ...baseCapabilities.hardware } },
+      healthChecks: [],
+    });
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_context",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 4,
+      capabilities: {
+        ...baseCapabilities,
+        agentSessions: [
+          {
+            id: "hiveplane-task-task_existing",
+            runtime: "openclaw",
+            status: "recent",
+            taskId: "task_existing",
+            workingDirectory: "/Users/austin/repo",
+            updatedAt: "2026-05-09T07:59:00.000Z",
+            metadata: {},
+          },
+        ],
+        hardware: { ...baseCapabilities.hardware, hostname: "bee-context" },
+      },
+      healthChecks: [],
+    });
+
+    await withServer(
+      { state, adminToken: "secret", now: () => new Date("2026-05-09T08:00:05.000Z") },
+      async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            title: "Continue repo work",
+            instructions: "Pick up the existing work.",
+            requirements: { runtimes: ["openclaw"] },
+            context: {
+              sessionId: "hiveplane-task-task_existing",
+              runtime: "openclaw",
+              workingDirectory: "/Users/austin/repo",
+            },
+          }),
+        });
+
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as {
+          task: { assignedBeeId: string; context: { sessionId?: string }; jobId: string };
+        };
+        expect(body.task).toMatchObject({
+          assignedBeeId: "bee_context",
+          context: { sessionId: "hiveplane-task-task_existing" },
+        });
+        const job = state.jobsState.jobs.get(body.task.jobId);
+        expect(job?.context).toMatchObject({
+          sessionId: "hiveplane-task-task_existing",
+          workingDirectory: "/Users/austin/repo",
+        });
+      },
+    );
+  });
+
   it("cancels Hive tasks and ignores late Bee completion status", async () => {
     const state = createHiveServerState();
     upsertBeeHeartbeat(state, {

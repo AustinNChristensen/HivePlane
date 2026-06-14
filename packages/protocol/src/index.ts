@@ -33,11 +33,23 @@ export const LocalModelCapabilitySchema = z.object({
   resourceHints: JsonObjectSchema.default({}),
 });
 
+export const AgentSessionCapabilitySchema = z.object({
+  id: z.string().min(1),
+  runtime: z.string().min(1),
+  label: z.string().min(1).optional(),
+  status: z.enum(["active", "recent", "stale"]).default("recent"),
+  taskId: z.string().min(1).optional(),
+  workingDirectory: z.string().min(1).optional(),
+  updatedAt: IsoDateTimeSchema,
+  metadata: JsonObjectSchema.default({}),
+});
+
 export const BeeCapabilitiesSchema = z.object({
   runtimes: z.array(z.string().min(1)).default([]),
   modelBackends: z.array(z.string().min(1)).default([]),
   models: z.array(z.string().min(1)).default([]),
   localModels: z.array(LocalModelCapabilitySchema).default([]),
+  agentSessions: z.array(AgentSessionCapabilitySchema).optional(),
   tools: z.array(z.string().min(1)).default([]),
   networking: z.array(z.string().min(1)).default([]),
   hardware: BeeHardwareSchema,
@@ -176,6 +188,17 @@ export const JobStatusSchema = z.enum([
   "timed_out",
 ]);
 
+export const WorkContextSchema = z
+  .object({
+    sessionId: z.string().min(1).optional(),
+    runtime: z.string().min(1).optional(),
+    workingDirectory: z.string().min(1).optional(),
+    files: z.array(z.string().min(1)).default([]),
+    artifacts: z.array(z.string().min(1)).default([]),
+    metadata: JsonObjectSchema.default({}),
+  })
+  .default({});
+
 export const JobTypeSchema = z.enum([
   "run_command",
   "install_runtime",
@@ -203,6 +226,7 @@ export const JobSchema = z.object({
   beeId: IdSchema,
   status: JobStatusSchema,
   payload: JsonObjectSchema.default({}),
+  context: WorkContextSchema.optional(),
   timeoutSeconds: z.number().int().positive().optional(),
   createdAt: IsoDateTimeSchema,
   assignedAt: IsoDateTimeSchema.optional(),
@@ -325,6 +349,7 @@ export type BeePlatform = z.infer<typeof BeePlatformSchema>;
 export type BeeStatus = z.infer<typeof BeeStatusSchema>;
 export type BeeHardware = z.infer<typeof BeeHardwareSchema>;
 export type LocalModelCapability = z.infer<typeof LocalModelCapabilitySchema>;
+export type AgentSessionCapability = z.infer<typeof AgentSessionCapabilitySchema>;
 export type BeeCapabilities = z.infer<typeof BeeCapabilitiesSchema>;
 export type BeeHealthCheck = z.infer<typeof BeeHealthCheckSchema>;
 export type BeePermissions = z.input<typeof BeePermissionsSchema>;
@@ -337,6 +362,7 @@ export type BootstrapTokenCreateRequest = z.infer<typeof BootstrapTokenCreateReq
 export type BootstrapTokenCreateResponse = z.infer<typeof BootstrapTokenCreateResponseSchema>;
 export type JobStatus = z.infer<typeof JobStatusSchema>;
 export type JobType = z.infer<typeof JobTypeSchema>;
+export type WorkContext = z.infer<typeof WorkContextSchema>;
 export type Job = z.infer<typeof JobSchema>;
 export type JobEvent = z.infer<typeof JobEventSchema>;
 export type JobEventBatch = z.infer<typeof JobEventBatchSchema>;
