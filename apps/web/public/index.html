@@ -39,6 +39,8 @@
         margin: 0;
         padding: 0;
         min-height: 100vh;
+        overflow-x: hidden;
+        -webkit-text-size-adjust: 100%;
         background:
           radial-gradient(circle at 76% 8%, rgba(25, 227, 210, 0.22), transparent 30rem),
           radial-gradient(circle at 10% 4%, rgba(139, 92, 255, 0.28), transparent 28rem),
@@ -1177,6 +1179,7 @@
       }
       @media (max-width: 980px) {
         .app-shell {
+          display: block;
           grid-template-columns: 1fr;
           margin: 0;
           width: 100%;
@@ -1238,6 +1241,245 @@
         .bee-detail-grid,
         .job-detail-grid {
           grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 720px) {
+        body {
+          font-size: 13px;
+        }
+        header {
+          display: grid;
+          gap: 14px;
+          margin-bottom: 18px;
+        }
+        .page-title {
+          min-width: 0;
+        }
+        .page-title h1 {
+          font-size: 22px;
+        }
+        .sidebar {
+          gap: 16px;
+          padding: 14px;
+        }
+        nav.tabs {
+          display: flex;
+          gap: 8px;
+          overflow-x: auto;
+          padding-bottom: 2px;
+          scrollbar-width: none;
+        }
+        nav.tabs::-webkit-scrollbar {
+          display: none;
+        }
+        nav.tabs button {
+          flex: 0 0 auto;
+          min-width: 82px;
+          min-height: 40px;
+          padding: 9px 12px;
+        }
+        .content-shell {
+          padding: 16px 10px 18px;
+        }
+        .top-actions,
+        .toolbar,
+        .panel-header,
+        .token-display .token-row,
+        .list-item,
+        .activity-item,
+        .event-body-row,
+        .onboarding-panel,
+        .bee-card-head {
+          align-items: stretch;
+          display: grid;
+          grid-template-columns: 1fr;
+        }
+        .search-box,
+        .auth summary,
+        .auth input,
+        button.action,
+        input.action {
+          width: 100%;
+        }
+        .auth {
+          width: 100%;
+        }
+        .auth-popover {
+          left: 0;
+          right: 0;
+          width: min(100%, calc(100vw - 20px));
+          grid-template-columns: 1fr;
+        }
+        .metric-grid {
+          gap: 10px;
+          margin-bottom: 12px;
+        }
+        .metric-card {
+          min-height: 106px;
+          padding: 16px;
+        }
+        .metric-value {
+          margin-top: 14px;
+          font-size: 28px;
+        }
+        .panel {
+          overflow: visible;
+        }
+        .panel-header {
+          gap: 6px;
+          padding: 12px;
+        }
+        .form-row {
+          display: grid;
+          grid-template-columns: 1fr;
+          padding: 14px;
+        }
+        .form-field,
+        .form-field.wide,
+        .profile-form {
+          min-width: 0;
+          width: 100%;
+        }
+        .form-field input,
+        .form-field select,
+        .form-field textarea,
+        .form-field.compact input,
+        .form-field.compact select {
+          min-width: 0;
+          width: 100%;
+        }
+        .pairing-card .pairing-body {
+          grid-template-columns: 1fr;
+          padding: 14px;
+        }
+        .pairing-card .pairing-code {
+          font-size: 22px;
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+        .bee-grid {
+          grid-template-columns: 1fr;
+          padding: 12px;
+        }
+        .bee-card-status,
+        .bee-card-actions,
+        .actions,
+        .pairing-card .pairing-actions,
+        .onboarding-panel .actions {
+          justify-content: stretch;
+          min-width: 0;
+        }
+        .bee-card-status .pill,
+        .bee-card-actions > *,
+        .actions > *,
+        .pairing-card .pairing-actions > *,
+        .onboarding-panel .actions > * {
+          flex: 1 1 auto;
+        }
+        .check-list {
+          max-width: none;
+        }
+        .compact-list .list-item {
+          padding: 12px;
+        }
+        .load-bar {
+          width: 100%;
+        }
+        .panel table {
+          display: block;
+          width: 100%;
+        }
+        .panel thead {
+          display: none;
+        }
+        .panel tbody {
+          display: grid;
+          gap: 10px;
+          padding: 12px;
+        }
+        .panel tbody tr:not(.detail-row) {
+          display: grid;
+          gap: 9px;
+          padding: 12px;
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.025);
+        }
+        .panel tbody tr.selected:not(.detail-row) {
+          border-color: color-mix(in srgb, var(--accent-2) 48%, var(--border));
+          background: linear-gradient(180deg, rgba(139, 92, 255, 0.18), rgba(25, 227, 210, 0.06));
+        }
+        .panel tbody tr:hover {
+          background: rgba(255, 255, 255, 0.035);
+        }
+        .panel tbody tr.detail-row {
+          display: block;
+          margin-top: -10px;
+          border: 1px solid color-mix(in srgb, var(--accent-2) 36%, var(--border));
+          border-top: 0;
+          border-radius: 0 0 8px 8px;
+          overflow: hidden;
+        }
+        .panel td,
+        .panel th {
+          border-bottom: 0;
+          padding: 0;
+        }
+        .panel td[data-label] {
+          display: grid;
+          grid-template-columns: minmax(88px, 0.36fr) minmax(0, 1fr);
+          gap: 10px;
+          align-items: start;
+          min-width: 0;
+        }
+        .panel td[data-label]::before {
+          content: attr(data-label);
+          color: var(--muted);
+          font-size: 11px;
+          font-weight: 650;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+        }
+        .detail-row > td {
+          display: block;
+          background: transparent;
+        }
+        .inline-detail {
+          border-top: 0;
+        }
+        .job-detail,
+        .bee-detail {
+          padding: 12px;
+        }
+        .event-list {
+          max-height: 360px;
+        }
+        .event-body-row .ghost {
+          width: 100%;
+        }
+        pre.snippet,
+        .event .event-body {
+          font-size: 11px;
+        }
+        .activity-list {
+          padding: 12px;
+        }
+        .bee-modal {
+          padding: 0;
+        }
+        .bee-modal-panel {
+          height: 100vh;
+          border-radius: 0;
+          border-left: 0;
+          border-right: 0;
+        }
+        .bee-modal-header {
+          display: grid;
+          grid-template-columns: 1fr;
+        }
+        .kv-row {
+          grid-template-columns: 1fr;
+          gap: 2px;
         }
       }
     </style>
@@ -2382,18 +2624,18 @@
                   const selected = incident.id === state.selectedIncidentId;
                   return `
                     <tr class="${selected ? "selected" : ""}" data-action="select-incident-row" data-incident-id="${escapeHtml(incident.id)}">
-                      <td>${pill(incident.status || "open")}</td>
-                      <td>${pill(incident.severity || "warning")}</td>
-                      <td>${renderBeeName(incident.beeId)}</td>
-                      <td><span class="mono">${escapeHtml(incident.kind || "—")}</span></td>
-                      <td>
+                      <td data-label="Status">${pill(incident.status || "open")}</td>
+                      <td data-label="Severity">${pill(incident.severity || "warning")}</td>
+                      <td data-label="Bee">${renderBeeName(incident.beeId)}</td>
+                      <td data-label="Kind"><span class="mono">${escapeHtml(incident.kind || "—")}</span></td>
+                      <td data-label="Summary">
                         <div>${escapeHtml(incident.summary || "—")}</div>
                         <div class="meta">${escapeHtml(incident.lastDiagnosis || "")}</div>
                       </td>
-                      <td><span class="mono">${escapeHtml(incident.nextAction || "—")}</span></td>
-                      <td>${renderIncidentRecoveryJobs(incident)}</td>
-                      <td>${renderIncidentNotifications(incident.notifications || [])}</td>
-                      <td title="${escapeHtml(incident.updatedAt || "")}">${relativeTime(incident.updatedAt)}</td>
+                      <td data-label="Next action"><span class="mono">${escapeHtml(incident.nextAction || "—")}</span></td>
+                      <td data-label="Recovery">${renderIncidentRecoveryJobs(incident)}</td>
+                      <td data-label="Alerts">${renderIncidentNotifications(incident.notifications || [])}</td>
+                      <td data-label="Updated" title="${escapeHtml(incident.updatedAt || "")}">${relativeTime(incident.updatedAt)}</td>
                     </tr>
                     ${
                       selected
@@ -3586,13 +3828,13 @@
             const selectedJob = selected ? state.selectedTaskJob : null;
             return `
                     <tr class="${selected ? "selected" : ""}" data-action="select-task-row" data-task-id="${escapeHtml(task.id)}">
-                      <td>${pill(task.status || "queued")}</td>
-                      <td>${escapeHtml(task.title || "—")}</td>
-                      <td>${task.assignedBeeId ? renderBeeName(task.assignedBeeId) : "—"}</td>
-                      <td>${renderTaskRequirementsSummary(task.requirements || {})}</td>
-                      <td>${task.jobId ? `<button class="ghost" data-action="task-job" data-job-id="${escapeHtml(task.jobId)}">${escapeHtml(shortId(task.jobId))}</button>` : "—"}</td>
-                      <td title="${escapeHtml(task.updatedAt || "")}">${relativeTime(task.updatedAt)}</td>
-                      <td>${escapeHtml(task.lastError || task.instructions || "—")}</td>
+                      <td data-label="Status">${pill(task.status || "queued")}</td>
+                      <td data-label="Title">${escapeHtml(task.title || "—")}</td>
+                      <td data-label="Bee">${task.assignedBeeId ? renderBeeName(task.assignedBeeId) : "—"}</td>
+                      <td data-label="Requirements">${renderTaskRequirementsSummary(task.requirements || {})}</td>
+                      <td data-label="Job">${task.jobId ? `<button class="ghost" data-action="task-job" data-job-id="${escapeHtml(task.jobId)}">${escapeHtml(shortId(task.jobId))}</button>` : "—"}</td>
+                      <td data-label="Updated" title="${escapeHtml(task.updatedAt || "")}">${relativeTime(task.updatedAt)}</td>
+                      <td data-label="Detail">${escapeHtml(task.lastError || task.instructions || "—")}</td>
                     </tr>
                     ${
                       selected
@@ -3663,13 +3905,13 @@
                 .map(
                   (automation) => `
                     <tr>
-                      <td>${pill(automation.status || "enabled")}</td>
-                      <td>${escapeHtml(automation.title || "—")}</td>
-                      <td>${escapeHtml(renderAutomationTrigger(automation))}</td>
-                      <td>${automation.lastRunAt ? relativeTime(automation.lastRunAt) : "—"}</td>
-                      <td>${automation.nextRunAt ? relativeTime(automation.nextRunAt) : "signal"}</td>
-                      <td>${escapeHtml(automation.lastError || "—")}</td>
-                      <td>
+                      <td data-label="Status">${pill(automation.status || "enabled")}</td>
+                      <td data-label="Title">${escapeHtml(automation.title || "—")}</td>
+                      <td data-label="Trigger">${escapeHtml(renderAutomationTrigger(automation))}</td>
+                      <td data-label="Last">${automation.lastRunAt ? relativeTime(automation.lastRunAt) : "—"}</td>
+                      <td data-label="Next">${automation.nextRunAt ? relativeTime(automation.nextRunAt) : "signal"}</td>
+                      <td data-label="Failure">${escapeHtml(automation.lastError || "—")}</td>
+                      <td data-label="Actions">
                         <div class="actions">
                           <button class="ghost" data-action="run-automation" data-automation-id="${escapeHtml(automation.id)}">Run</button>
                           ${
@@ -3959,14 +4201,14 @@
               selected && state.selectedJob?.id === j.id ? state.selectedJob : null;
             return `
               <tr class="${selected ? "selected" : ""}" data-action="select-job-row" data-job-id="${escapeHtml(j.id)}">
-                <td>${pill(j.status)}</td>
-                <td>${escapeHtml(j.type)}</td>
-                <td><button class="ghost" data-action="select-job" data-job-id="${escapeHtml(j.id)}">${escapeHtml(shortId(j.id))}</button></td>
-                <td>${renderBeeName(j.beeId)}</td>
-                <td title="${escapeHtml(j.createdAt || "")}">${relativeTime(j.createdAt)}</td>
-                <td title="${escapeHtml(j.completedAt || "")}">${j.completedAt ? relativeTime(j.completedAt) : "—"}</td>
-                <td>${j.eventCount ?? 0}</td>
-                <td>${detail}</td>
+                <td data-label="Status">${pill(j.status)}</td>
+                <td data-label="Type">${escapeHtml(j.type)}</td>
+                <td data-label="Job ID"><button class="ghost" data-action="select-job" data-job-id="${escapeHtml(j.id)}">${escapeHtml(shortId(j.id))}</button></td>
+                <td data-label="Bee">${renderBeeName(j.beeId)}</td>
+                <td data-label="Created" title="${escapeHtml(j.createdAt || "")}">${relativeTime(j.createdAt)}</td>
+                <td data-label="Completed" title="${escapeHtml(j.completedAt || "")}">${j.completedAt ? relativeTime(j.completedAt) : "—"}</td>
+                <td data-label="Events">${j.eventCount ?? 0}</td>
+                <td data-label="Detail">${detail}</td>
               </tr>
               ${
                 selected
