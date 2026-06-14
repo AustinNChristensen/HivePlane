@@ -42,6 +42,8 @@ export type JobExecutorOptions = {
   openclawPathOverride?: string;
   /** Override for tests. Production resolves the local Ollama binary from fixed paths. */
   ollamaPathOverride?: string;
+  /** Override for tests. Production resolves the local Homebrew binary from fixed paths. */
+  brewPathOverride?: string;
   scheduleRestart?: boolean;
 };
 
@@ -113,11 +115,23 @@ export class JobExecutor {
         case "ollama_list_models":
           outcome = await this.runOllamaListModels(job);
           break;
+        case "ollama_start":
+          outcome = await this.runOllamaStart(job, signal);
+          break;
+        case "ollama_pull_model":
+          outcome = await this.runOllamaPullModel(job, signal);
+          break;
+        case "ollama_smoke_test":
+          outcome = await this.runOllamaSmokeTest(job, signal);
+          break;
         case "update_bee":
           outcome = await this.runBeeUpdate(job, signal);
           break;
         case "install_runtime":
           outcome = await this.runInstallRuntime(job, signal);
+          break;
+        case "install_model_backend":
+          outcome = await this.runInstallModelBackend(job, signal);
           break;
         case "configure_model":
           outcome = await this.runConfigureModel(job, signal);
@@ -344,6 +358,65 @@ export class JobExecutor {
     return { status: "succeeded", output };
   }
 
+  private async runOllamaStart(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
+    await this.emit(job, "info", "ollama.start.begin", {});
+    const result = await this.startOllamaService(job, signal);
+    if (result.status !== "succeeded") return result;
+    const status = await getOllamaStatus();
+    await this.emit(job, "info", "ollama.start.status", runtimeStatusToJson(status));
+    return {
+      status: "succeeded",
+      output: {
+        ...result.output,
+        status: runtimeStatusToJson(status),
+      },
+    };
+  }
+
+  private async runOllamaPullModel(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
+    return await this.pullOllamaModel(job, signal);
+  }
+
+  private async runOllamaSmokeTest(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
+    const model = typeof job.payload.model === "string" ? job.payload.model.trim() : "";
+    if (!model) {
+      return {
+        status: "failed",
+        error: { code: "missing_model", message: "ollama_smoke_test requires payload.model" },
+      };
+    }
+    const prompt =
+      typeof job.payload.prompt === "string" && job.payload.prompt.trim()
+        ? job.payload.prompt.trim()
+        : "Reply with exactly: hiveplane-ollama-ok";
+    const ollamaPath = this.options.ollamaPathOverride ?? findOllamaExecutable();
+    if (!ollamaPath) {
+      await this.emit(job, "error", "ollama.smoke.missing", { model });
+      return {
+        status: "failed",
+        error: { code: "ollama_not_found", message: "ollama CLI not found on this Bee" },
+      };
+    }
+
+    await this.emit(job, "info", "ollama.smoke.start", { model });
+    const result = await this.runStreamingProcess(job, ollamaPath, ["run", model, prompt], signal, {
+      stdout: "ollama.smoke.stdout",
+      stderr: "ollama.smoke.stderr",
+    });
+    if (result.status !== "succeeded") return result;
+    await this.emit(job, "info", "ollama.smoke.complete", { model });
+    return {
+      status: "succeeded",
+      output: {
+        backend: "ollama",
+        model,
+        endpointUrl: "http://127.0.0.1:11434",
+        prompt,
+        ...(result.output ?? {}),
+      },
+    };
+  }
+
   private async runBeeUpdate(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
     const cwd = typeof job.payload.installDir === "string" ? job.payload.installDir : process.cwd();
     const ref =
@@ -424,6 +497,71 @@ export class JobExecutor {
     return result;
   }
 
+  private async runInstallModelBackend(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
+    const backend = typeof job.payload.backend === "string" ? job.payload.backend : "ollama";
+    if (backend !== "ollama") {
+      return {
+        status: "failed",
+        error: {
+          code: "unsupported_model_backend",
+          message: `install_model_backend does not support backend '${backend}' yet`,
+        },
+      };
+    }
+    if (job.payload.dryRun === true) {
+      return {
+        status: "succeeded",
+        output: {
+          backend: "ollama",
+          dryRun: true,
+          plannedSteps:
+            process.platform === "darwin"
+              ? ["brew install ollama", "brew services start ollama"]
+              : ["manual install required for this platform"],
+        },
+      };
+    }
+    if (process.platform !== "darwin") {
+      return {
+        status: "failed",
+        error: {
+          code: "unsupported_platform",
+          message:
+            "Automatic Ollama install is currently supported on macOS Homebrew only. Use install_runtime with an explicit recipe for this platform.",
+        },
+      };
+    }
+    const brewPath = this.options.brewPathOverride ?? findBrewExecutable();
+    if (!brewPath) {
+      return {
+        status: "failed",
+        error: {
+          code: "brew_not_found",
+          message: "Homebrew is required to install Ollama automatically on macOS.",
+        },
+      };
+    }
+    await this.emit(job, "info", "ollama.install.start", { backend });
+    const install = await this.runStreamingProcess(job, brewPath, ["install", "ollama"], signal, {
+      stdout: "ollama.install.stdout",
+      stderr: "ollama.install.stderr",
+    });
+    if (install.status !== "succeeded") return install;
+    const start = await this.startOllamaService(job, signal);
+    if (start.status !== "succeeded") return start;
+    const status = await getOllamaStatus();
+    await this.emit(job, "info", "ollama.install.complete", runtimeStatusToJson(status));
+    return {
+      status: "succeeded",
+      output: {
+        backend: "ollama",
+        install: install.output ?? {},
+        start: start.output ?? {},
+        status: runtimeStatusToJson(status),
+      },
+    };
+  }
+
   private async runConfigureModel(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
     const backend = typeof job.payload.backend === "string" ? job.payload.backend : "ollama";
     const model = typeof job.payload.model === "string" ? job.payload.model.trim() : "";
@@ -443,6 +581,22 @@ export class JobExecutor {
       };
     }
 
+    return await this.pullOllamaModel(job, signal, model);
+  }
+
+  private async pullOllamaModel(
+    job: Job,
+    signal?: AbortSignal,
+    explicitModel?: string,
+  ): Promise<JobOutcome> {
+    const model =
+      explicitModel ?? (typeof job.payload.model === "string" ? job.payload.model.trim() : "");
+    if (!model) {
+      return {
+        status: "failed",
+        error: { code: "missing_model", message: `${job.type} requires payload.model` },
+      };
+    }
     const ollamaPath = this.options.ollamaPathOverride ?? findOllamaExecutable();
     if (!ollamaPath) {
       await this.emit(job, "error", "ollama.pull.missing", { model });
@@ -466,6 +620,42 @@ export class JobExecutor {
         model,
         endpointUrl: "http://127.0.0.1:11434",
         ...(result.output ?? {}),
+      },
+    };
+  }
+
+  private async startOllamaService(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
+    if (process.platform === "darwin") {
+      const brewPath = this.options.brewPathOverride ?? findBrewExecutable();
+      if (!brewPath) {
+        return {
+          status: "failed",
+          error: {
+            code: "brew_not_found",
+            message: "Homebrew is required to start Ollama automatically on macOS.",
+          },
+        };
+      }
+      await this.emit(job, "info", "ollama.service.start", { command: brewPath });
+      return await this.runStreamingProcess(
+        job,
+        brewPath,
+        ["services", "start", "ollama"],
+        signal,
+        {
+          stdout: "ollama.service.stdout",
+          stderr: "ollama.service.stderr",
+        },
+      );
+    }
+
+    await this.emit(job, "warn", "ollama.service.unsupported", { platform: process.platform });
+    return {
+      status: "failed",
+      error: {
+        code: "unsupported_platform",
+        message:
+          "Automatic Ollama start is currently supported on macOS Homebrew only. Start Ollama manually or use install_runtime with an explicit recipe.",
       },
     };
   }
@@ -1024,4 +1214,8 @@ function findExecutable(paths: string[]): string | undefined {
       return false;
     }
   });
+}
+
+function findBrewExecutable(): string | undefined {
+  return findExecutable(["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]);
 }

@@ -27,6 +27,7 @@ Keep iterating until every item below is either shipped and verified on `main`, 
 4. **Ollama backend adapter** — issue #39
    - Goal: make local model management product-grade instead of only reporting capabilities.
    - Acceptance signal: HivePlane can install/check Ollama, pull/list models, and expose usable model metadata for routing.
+   - Status: first implementation shipped on 2026-06-14 with explicit `install_model_backend`, `ollama_start`, `ollama_pull_model`, `ollama_list_models`, `ollama_status`, and `ollama_smoke_test` daemon paths plus dashboard actions. Remaining: live dogfood of pull/smoke/start and OpenClaw/Hermes config consumption.
 
 5. **OpenClaw sub-agent management** — issue #36
    - Goal: support adding/listing OpenClaw sub-agents if the pitch is managing agent fleets, not just generic OpenClaw task execution.
@@ -100,3 +101,20 @@ Still left in this area:
 - add revoke/delete/edit flows for operators and grants;
 - extend scoped checks to more mutation surfaces such as recovery jobs, profile edits, automations, and incident/audit reads;
 - add polish around roles so non-admin operators see only the controls they can actually use.
+
+### 2026-06-14 — Ollama Backend Adapter
+
+Shipped the first #39 implementation:
+
+- protocol now includes explicit `ollama_start`, `ollama_pull_model`, and `ollama_smoke_test` job types;
+- Bee executor handles `install_model_backend` for Ollama on macOS Homebrew, including dry-run plan and `brew services start ollama`;
+- Bee executor handles named Ollama pull jobs without relying on `configure_model` as a side effect;
+- Bee executor handles local smoke-test inference via `ollama run <model> <prompt>`;
+- dashboard Bee actions include Ollama status, model list, smoke model, pull model, and start Ollama;
+- `ollama_smoke_test` is auto-approved; pull/install/start still route through the existing approval path.
+
+Still left in this area:
+
+- dogfood a real pull/smoke/start path on a live Bee;
+- configure OpenClaw/Hermes to consume the reported Ollama endpoint/model;
+- add richer model metadata beyond names and endpoint URL.

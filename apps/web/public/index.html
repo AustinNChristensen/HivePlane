@@ -2529,6 +2529,10 @@
                       <button class="ghost" data-action="adapter-job" data-job-type="restart_hermes_gateway" data-bee-id="${escapeHtml(b.beeId)}">Fix Hermes</button>
                       <button class="ghost" data-action="adapter-job" data-job-type="repair_imessage_bridge" data-bee-id="${escapeHtml(b.beeId)}">Fix iMessage</button>
                       <button class="ghost" data-action="adapter-job" data-job-type="ollama_status" data-bee-id="${escapeHtml(b.beeId)}">Ollama</button>
+                      <button class="ghost" data-action="adapter-job" data-job-type="ollama_list_models" data-bee-id="${escapeHtml(b.beeId)}">Models</button>
+                      <button class="ghost" data-action="adapter-job" data-job-type="ollama_smoke_test" data-default-model="${escapeHtml(firstReportedModel(b))}" data-bee-id="${escapeHtml(b.beeId)}">Smoke Model</button>
+                      <button class="ghost" data-action="adapter-job" data-job-type="ollama_pull_model" data-default-model="${escapeHtml(firstReportedModel(b))}" data-bee-id="${escapeHtml(b.beeId)}">Pull Model</button>
+                      <button class="ghost" data-action="adapter-job" data-job-type="ollama_start" data-bee-id="${escapeHtml(b.beeId)}">Start Ollama</button>
                       <button class="ghost" data-action="adapter-job" data-job-type="update_bee" data-bee-id="${escapeHtml(b.beeId)}">Update</button>
                       <button class="ghost" data-action="adapter-job" data-job-type="collect_bee_logs" data-bee-id="${escapeHtml(b.beeId)}">Logs</button>
                       <button class="ghost" data-action="safe-command" data-command="hostname" data-args="[]" data-bee-id="${escapeHtml(b.beeId)}">Hostname</button>
@@ -2563,7 +2567,12 @@
         });
         els.beesBody.querySelectorAll("[data-action='adapter-job']").forEach((button) => {
           button.addEventListener("click", () =>
-            queueAdapterJob(button.dataset.beeId, button.dataset.jobType, button),
+            queueAdapterJob(
+              button.dataset.beeId,
+              button.dataset.jobType,
+              button,
+              button.dataset.defaultModel || "",
+            ),
           );
         });
         els.beesBody.querySelectorAll("[data-action='safe-command']").forEach((button) => {
@@ -2944,6 +2953,15 @@
             pill(check.name, check.status || "unknown", check.message || check.checkedAt || ""),
           )
           .join("")}${hidden}</div>`;
+      }
+
+      function firstReportedModel(bee) {
+        const caps = bee.capabilities || {};
+        return (
+          (caps.localModels || []).find((model) => model.backend === "ollama")?.name ||
+          (caps.models || [])[0] ||
+          ""
+        );
       }
       function beeSignal(label, value, title = "") {
         return `
@@ -3386,17 +3404,23 @@
           button.disabled = false;
         }
       }
-      async function queueAdapterJob(beeId, jobType, button) {
+      async function queueAdapterJob(beeId, jobType, button, defaultModel = "") {
         if (!state.adminToken) {
           els.beesMeta.textContent = "set an admin token (top right) to queue jobs";
           return;
+        }
+        const payload = {};
+        if (jobType === "ollama_pull_model" || jobType === "ollama_smoke_test") {
+          const model = window.prompt("Ollama model", defaultModel || "llama3.2:3b");
+          if (!model || !model.trim()) return;
+          payload.model = model.trim();
         }
         button.disabled = true;
         try {
           const res = await fetch(`/api/bees/${encodeURIComponent(beeId)}/jobs`, {
             method: "POST",
             headers: { ...authHeaders(), "content-type": "application/json" },
-            body: JSON.stringify({ type: jobType, payload: {} }),
+            body: JSON.stringify({ type: jobType, payload }),
           });
           if (res.status === 401) {
             clearRejectedAdminToken();

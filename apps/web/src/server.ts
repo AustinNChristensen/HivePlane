@@ -651,6 +651,7 @@ const AUTO_APPROVED_JOB_TYPES = new Set<JobType>([
   "openclaw_status",
   "ollama_status",
   "ollama_list_models",
+  "ollama_smoke_test",
   "diagnose_incident",
   "restart_bee",
   "collect_bee_logs",

@@ -706,6 +706,176 @@ describe("JobExecutor", () => {
     expect(body.output.stdout).toContain("success");
   });
 
+  it("ollama_pull_model pulls Ollama models with the named adapter job", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const spawnImpl = makeSpawn({
+      stdoutChunks: ["pulling manifest\n", "success\n"],
+      exitCode: 0,
+    }) as unknown as typeof import("node:child_process").spawn;
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      daemonVersion: "0.0.1-test",
+      policy: {
+        runCommand: { allow: [], unsafeAllowAll: false },
+        jobs: { allow: ["ollama_pull_model"] },
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl,
+      ollamaPathOverride: "/usr/local/bin/ollama",
+    });
+
+    await executor.execute(
+      makeJob({
+        type: "ollama_pull_model",
+        payload: { model: "llama3.2:3b" },
+      }),
+    );
+
+    expect(spawnImpl).toHaveBeenCalledWith(
+      "/usr/local/bin/ollama",
+      ["pull", "llama3.2:3b"],
+      expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+    );
+    const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
+    expect(body.status).toBe("succeeded");
+    expect(body.output).toMatchObject({
+      backend: "ollama",
+      model: "llama3.2:3b",
+      endpointUrl: "http://127.0.0.1:11434",
+    });
+  });
+
+  it("ollama_smoke_test runs a local model prompt", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const spawnImpl = makeSpawn({
+      stdoutChunks: ["hiveplane-ollama-ok\n"],
+      exitCode: 0,
+    }) as unknown as typeof import("node:child_process").spawn;
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      daemonVersion: "0.0.1-test",
+      policy: {
+        runCommand: { allow: [], unsafeAllowAll: false },
+        jobs: { allow: ["ollama_smoke_test"] },
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl,
+      ollamaPathOverride: "/usr/local/bin/ollama",
+    });
+
+    await executor.execute(
+      makeJob({
+        type: "ollama_smoke_test",
+        payload: { model: "llama3.2:3b" },
+      }),
+    );
+
+    expect(spawnImpl).toHaveBeenCalledWith(
+      "/usr/local/bin/ollama",
+      ["run", "llama3.2:3b", "Reply with exactly: hiveplane-ollama-ok"],
+      expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+    );
+    const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
+    expect(body.status).toBe("succeeded");
+    expect(body.output.stdout).toContain("hiveplane-ollama-ok");
+  });
+
+  it("install_model_backend dry-runs Ollama install plans", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const spawnImpl = makeSpawn({}) as unknown as typeof import("node:child_process").spawn;
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      daemonVersion: "0.0.1-test",
+      policy: {
+        runCommand: { allow: [], unsafeAllowAll: false },
+        jobs: { allow: ["install_model_backend"] },
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl,
+      brewPathOverride: "/opt/homebrew/bin/brew",
+    });
+
+    await executor.execute(
+      makeJob({
+        type: "install_model_backend",
+        payload: { backend: "ollama", dryRun: true },
+      }),
+    );
+
+    expect(spawnImpl).not.toHaveBeenCalled();
+    const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
+    expect(body.status).toBe("succeeded");
+    expect(body.output).toMatchObject({ backend: "ollama", dryRun: true });
+    expect(body.output.plannedSteps).toContain("brew install ollama");
+  });
+
+  it("ollama_start starts the Homebrew Ollama service on macOS", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const spawnImpl = makeSpawn({
+      stdoutChunks: ["Successfully started ollama\n"],
+      exitCode: 0,
+    }) as unknown as typeof import("node:child_process").spawn;
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      daemonVersion: "0.0.1-test",
+      policy: {
+        runCommand: { allow: [], unsafeAllowAll: false },
+        jobs: { allow: ["ollama_start"] },
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl,
+      brewPathOverride: "/opt/homebrew/bin/brew",
+    });
+
+    await executor.execute(makeJob({ type: "ollama_start", payload: {} }));
+
+    if (process.platform === "darwin") {
+      expect(spawnImpl).toHaveBeenCalledWith(
+        "/opt/homebrew/bin/brew",
+        ["services", "start", "ollama"],
+        expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+      );
+    }
+    const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
+    expect(["succeeded", "failed"]).toContain(body.status);
+  });
+
   it("update_bee fetches, hard-resets stale checkouts, and installs deps before completing", async () => {
     const identity = await makeIdentity();
     const session = makeSession();
