@@ -1269,6 +1269,7 @@
           <details class="auth">
             <summary>Admin</summary>
             <div class="auth-popover">
+              <input id="operatorId" placeholder="Operator (audit actor)" autocomplete="username" />
               <input
                 id="adminToken"
                 type="password"
@@ -1429,11 +1430,13 @@
 
     <script>
       const ADMIN_KEY = "hiveplane.adminToken";
+      const OPERATOR_KEY = "hiveplane.operatorId";
       const POLL_MS = 5000;
 
       const state = {
         activeTab: "overview",
         adminToken: localStorage.getItem(ADMIN_KEY) || "",
+        operatorId: localStorage.getItem(OPERATOR_KEY) || "admin",
         selectedJobId: "",
         selectedTaskId: "",
         selectedBeeId: "",
@@ -1457,6 +1460,7 @@
         overviewBody: document.getElementById("overviewBody"),
         dashboardSearch: document.getElementById("dashboardSearch"),
         dispatchJob: document.getElementById("dispatchJob"),
+        operatorId: document.getElementById("operatorId"),
         adminToken: document.getElementById("adminToken"),
         saveAdminToken: document.getElementById("saveAdminToken"),
         authStatus: document.getElementById("authStatus"),
@@ -1538,11 +1542,14 @@
       }
 
       // --- admin token ---------------------------------------------------------
+      els.operatorId.value = state.operatorId;
       els.adminToken.value = state.adminToken;
       updateAuthStatus();
 
       els.saveAdminToken.addEventListener("click", () => {
+        state.operatorId = els.operatorId.value.trim() || "admin";
         state.adminToken = els.adminToken.value.trim();
+        localStorage.setItem(OPERATOR_KEY, state.operatorId);
         if (state.adminToken) localStorage.setItem(ADMIN_KEY, state.adminToken);
         else localStorage.removeItem(ADMIN_KEY);
         updateAuthStatus();
@@ -1567,7 +1574,7 @@
         try {
           const res = await fetch("/api/jobs", { headers: authHeaders() });
           if (res.ok) {
-            els.authStatus.textContent = "admin token verified";
+            els.authStatus.textContent = `admin token verified · ${state.operatorId}`;
             els.authStatus.className = "auth-status ok";
           } else if (res.status === 401) {
             clearRejectedAdminToken();
@@ -1582,7 +1589,9 @@
       }
 
       function authHeaders() {
-        return state.adminToken ? { Authorization: `Bearer ${state.adminToken}` } : {};
+        return state.adminToken
+          ? { Authorization: `Bearer ${state.adminToken}`, "X-HivePlane-Actor": state.operatorId }
+          : {};
       }
 
       // --- formatting helpers --------------------------------------------------
