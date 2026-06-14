@@ -223,6 +223,8 @@ export type HiveServerState = {
   operators: Map<string, HiveOperatorRecord>;
   /** Browser/API operator sessions keyed by token hash. */
   operatorSessions: Map<string, OperatorSessionRecord>;
+  /** Organization/team boundaries keyed by organization id. */
+  organizations: Map<string, HiveOrganizationRecord>;
   /** System authorization domains keyed by system id. */
   systems: Map<string, HiveSystemRecord>;
   /** User grants keyed by `${userId}:${systemId}:${permission}`. */
@@ -238,8 +240,16 @@ export type HiveSystemRisk = "low" | "medium" | "high" | "critical";
 export type HiveSystemPermission = "view" | "run" | "approve" | "admin" | "audit";
 export type BeeSystemAccessMode = "none" | "limited" | "universal";
 
+export type HiveOrganizationRecord = {
+  id: string;
+  slug: string;
+  name: string;
+  createdAt: string;
+};
+
 export type HiveOperatorRecord = {
   userId: string;
+  organizationId: string;
   email: string;
   name?: string;
   role: HiveOrgRole;
@@ -250,6 +260,7 @@ export type HiveOperatorRecord = {
 
 export type HiveSystemRecord = {
   id: string;
+  organizationId: string;
   slug: string;
   name: string;
   risk: HiveSystemRisk;
@@ -425,11 +436,13 @@ export function createHiveServerState(): HiveServerState {
     auditLog: new Map(),
     operators: new Map(),
     operatorSessions: new Map(),
+    organizations: new Map(),
     systems: new Map(),
     userSystemPermissions: new Map(),
     beeSystemAccess: new Map(),
     subAgentDefinitions: new Map(),
   };
+  seedDefaultOrganization(state, new Date("2026-01-01T00:00:00.000Z"));
   seedDefaultSystems(state, new Date("2026-01-01T00:00:00.000Z"));
   return state;
 }
@@ -599,6 +612,7 @@ function defaultPublicDir(): string {
 
 const INSTALL_SCRIPT_NAMES = new Set(["bee.sh", "hive.sh"]);
 
+const DEFAULT_ORGANIZATION_ID = "org_default";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 const OFFLINE_AFTER_MS = 2 * 60 * 1000;
 const INCIDENT_ATTEMPT_COOLDOWN_MS = 5 * 60 * 1000;
@@ -660,6 +674,7 @@ const CreateHiveAutomationRequestSchema = CreateHiveTaskRequestSchema.extend({
 
 const CreateOperatorRequestSchema = z.object({
   email: z.string().email(),
+  organizationId: z.string().min(1).default(DEFAULT_ORGANIZATION_ID),
   name: z.string().min(1).max(120).optional(),
   role: z.enum(["owner", "admin", "developer", "operator", "viewer"]).default("operator"),
 });
@@ -859,11 +874,46 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         });
       }
 
+      if (request.method === "DELETE" && url.pathname === "/api/auth/session") {
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
+        const bearer = extractBearer(request);
+        if ("error" in bearer || !looksLikeOperatorSessionToken(bearer.token)) {
+          return sendJson(response, 400, {
+            error: "bad_request",
+            reason: "current credential is not an operator session",
+          });
+        }
+        const tokenHash = sha256Hex(bearer.token);
+        const session = state.operatorSessions.get(tokenHash);
+        if (session) {
+          session.revokedAt = now();
+          state.operatorSessions.delete(tokenHash);
+        }
+        const current = now();
+        recordAudit(state, request, current, {
+          action: "operator.session.revoke",
+          resourceType: "operator_session",
+          resourceId: actor.sessionId ?? "unknown",
+          data: { userId: actor.userId },
+        });
+        markDirty();
+        return sendJson(response, 200, { revoked: true });
+      }
+
       if (request.method === "GET" && url.pathname === "/api/systems") {
         const actor = requireOperatorOrSend(request, response, state, adminToken);
         if (!actor) return;
         return sendJson(response, 200, {
           systems: serializeSystemsForActor(state, actor),
+        });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/organizations") {
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
+        return sendJson(response, 200, {
+          organizations: serializeOrganizationsForActor(state, actor),
         });
       }
 
@@ -880,13 +930,29 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
             message: parsed.error.message,
           });
         }
+        if (!state.organizations.has(parsed.data.organizationId)) {
+          return sendJson(response, 404, {
+            error: "not_found",
+            reason: "organization not found",
+          });
+        }
+        if (!actorCanManageOrganization(actor, parsed.data.organizationId)) {
+          return sendJson(response, 403, {
+            error: "forbidden",
+            reason: "operator cannot create users in another organization",
+          });
+        }
         const current = now();
         const created = createOperator(state, parsed.data, current);
         recordAudit(state, request, current, {
           action: "operator.create",
           resourceType: "operator",
           resourceId: created.operator.userId,
-          data: { email: created.operator.email, role: created.operator.role },
+          data: {
+            email: created.operator.email,
+            role: created.operator.role,
+            organizationId: created.operator.organizationId,
+          },
         });
         markDirty();
         return sendJson(response, 200, {
@@ -902,7 +968,14 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         });
         if (!actor) return;
         return sendJson(response, 200, {
-          operators: [...state.operators.values()].map(redactOperator),
+          operators: [...state.operators.values()]
+            .filter(
+              (operator) =>
+                actor.adminToken ||
+                actor.role === "owner" ||
+                operator.organizationId === actor.organizationId,
+            )
+            .map(redactOperator),
         });
       }
 
@@ -912,7 +985,9 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         });
         if (!actor) return;
         return sendJson(response, 200, {
-          grants: [...state.userSystemPermissions.values()],
+          grants: [...state.userSystemPermissions.values()].filter((grant) =>
+            actorCanSeeSystem(state, actor, grant.systemId),
+          ),
         });
       }
 
@@ -929,11 +1004,22 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
             message: parsed.error.message,
           });
         }
-        if (!state.operators.has(parsed.data.userId)) {
+        const grantee = state.operators.get(parsed.data.userId);
+        if (!grantee) {
           return sendJson(response, 404, { error: "not_found", reason: "operator not found" });
         }
-        if (!state.systems.has(parsed.data.systemId)) {
+        const system = state.systems.get(parsed.data.systemId);
+        if (!system) {
           return sendJson(response, 404, { error: "not_found", reason: "system not found" });
+        }
+        if (
+          grantee.organizationId !== system.organizationId ||
+          !actorCanManageOrganization(actor, system.organizationId)
+        ) {
+          return sendJson(response, 403, {
+            error: "forbidden",
+            reason: "operator cannot grant permissions across organization boundaries",
+          });
         }
         const current = now();
         const grants = grantSystemPermissions(state, parsed.data, actor, current);
@@ -953,7 +1039,9 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         });
         if (!actor) return;
         return sendJson(response, 200, {
-          grants: [...state.beeSystemAccess.values()],
+          grants: [...state.beeSystemAccess.values()].filter((grant) =>
+            actorCanSeeSystem(state, actor, grant.systemId),
+          ),
         });
       }
 
@@ -973,8 +1061,15 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         if (!state.bees.has(parsed.data.beeId)) {
           return sendJson(response, 404, { error: "not_found", reason: "bee not registered" });
         }
-        if (!state.systems.has(parsed.data.systemId)) {
+        const system = state.systems.get(parsed.data.systemId);
+        if (!system) {
           return sendJson(response, 404, { error: "not_found", reason: "system not found" });
+        }
+        if (!actorCanManageOrganization(actor, system.organizationId)) {
+          return sendJson(response, 403, {
+            error: "forbidden",
+            reason: "operator cannot grant Bee access across organization boundaries",
+          });
         }
         const current = now();
         const grant = grantBeeSystemAccess(state, parsed.data, actor, current);
@@ -1922,6 +2017,7 @@ type OperatorAuth =
 
 type AuthenticatedOperator = {
   userId: string;
+  organizationId?: string;
   role: HiveOrgRole;
   email?: string;
   adminToken: boolean;
@@ -1995,6 +2091,7 @@ function requireOperator(
     }
     const actor: AuthenticatedOperator = {
       userId: operator.userId,
+      organizationId: operator.organizationId,
       role: operator.role,
       email: operator.email,
       adminToken: false,
@@ -2041,6 +2138,7 @@ function requireOperator(
   }
   const actor: AuthenticatedOperator = {
     userId: operator.userId,
+    organizationId: operator.organizationId,
     role: operator.role,
     email: operator.email,
     adminToken: false,
@@ -2092,8 +2190,11 @@ function hasSystemPermission(
   systemId: string,
   permission: HiveSystemPermission,
 ): boolean {
-  if (actor.adminToken || actor.role === "owner" || actor.role === "admin") return true;
-  if (!state.systems.has(systemId)) return false;
+  if (actor.adminToken || actor.role === "owner") return true;
+  const system = state.systems.get(systemId);
+  if (!system) return false;
+  if (!actor.organizationId || system.organizationId !== actor.organizationId) return false;
+  if (actor.role === "admin") return true;
   const direct = state.userSystemPermissions.has(
     systemPermissionKey(actor.userId, systemId, permission),
   );
@@ -2131,7 +2232,7 @@ function requireAnySystemPermissionOrSend(
   actor: AuthenticatedOperator,
   permission: HiveSystemPermission,
 ): boolean {
-  if (actor.adminToken || actor.role === "owner" || actor.role === "admin") return true;
+  if (actor.adminToken || actor.role === "owner") return true;
   if (
     [...state.systems.keys()].some((systemId) =>
       hasSystemPermission(state, actor, systemId, permission),
@@ -2144,6 +2245,24 @@ function requireAnySystemPermissionOrSend(
     reason: `operator lacks ${permission} permission on any System`,
   });
   return false;
+}
+
+function actorCanManageOrganization(actor: AuthenticatedOperator, organizationId: string): boolean {
+  return (
+    actor.adminToken ||
+    actor.role === "owner" ||
+    (actor.role === "admin" && actor.organizationId === organizationId)
+  );
+}
+
+function actorCanSeeSystem(
+  state: HiveServerState,
+  actor: AuthenticatedOperator,
+  systemId: string,
+): boolean {
+  if (actor.adminToken || actor.role === "owner") return true;
+  const system = state.systems.get(systemId);
+  return Boolean(system && actor.organizationId && system.organizationId === actor.organizationId);
 }
 
 function beeCanAccessSystem(state: HiveServerState, beeId: string, systemId: string): boolean {
@@ -2189,7 +2308,7 @@ export function createBootstrapToken(
 }
 
 function seedDefaultSystems(state: HiveServerState, now: Date): void {
-  const defaults: Array<Omit<HiveSystemRecord, "createdAt">> = [
+  const defaults: Array<Omit<HiveSystemRecord, "createdAt" | "organizationId">> = [
     {
       id: "infra",
       slug: "infra",
@@ -2229,8 +2348,22 @@ function seedDefaultSystems(state: HiveServerState, now: Date): void {
 
   for (const system of defaults) {
     if (state.systems.has(system.id)) continue;
-    state.systems.set(system.id, { ...system, createdAt: now.toISOString() });
+    state.systems.set(system.id, {
+      ...system,
+      organizationId: DEFAULT_ORGANIZATION_ID,
+      createdAt: now.toISOString(),
+    });
   }
+}
+
+function seedDefaultOrganization(state: HiveServerState, now: Date): void {
+  if (state.organizations.has(DEFAULT_ORGANIZATION_ID)) return;
+  state.organizations.set(DEFAULT_ORGANIZATION_ID, {
+    id: DEFAULT_ORGANIZATION_ID,
+    slug: "default",
+    name: "Default organization",
+    createdAt: now.toISOString(),
+  });
 }
 
 function createOperator(
@@ -2243,6 +2376,7 @@ function createOperator(
   const userId = `user_${sha256Hex(email).slice(0, 16)}`;
   const operator: HiveOperatorRecord = {
     userId,
+    organizationId: request.organizationId,
     email,
     ...(request.name ? { name: request.name.trim() } : {}),
     role: request.role,
@@ -2761,6 +2895,18 @@ function serializeSystemsForActor(
       ),
     }))
     .filter((system) => system.permissions.length > 0)
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function serializeOrganizationsForActor(
+  state: HiveServerState,
+  actor: AuthenticatedOperator,
+): HiveOrganizationRecord[] {
+  return [...state.organizations.values()]
+    .filter(
+      (organization) =>
+        actor.adminToken || actor.role === "owner" || organization.id === actor.organizationId,
+    )
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 

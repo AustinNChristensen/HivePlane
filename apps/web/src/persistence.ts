@@ -11,6 +11,7 @@ import {
   type HiveBeeRecord,
   type HiveAutomationRecord,
   type HiveOperatorRecord,
+  type HiveOrganizationRecord,
   type HiveServerState,
   type HiveSubAgentDefinitionRecord,
   type HiveSystemRecord,
@@ -178,6 +179,7 @@ type PersistedSnapshot = {
   auditLog?: Array<[string, AuditLogEntry]>;
   operators?: Array<[string, HiveOperatorRecord]>;
   operatorSessions?: Array<[string, PersistedOperatorSession]>;
+  organizations?: Array<[string, HiveOrganizationRecord]>;
   systems?: Array<[string, HiveSystemRecord]>;
   userSystemPermissions?: Array<[string, UserSystemPermissionRecord]>;
   beeSystemAccess?: Array<[string, BeeSystemAccessRecord]>;
@@ -227,6 +229,7 @@ function serialize(state: HiveServerState): PersistedSnapshot {
       k,
       serializeOperatorSession(v),
     ]),
+    organizations: [...state.organizations.entries()],
     systems: [...state.systems.entries()],
     userSystemPermissions: [...state.userSystemPermissions.entries()],
     beeSystemAccess: [...state.beeSystemAccess.entries()],
@@ -291,13 +294,21 @@ function rehydrate(snapshot: PersistedSnapshot): HiveServerState {
     state.automations.set(k, { ...v, targetSystemId: v.targetSystemId ?? "public" });
   }
   for (const [k, v] of snapshot.auditLog ?? []) state.auditLog.set(k, v);
-  for (const [k, v] of snapshot.operators ?? []) state.operators.set(k, v);
+  for (const [k, v] of snapshot.operators ?? []) {
+    state.operators.set(k, { ...v, organizationId: v.organizationId ?? "org_default" });
+  }
   for (const [k, v] of snapshot.operatorSessions ?? []) {
     state.operatorSessions.set(k, deserializeOperatorSession(v));
   }
+  if (snapshot.organizations) {
+    state.organizations.clear();
+    for (const [k, v] of snapshot.organizations) state.organizations.set(k, v);
+  }
   if (snapshot.systems) {
     state.systems.clear();
-    for (const [k, v] of snapshot.systems) state.systems.set(k, v);
+    for (const [k, v] of snapshot.systems) {
+      state.systems.set(k, { ...v, organizationId: v.organizationId ?? "org_default" });
+    }
   }
   for (const [k, v] of snapshot.userSystemPermissions ?? []) {
     state.userSystemPermissions.set(k, v);

@@ -1560,6 +1560,7 @@
                 autocomplete="off"
               />
               <button class="ghost" id="saveAdminToken">Sign in</button>
+              <button class="ghost" id="signOut">Sign out</button>
               <span class="auth-status" id="authStatus">not signed in</span>
             </div>
           </details>
@@ -1915,6 +1916,7 @@
         operatorId: document.getElementById("operatorId"),
         adminToken: document.getElementById("adminToken"),
         saveAdminToken: document.getElementById("saveAdminToken"),
+        signOut: document.getElementById("signOut"),
         authStatus: document.getElementById("authStatus"),
         beesMeta: document.getElementById("beesMeta"),
         beesBody: document.getElementById("beesBody"),
@@ -2065,6 +2067,17 @@
         } catch (err) {
           clearRejectedAdminToken(`sign-in failed: ${err.message}`);
         }
+      });
+
+      els.signOut.addEventListener("click", async () => {
+        if (state.adminToken) {
+          await fetch("/api/auth/session", {
+            method: "DELETE",
+            headers: authHeaders(),
+          }).catch(() => {});
+        }
+        clearRejectedAdminToken("signed out");
+        refreshActive();
       });
 
       function clearRejectedAdminToken(message = "session rejected — sign in again") {

@@ -13,7 +13,7 @@ Keep iterating until every item below is either shipped and verified on `main`, 
 1. **Auth, orgs, and operator roles** — issue #72
    - Goal: replace admin-token-only dogfood access with real operator identity and team/org separation.
    - Acceptance signal: a non-owner operator can sign in/use scoped dashboard actions without receiving owner/admin authority.
-   - Status: session-based operator sign-in shipped and dogfooded on 2026-06-14. Remaining #72 hardening is explicit org/team separation beyond the current System boundary model, plus revoke/logout polish.
+   - Status: shipped and dogfooded on 2026-06-14. Operator sessions, default organization migration, org-scoped operators/Systems, org-aware admin boundaries, and session logout/revoke are on main; #72 closed.
 
 2. **Permission enforcement** — issue #32, paired with permissions UI #33
    - Goal: enforce scoped access around users, Bees, jobs/tasks, approvals, recovery actions, and audit visibility.
@@ -155,10 +155,24 @@ Verification:
 - live owner-session smoke passed through `/api/auth/login`, `/api/auth/me`, and `/api/tasks`;
 - live non-owner viewer smoke created operator `user_e9df6a23c0fd2217`, exchanged its token for a `hp_op_sess_...` session, and verified `/api/auth/me` returned that viewer identity.
 
-Still left in #72:
+### 2026-06-14 — Organization Boundaries And Logout
 
-- explicit organization/team records and boundary checks beyond the current System-scoped authorization domains;
-- logout/revoke-session UI and operator/grant revoke polish.
+Closed out the remaining #72 P0 work:
+
+- added an explicit default organization model and `GET /api/organizations`;
+- operators and Systems now carry an `organizationId`;
+- existing persisted operators and Systems migrate into `org_default`;
+- non-owner admin/operator permissions are constrained to their own organization;
+- operator lists, permission grants, and Bee System access grants are filtered/guarded by organization boundary;
+- added `DELETE /api/auth/session` plus dashboard Sign out to revoke the current operator session;
+- added server coverage proving a default-org admin cannot see or grant into a second org while that org's admin can see its own System;
+- extended session tests to verify revoked sessions are rejected.
+
+Verification:
+
+- full `pnpm format:check`, `pnpm typecheck`, and `pnpm test` passed;
+- live Hive was restarted;
+- live smoke passed `/api/auth/login`, `/api/organizations`, `/api/systems`, `DELETE /api/auth/session`, and rejected the revoked session with 401.
 
 ### 2026-06-14 — Ollama Backend Adapter
 

@@ -900,6 +900,16 @@ describe("Hive server", () => {
           userId: operatorBody.operator.userId,
           role: "operator",
         });
+
+        const revokeResponse = await fetch(`${baseUrl}/api/auth/session`, {
+          method: "DELETE",
+          headers: { authorization: `Bearer ${loginBody.token}` },
+        });
+        expect(revokeResponse.status).toBe(200);
+        const revokedMe = await fetch(`${baseUrl}/api/auth/me`, {
+          headers: { authorization: `Bearer ${loginBody.token}` },
+        });
+        expect(revokedMe.status).toBe(401);
       },
     );
   });
@@ -926,6 +936,86 @@ describe("Hive server", () => {
         expect(meResponse.status).toBe(401);
         const body = (await meResponse.json()) as { reason: string };
         expect(body.reason).toBe("operator session expired");
+      },
+    );
+  });
+
+  it("keeps admin operators inside their organization boundary", async () => {
+    const state = createHiveServerState();
+    state.organizations.set("org_acme", {
+      id: "org_acme",
+      slug: "acme",
+      name: "Acme",
+      createdAt: "2026-06-14T15:00:00.000Z",
+    });
+    state.systems.set("acme-dev", {
+      id: "acme-dev",
+      organizationId: "org_acme",
+      slug: "acme-dev",
+      name: "Acme Development",
+      risk: "medium",
+      createdAt: "2026-06-14T15:00:00.000Z",
+    });
+
+    await withServer(
+      { state, adminToken: "secret", now: () => new Date("2026-06-14T15:00:00.000Z") },
+      async (baseUrl) => {
+        const defaultAdminResponse = await fetch(`${baseUrl}/api/operators`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({ email: "default-admin@example.com", role: "admin" }),
+        });
+        const defaultAdmin = (await defaultAdminResponse.json()) as {
+          token: string;
+          operator: { userId: string };
+        };
+
+        const acmeAdminResponse = await fetch(`${baseUrl}/api/operators`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            email: "acme-admin@example.com",
+            organizationId: "org_acme",
+            role: "admin",
+          }),
+        });
+        const acmeAdmin = (await acmeAdminResponse.json()) as {
+          token: string;
+          operator: { userId: string };
+        };
+
+        const defaultSystems = await fetch(`${baseUrl}/api/systems`, {
+          headers: { authorization: `Bearer ${defaultAdmin.token}` },
+        });
+        expect(defaultSystems.status).toBe(200);
+        const defaultSystemsBody = (await defaultSystems.json()) as {
+          systems: Array<{ id: string }>;
+        };
+        expect(defaultSystemsBody.systems.map((system) => system.id)).not.toContain("acme-dev");
+
+        const forbiddenGrant = await fetch(`${baseUrl}/api/system-permissions`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${defaultAdmin.token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            userId: acmeAdmin.operator.userId,
+            systemId: "acme-dev",
+            permissions: ["run"],
+          }),
+        });
+        expect(forbiddenGrant.status).toBe(403);
+
+        const acmeSystems = await fetch(`${baseUrl}/api/systems`, {
+          headers: { authorization: `Bearer ${acmeAdmin.token}` },
+        });
+        expect(acmeSystems.status).toBe(200);
+        const acmeSystemsBody = (await acmeSystems.json()) as {
+          systems: Array<{ id: string }>;
+        };
+        expect(acmeSystemsBody.systems.map((system) => system.id)).toContain("acme-dev");
+        expect(acmeSystemsBody.systems.map((system) => system.id)).not.toContain("public");
       },
     );
   });
