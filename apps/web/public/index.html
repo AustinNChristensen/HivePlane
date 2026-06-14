@@ -766,6 +766,31 @@
         gap: 14px;
         padding: 18px;
       }
+      .onboarding-panel {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: center;
+        margin: 18px 18px 0;
+        padding: 14px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: linear-gradient(90deg, var(--accent-soft), rgba(25, 227, 210, 0.06));
+      }
+      .onboarding-panel h3 {
+        margin: 0 0 4px;
+        font-size: 14px;
+      }
+      .onboarding-panel p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .onboarding-panel .actions {
+        margin: 0;
+        flex: 0 0 auto;
+      }
       .bee-card {
         display: grid;
         gap: 14px;
@@ -1722,6 +1747,7 @@
           const { bees, incidents } = await res.json();
           state.bees = bees ?? [];
           state.incidents = incidents ?? [];
+          await refreshOnboardingJobs();
           if (
             state.beeModalOpen &&
             state.selectedBeeId &&
@@ -1737,6 +1763,23 @@
         } catch (err) {
           els.beesBody.innerHTML = `<div class="empty">Failed to load bees: ${escapeHtml(err.message)}</div>`;
           els.incidentsBody.innerHTML = `<div class="empty">Failed to load incidents.</div>`;
+        }
+      }
+
+      async function refreshOnboardingJobs() {
+        if (!state.adminToken) return;
+        try {
+          const res = await fetch("/api/jobs", { headers: authHeaders() });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            return;
+          }
+          if (!res.ok) return;
+          const { jobs } = await res.json();
+          state.jobs = jobs ?? [];
+        } catch {
+          // Bees still render without job context. The full Jobs tab owns the
+          // visible error state for job fetch failures.
         }
       }
 
@@ -1963,6 +2006,7 @@
           els.beesBody.innerHTML = `<div class="empty">No bees connected yet.<br>Run <code>curl http://&lt;hive&gt;/install/bee.sh | sh</code> on a worker, then <code>bee login</code> and paste the pairing key above.</div>`;
           return;
         }
+        const onboarding = renderBeeOnboarding(bees);
         const cards = bees
           .map((b) => {
             const capabilities = b.capabilities || {};
@@ -2015,7 +2059,21 @@
           })
           .join("");
         els.beesBody.innerHTML = `
+          ${onboarding}
           <div class="bee-grid">${cards}</div>`;
+        els.beesBody
+          .querySelector("[data-action='first-healthcheck']")
+          ?.addEventListener("click", (event) =>
+            queueHealthcheck(event.currentTarget.dataset.beeId, event.currentTarget),
+          );
+        els.beesBody
+          .querySelector("[data-action='open-first-job']")
+          ?.addEventListener("click", (event) => {
+            state.selectedJobId = event.currentTarget.dataset.jobId;
+            state.selectedJob = null;
+            showJobsTab();
+            refreshJobs();
+          });
         els.beesBody.querySelectorAll("[data-action='healthcheck']").forEach((button) => {
           button.addEventListener("click", () => queueHealthcheck(button.dataset.beeId, button));
         });
@@ -2055,6 +2113,53 @@
             openBeeModal(button.dataset.beeId);
           });
         });
+      }
+
+      function renderBeeOnboarding(bees) {
+        const targetBee = bees.find((bee) => bee.status === "online") || bees[0];
+        if (!targetBee) return "";
+        if (!state.adminToken) {
+          return `
+            <div class="onboarding-panel">
+              <div>
+                <h3>Next: unlock the first Bee task</h3>
+                <p>Save the admin token to run a healthcheck and confirm this Bee can accept work.</p>
+              </div>
+            </div>`;
+        }
+        const healthcheck = latestJobForBee(targetBee.beeId, "run_healthcheck");
+        if (healthcheck?.status === "succeeded") {
+          return `
+            <div class="onboarding-panel">
+              <div>
+                <h3>First Bee task verified</h3>
+                <p>${escapeHtml(targetBee.beeName || shortId(targetBee.beeId))} completed a healthcheck ${escapeHtml(relativeTime(healthcheck.completedAt || healthcheck.createdAt))}. Open the result to inspect the job trail.</p>
+              </div>
+              <div class="actions">
+                <button class="ghost" data-action="open-first-job" data-job-id="${escapeHtml(healthcheck.id)}">Open Result</button>
+              </div>
+            </div>`;
+        }
+        return `
+          <div class="onboarding-panel">
+            <div>
+              <h3>Next: run the first safe task</h3>
+              <p>${escapeHtml(targetBee.beeName || shortId(targetBee.beeId))} is connected. Run a healthcheck to prove the Bee can receive work, report capabilities, and write a job trail.</p>
+            </div>
+            <div class="actions">
+              <button class="action" data-action="first-healthcheck" data-bee-id="${escapeHtml(targetBee.beeId)}">Run Healthcheck</button>
+            </div>
+          </div>`;
+      }
+
+      function latestJobForBee(beeId, type) {
+        return [...state.jobs]
+          .filter((job) => job.beeId === beeId && (!type || job.type === type))
+          .sort(
+            (a, b) =>
+              new Date(b.completedAt || b.createdAt || 0).getTime() -
+              new Date(a.completedAt || a.createdAt || 0).getTime(),
+          )[0];
       }
       function openBeeModal(beeId) {
         state.selectedBeeId = beeId;
