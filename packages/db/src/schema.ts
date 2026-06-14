@@ -46,6 +46,25 @@ export const approvalRiskEnum = pgEnum("approval_risk", [
   "external",
   "credentialed",
 ]);
+export const systemRiskEnum = pgEnum("system_risk", ["low", "medium", "high", "critical"]);
+export const systemPermissionEnum = pgEnum("system_permission", [
+  "view",
+  "run",
+  "approve",
+  "admin",
+  "audit",
+]);
+export const beeSystemAccessModeEnum = pgEnum("bee_system_access_mode", [
+  "none",
+  "limited",
+  "universal",
+]);
+export const runtimeHealthEnum = pgEnum("runtime_health", [
+  "unknown",
+  "healthy",
+  "degraded",
+  "offline",
+]);
 
 const createdAt = timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 const updatedAt = timestamp("updated_at", { withTimezone: true }).notNull().defaultNow();
@@ -83,6 +102,49 @@ export const organizationMemberships = pgTable(
   }),
 );
 
+export const systems = pgTable(
+  "systems",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    risk: systemRiskEnum("risk").notNull().default("medium"),
+    ownerUserId: text("owner_user_id").references(() => users.id, { onDelete: "set null" }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    organizationSlugIdx: uniqueIndex("systems_org_slug_idx").on(table.organizationId, table.slug),
+    organizationRiskIdx: index("systems_org_risk_idx").on(table.organizationId, table.risk),
+  }),
+);
+
+export const userSystemPermissions = pgTable(
+  "user_system_permissions",
+  {
+    systemId: text("system_id")
+      .notNull()
+      .references(() => systems.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    permission: systemPermissionEnum("permission").notNull(),
+    grantedByUserId: text("granted_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt,
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.systemId, table.userId, table.permission] }),
+    userIdx: index("user_system_permissions_user_idx").on(table.userId),
+  }),
+);
+
 export const bees = pgTable(
   "bees",
   {
@@ -93,6 +155,7 @@ export const bees = pgTable(
     name: text("name").notNull(),
     publicKey: text("public_key").notNull(),
     status: beeStatusEnum("status").notNull().default("offline"),
+    accessMode: beeSystemAccessModeEnum("access_mode").notNull().default("limited"),
     hiveUrl: text("hive_url"),
     daemonVersion: text("daemon_version"),
     labels: jsonb("labels").$type<Record<string, string>>().notNull().default({}),
@@ -105,6 +168,26 @@ export const bees = pgTable(
   (table) => ({
     organizationStatusIdx: index("bees_org_status_idx").on(table.organizationId, table.status),
     organizationNameIdx: index("bees_org_name_idx").on(table.organizationId, table.name),
+  }),
+);
+
+export const beeSystemAccess = pgTable(
+  "bee_system_access",
+  {
+    beeId: text("bee_id")
+      .notNull()
+      .references(() => bees.id, { onDelete: "cascade" }),
+    systemId: text("system_id")
+      .notNull()
+      .references(() => systems.id, { onDelete: "cascade" }),
+    grantedByUserId: text("granted_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt,
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.beeId, table.systemId] }),
+    systemIdx: index("bee_system_access_system_idx").on(table.systemId),
   }),
 );
 
@@ -159,6 +242,18 @@ export const jobs = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
     beeId: text("bee_id").references(() => bees.id, { onDelete: "set null" }),
+    targetSystemId: text("target_system_id").references(() => systems.id, {
+      onDelete: "set null",
+    }),
+    requestedSubAgentId: text("requested_sub_agent_id").references(() => subAgentDefinitions.id, {
+      onDelete: "set null",
+    }),
+    modelBackendId: text("model_backend_id").references(() => modelBackends.id, {
+      onDelete: "set null",
+    }),
+    localModelId: text("local_model_id").references(() => localModels.id, {
+      onDelete: "set null",
+    }),
     requestedByUserId: text("requested_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -178,6 +273,131 @@ export const jobs = pgTable(
   (table) => ({
     organizationStatusIdx: index("jobs_org_status_idx").on(table.organizationId, table.status),
     beeStatusIdx: index("jobs_bee_status_idx").on(table.beeId, table.status),
+    targetSystemStatusIdx: index("jobs_system_status_idx").on(table.targetSystemId, table.status),
+    subAgentStatusIdx: index("jobs_sub_agent_status_idx").on(
+      table.requestedSubAgentId,
+      table.status,
+    ),
+    modelBackendStatusIdx: index("jobs_model_backend_status_idx").on(
+      table.modelBackendId,
+      table.status,
+    ),
+    localModelStatusIdx: index("jobs_local_model_status_idx").on(table.localModelId, table.status),
+  }),
+);
+
+export const subAgentDefinitions = pgTable(
+  "sub_agent_definitions",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    systemId: text("system_id").references(() => systems.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    runtime: text("runtime").notNull(),
+    modelProvider: text("model_provider"),
+    model: text("model"),
+    tools: jsonb("tools").$type<string[]>().notNull().default([]),
+    skills: jsonb("skills").$type<string[]>().notNull().default([]),
+    workingDirectories: jsonb("working_directories").$type<string[]>().notNull().default([]),
+    environmentRefs: jsonb("environment_refs").$type<string[]>().notNull().default([]),
+    policyProfileId: text("policy_profile_id"),
+    targetBeeIds: jsonb("target_bee_ids").$type<string[]>().notNull().default([]),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    organizationRuntimeIdx: index("sub_agents_org_runtime_idx").on(
+      table.organizationId,
+      table.runtime,
+    ),
+    systemIdx: index("sub_agents_system_idx").on(table.systemId),
+  }),
+);
+
+export const beeSubAgents = pgTable(
+  "bee_sub_agents",
+  {
+    beeId: text("bee_id")
+      .notNull()
+      .references(() => bees.id, { onDelete: "cascade" }),
+    subAgentId: text("sub_agent_id")
+      .notNull()
+      .references(() => subAgentDefinitions.id, { onDelete: "cascade" }),
+    runtime: text("runtime").notNull(),
+    runtimeAgentId: text("runtime_agent_id"),
+    status: runtimeHealthEnum("status").notNull().default("unknown"),
+    configPath: text("config_path"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    lastSmokeTestAt: timestamp("last_smoke_test_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.beeId, table.subAgentId] }),
+    runtimeIdx: index("bee_sub_agents_runtime_idx").on(table.beeId, table.runtime),
+  }),
+);
+
+export const modelBackends = pgTable(
+  "model_backends",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    beeId: text("bee_id")
+      .notNull()
+      .references(() => bees.id, { onDelete: "cascade" }),
+    backend: text("backend").notNull(),
+    endpointUrl: text("endpoint_url"),
+    status: runtimeHealthEnum("status").notNull().default("unknown"),
+    version: text("version"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    beeBackendIdx: uniqueIndex("model_backends_bee_backend_idx").on(table.beeId, table.backend),
+    organizationBackendIdx: index("model_backends_org_backend_idx").on(
+      table.organizationId,
+      table.backend,
+    ),
+  }),
+);
+
+export const localModels = pgTable(
+  "local_models",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    backendId: text("backend_id")
+      .notNull()
+      .references(() => modelBackends.id, { onDelete: "cascade" }),
+    beeId: text("bee_id")
+      .notNull()
+      .references(() => bees.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    family: text("family"),
+    quantization: text("quantization"),
+    contextLength: integer("context_length"),
+    parameterCount: text("parameter_count"),
+    resourceHints: jsonb("resource_hints").$type<Record<string, unknown>>().notNull().default({}),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    backendNameIdx: uniqueIndex("local_models_backend_name_idx").on(table.backendId, table.name),
+    beeNameIdx: index("local_models_bee_name_idx").on(table.beeId, table.name),
   }),
 );
 
@@ -192,6 +412,9 @@ export const jobEvents = pgTable(
       .notNull()
       .references(() => jobs.id, { onDelete: "cascade" }),
     beeId: text("bee_id").references(() => bees.id, { onDelete: "set null" }),
+    targetSystemId: text("target_system_id").references(() => systems.id, {
+      onDelete: "set null",
+    }),
     sequence: integer("sequence").notNull(),
     type: text("type").notNull(),
     level: jobEventLevelEnum("level").notNull(),
