@@ -207,13 +207,15 @@ function rehydrate(snapshot: PersistedSnapshot): HiveServerState {
     state.bees.set(k, {
       ...v,
       healthChecks: v.healthChecks ?? [],
-      profile: v.profile ?? {
-        availabilityClass: "always_on",
-        offlineGraceSeconds: 120,
-        expectedWindows: [],
-        criticalServices: [],
-        activeJobPolicy: "escalate",
-        autoRepairWhenOnline: true,
+      profile: {
+        ...(v.profile ?? {}),
+        availabilityClass: v.profile?.availabilityClass ?? "always_on",
+        permissionProfile: v.profile?.permissionProfile ?? "personal_assistant",
+        offlineGraceSeconds: v.profile?.offlineGraceSeconds ?? 120,
+        expectedWindows: v.profile?.expectedWindows ?? [],
+        criticalServices: v.profile?.criticalServices ?? [],
+        activeJobPolicy: v.profile?.activeJobPolicy ?? "escalate",
+        autoRepairWhenOnline: v.profile?.autoRepairWhenOnline ?? true,
       },
     });
   }

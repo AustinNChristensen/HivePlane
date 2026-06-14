@@ -292,9 +292,24 @@ Status should be `succeeded` with `output.daemonVersion` and `output.beeId`.
 
 ### Step 8 — (Optional) Allow `run_command` jobs
 
-For the Hive to dispatch arbitrary shell commands to a Bee, the **Bee operator** has to opt in via a local policy. By default `run_command` is denied — see [#50](https://github.com/AustinNChristensen/HivePlane/issues/50) for the rough edges here.
+For the Hive to dispatch arbitrary shell commands to a Bee, the **Bee operator** has to opt in via a local policy. By default, only safe read-only commands are allowed.
 
-On the Bee, edit `~/.hiveplane/policy.json`:
+Start from a permission profile:
+
+```bash
+bee policy profiles
+bee policy profile dev_box
+```
+
+Profiles cover common Bee roles such as `personal_assistant`, `browser_worker`, `finance_safe`, `server_worker`, `read_only_observer`, and `dev_box`. They set allowed job types, commands that need approval, and obvious denylists.
+
+Custom overrides are still local and explicit. Use the CLI for one-off command allowlist changes:
+
+```bash
+bee policy allow git
+```
+
+Or edit `~/.hiveplane/policy.json` directly:
 
 ```json
 {

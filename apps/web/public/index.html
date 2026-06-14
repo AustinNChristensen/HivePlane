@@ -2534,7 +2534,7 @@
       }
       function renderProfileSummary(profile) {
         if (!profile) return '<span class="mono">—</span>';
-        return `${pill(profile.availabilityClass || "always_on")} <span class="mono">${escapeHtml(profile.offlineGraceSeconds || "—")}s</span>`;
+        return `${pill(profile.availabilityClass || "always_on")} ${pill(permissionProfileLabel(profile.permissionProfile || "personal_assistant"))} <span class="mono">${escapeHtml(profile.offlineGraceSeconds || "—")}s</span>`;
       }
       function renderBeeDetail(bee) {
         const capabilities = bee.capabilities || {};
@@ -2575,6 +2575,7 @@
             <h3>Availability</h3>
             <div class="kv-list">
               ${kv("Class", pill(profile.availabilityClass || "always_on"))}
+              ${kv("Permission profile", pill(permissionProfileLabel(profile.permissionProfile || "personal_assistant")))}
               ${kv("Offline grace", `${escapeHtml(profile.offlineGraceSeconds || "-")}s`)}
               ${kv("Active jobs", escapeHtml(profile.activeJobPolicy || "escalate"))}
               ${kv("Auto repair", profile.autoRepairWhenOnline === false ? pill("off", "failed") : pill("on", "online"))}
@@ -2669,11 +2670,13 @@
       function renderProfileEditor(bee) {
         const profile = bee.profile || {};
         const availabilityClass = profile.availabilityClass || "always_on";
+        const permissionProfile = profile.permissionProfile || "personal_assistant";
         const activeJobPolicy = profile.activeJobPolicy || "escalate";
         const criticalServices = (profile.criticalServices || []).join("\n");
         const expectedWindows = (profile.expectedWindows || []).join("\n");
         const hints = getProfileWarnings({
           availabilityClass,
+          permissionProfile,
           offlineGraceSeconds: Number(profile.offlineGraceSeconds ?? 120),
           activeJobPolicy,
           autoRepairWhenOnline: profile.autoRepairWhenOnline !== false,
@@ -2689,6 +2692,17 @@
                 ${profileOption("intermittent", availabilityClass)}
                 ${profileOption("ephemeral", availabilityClass)}
                 ${profileOption("critical", availabilityClass)}
+              </select>
+            </div>
+            <div class="form-field compact">
+              <label>Permission profile</label>
+              <select name="permissionProfile">
+                ${permissionProfileOption("personal_assistant", permissionProfile)}
+                ${permissionProfileOption("read_only_observer", permissionProfile)}
+                ${permissionProfileOption("finance_safe", permissionProfile)}
+                ${permissionProfileOption("browser_worker", permissionProfile)}
+                ${permissionProfileOption("server_worker", permissionProfile)}
+                ${permissionProfileOption("dev_box", permissionProfile)}
               </select>
             </div>
             <div class="form-field compact">
@@ -2725,6 +2739,28 @@
       function profileOption(value, selected) {
         return `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value.replace(/_/g, " "))}</option>`;
       }
+      function permissionProfileOption(value, selected) {
+        const meta = {
+          personal_assistant: "Personal assistant · medium",
+          read_only_observer: "Read-only observer · low",
+          finance_safe: "Finance-safe · low",
+          browser_worker: "Browser worker · medium",
+          server_worker: "Server worker · medium",
+          dev_box: "Dev box · high",
+        };
+        return `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(meta[value] || value)}</option>`;
+      }
+      function permissionProfileLabel(value) {
+        const labels = {
+          personal_assistant: "personal assistant",
+          read_only_observer: "read-only observer",
+          finance_safe: "finance-safe",
+          browser_worker: "browser worker",
+          server_worker: "server worker",
+          dev_box: "dev box",
+        };
+        return labels[value] || value || "personal assistant";
+      }
       function kv(label, value) {
         return `<div class="kv-row"><span>${escapeHtml(label)}</span><div>${value}</div></div>`;
       }
@@ -2757,6 +2793,7 @@
         const beeId = form.dataset.beeId;
         const payload = {
           availabilityClass: String(data.get("availabilityClass") || "always_on"),
+          permissionProfile: String(data.get("permissionProfile") || "personal_assistant"),
           offlineGraceSeconds: Number(data.get("offlineGraceSeconds") || 0),
           activeJobPolicy: String(data.get("activeJobPolicy") || "escalate"),
           autoRepairWhenOnline: Boolean(data.get("autoRepairWhenOnline")),
@@ -2809,6 +2846,25 @@
       }
       function getProfileWarnings(profile) {
         const warnings = [];
+        if (profile.permissionProfile === "dev_box") {
+          warnings.push(
+            "Dev box can run repo tools on this machine; use only for trusted workstations.",
+          );
+        }
+        if (
+          profile.permissionProfile === "server_worker" &&
+          !["always_on", "critical"].includes(profile.availabilityClass)
+        ) {
+          warnings.push(
+            "Server worker fits always-on or critical Bees better than intermittent devices.",
+          );
+        }
+        if (
+          profile.permissionProfile === "read_only_observer" &&
+          profile.activeJobPolicy === "escalate"
+        ) {
+          warnings.push("Read-only observers can escalate incidents but will not run repair work.");
+        }
         if (
           ["always_on", "critical"].includes(profile.availabilityClass) &&
           profile.offlineGraceSeconds > 10 * 60

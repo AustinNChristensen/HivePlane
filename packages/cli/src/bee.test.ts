@@ -115,4 +115,29 @@ describe("bee CLI", () => {
     };
     expect(after.runCommand?.allow?.filter((value) => value === "git")).toHaveLength(1);
   });
+
+  it("policy profiles lists common permission presets", async () => {
+    const dir = newDir();
+    const { stdout } = await runCli(["policy", "profiles"], dir);
+
+    expect(stdout).toContain("read_only_observer");
+    expect(stdout).toContain("Personal assistant");
+    expect(stdout).toContain("dev_box");
+  });
+
+  it("policy profile writes a preset that can still be customized", async () => {
+    const dir = newDir();
+    const { stdout } = await runCli(["policy", "profile", "dev_box"], dir);
+
+    expect(stdout).toContain("Applied policy profile: Dev box");
+    expect(stdout).toContain("bee policy allow");
+    const policy = JSON.parse(readFileSync(join(dir, "policy.json"), "utf8")) as {
+      runCommand?: { allow?: string[]; deny?: string[] };
+      jobs?: { allow?: string[]; requireApproval?: string[] };
+    };
+    expect(policy.runCommand?.allow).toContain("git");
+    expect(policy.runCommand?.deny).toContain("rm");
+    expect(policy.jobs?.allow).toContain("agent_task");
+    expect(policy.jobs?.requireApproval).toContain("update_bee");
+  });
 });

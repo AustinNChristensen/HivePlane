@@ -5,8 +5,11 @@ import { describe, expect, it } from "vitest";
 import {
   policyDecisionForJob,
   policyAllowsCommand,
+  policyProfileIds,
+  applyPolicyProfile,
   readBeePolicy,
   DEFAULT_POLICY,
+  POLICY_PROFILES,
   SAFE_READ_ONLY_COMMANDS,
 } from "./policy.js";
 import type { Job } from "@hiveplane/protocol";
@@ -87,6 +90,33 @@ describe("policyAllowsCommand", () => {
   it("denies empty command", () => {
     expect(policyAllowsCommand(DEFAULT_POLICY, "").allowed).toBe(false);
     expect(policyAllowsCommand(DEFAULT_POLICY, "   ").allowed).toBe(false);
+  });
+});
+
+describe("policy profiles", () => {
+  it("exposes the common Bee role profiles", () => {
+    expect(policyProfileIds()).toEqual([
+      "read_only_observer",
+      "finance_safe",
+      "personal_assistant",
+      "browser_worker",
+      "server_worker",
+      "dev_box",
+    ]);
+    expect(POLICY_PROFILES.dev_box.risk).toBe("high");
+    expect(POLICY_PROFILES.finance_safe.risk).toBe("low");
+  });
+
+  it("applies a normalized profile policy", () => {
+    const policy = applyPolicyProfile("dev_box");
+    expect(policy.runCommand.allow).toContain("git");
+    expect(policy.runCommand.deny).toContain("rm");
+    expect(policy.runCommand.unsafeAllowAll).toBe(false);
+    expect(policy.jobs.allow).toContain("agent_task");
+  });
+
+  it("rejects an unknown profile", () => {
+    expect(() => applyPolicyProfile("root_everything")).toThrow("unknown policy profile");
   });
 });
 

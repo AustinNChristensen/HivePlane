@@ -53,6 +53,159 @@ export const APPROVAL_REQUIRED_JOB_TYPES: JobType[] = [
   "repair_imessage_bridge",
 ];
 
+export type PolicyProfileId =
+  | "dev_box"
+  | "personal_assistant"
+  | "browser_worker"
+  | "finance_safe"
+  | "read_only_observer"
+  | "server_worker";
+
+export type PolicyProfile = {
+  id: PolicyProfileId;
+  label: string;
+  risk: "low" | "medium" | "high";
+  description: string;
+  policy: NormalizedBeePolicy;
+};
+
+const OBSERVE_JOBS: JobType[] = [
+  "run_healthcheck",
+  "openclaw_status",
+  "ollama_status",
+  "ollama_list_models",
+];
+const AGENT_JOBS: JobType[] = [...OBSERVE_JOBS, "agent_task"];
+
+export const POLICY_PROFILES: Record<PolicyProfileId, PolicyProfile> = {
+  read_only_observer: {
+    id: "read_only_observer",
+    label: "Read-only observer",
+    risk: "low",
+    description: "Health and inventory only. No shell expansion beyond safe read-only commands.",
+    policy: DEFAULT_POLICY,
+  },
+  finance_safe: {
+    id: "finance_safe",
+    label: "Finance-safe",
+    risk: "low",
+    description:
+      "Allows observation and agent tasks, but keeps writes, installs, and external access gated.",
+    policy: {
+      runCommand: {
+        allow: SAFE_READ_ONLY_COMMANDS,
+        deny: ["rm", "mv", "curl", "scp", "ssh", "gh", "git"],
+        requireApproval: [],
+        unsafeAllowAll: false,
+      },
+      jobs: { allow: AGENT_JOBS, deny: [], requireApproval: APPROVAL_REQUIRED_JOB_TYPES },
+    },
+  },
+  personal_assistant: {
+    id: "personal_assistant",
+    label: "Personal assistant",
+    risk: "medium",
+    description:
+      "Good default for a user machine: agent tasks and status checks, with writes approved.",
+    policy: {
+      runCommand: {
+        allow: [...SAFE_READ_ONLY_COMMANDS, "ls", "cat", "pwd"],
+        deny: [],
+        requireApproval: ["open", "osascript", "curl", "gh"],
+        unsafeAllowAll: false,
+      },
+      jobs: { allow: AGENT_JOBS, deny: [], requireApproval: APPROVAL_REQUIRED_JOB_TYPES },
+    },
+  },
+  browser_worker: {
+    id: "browser_worker",
+    label: "Browser worker",
+    risk: "medium",
+    description:
+      "For browser and app workflows. Runtime changes and external writes still require approval.",
+    policy: {
+      runCommand: {
+        allow: [...SAFE_READ_ONLY_COMMANDS, "open", "osascript"],
+        deny: [],
+        requireApproval: ["curl", "gh", "git"],
+        unsafeAllowAll: false,
+      },
+      jobs: { allow: AGENT_JOBS, deny: [], requireApproval: APPROVAL_REQUIRED_JOB_TYPES },
+    },
+  },
+  server_worker: {
+    id: "server_worker",
+    label: "Server / always-on worker",
+    risk: "medium",
+    description: "Allows health, agent tasks, and recovery jobs for always-on infrastructure Bees.",
+    policy: {
+      runCommand: {
+        allow: SAFE_READ_ONLY_COMMANDS,
+        deny: [],
+        requireApproval: ["systemctl", "launchctl", "brew", "pnpm", "git"],
+        unsafeAllowAll: false,
+      },
+      jobs: {
+        allow: [...AGENT_JOBS, "restart_bee", "collect_bee_logs", "diagnose_incident"],
+        deny: [],
+        requireApproval: APPROVAL_REQUIRED_JOB_TYPES,
+      },
+    },
+  },
+  dev_box: {
+    id: "dev_box",
+    label: "Dev box",
+    risk: "high",
+    description:
+      "Developer workstation preset for repo work. Powerful commands are still explicit.",
+    policy: {
+      runCommand: {
+        allow: [
+          ...SAFE_READ_ONLY_COMMANDS,
+          "git",
+          "gh",
+          "pnpm",
+          "npm",
+          "node",
+          "rg",
+          "sed",
+          "cat",
+          "ls",
+        ],
+        deny: ["rm"],
+        requireApproval: ["curl", "ssh", "scp", "brew"],
+        unsafeAllowAll: false,
+      },
+      jobs: {
+        allow: [
+          ...AGENT_JOBS,
+          "configure_model",
+          "restart_bee",
+          "collect_bee_logs",
+          "diagnose_incident",
+        ],
+        deny: [],
+        requireApproval: [
+          "install_runtime",
+          "install_model_backend",
+          "update_bee",
+          "connect_to_host_gateway",
+        ],
+      },
+    },
+  },
+};
+
+export function policyProfileIds(): PolicyProfileId[] {
+  return Object.keys(POLICY_PROFILES) as PolicyProfileId[];
+}
+
+export function applyPolicyProfile(id: string): NormalizedBeePolicy {
+  const profile = POLICY_PROFILES[id as PolicyProfileId];
+  if (!profile) throw new Error(`unknown policy profile: ${id}`);
+  return BeePolicySchema.parse(profile.policy);
+}
+
 export type PolicyDecision =
   | { allowed: true }
   | { allowed: false; reason: string; requiresApproval?: boolean; risk?: string };

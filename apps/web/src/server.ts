@@ -92,6 +92,15 @@ export type HiveBeeRecord = {
 };
 
 export type BeeAvailabilityClass = "always_on" | "intermittent" | "ephemeral" | "critical";
+export const PERMISSION_PROFILE_IDS = [
+  "read_only_observer",
+  "finance_safe",
+  "personal_assistant",
+  "browser_worker",
+  "server_worker",
+  "dev_box",
+] as const;
+export type PermissionProfileId = (typeof PERMISSION_PROFILE_IDS)[number];
 export type BeeOperationalState =
   | "healthy"
   | "expected_offline"
@@ -103,6 +112,7 @@ export type BeeOperationalState =
 
 export type BeeDeviceProfile = {
   availabilityClass: BeeAvailabilityClass;
+  permissionProfile: PermissionProfileId;
   offlineGraceSeconds: number;
   expectedWindows: string[];
   criticalServices: string[];
@@ -639,6 +649,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           resourceId: beeId,
           data: {
             availabilityClass: parsed.profile.availabilityClass,
+            permissionProfile: parsed.profile.permissionProfile,
             offlineGraceSeconds: parsed.profile.offlineGraceSeconds,
             activeJobPolicy: parsed.profile.activeJobPolicy,
             autoRepairWhenOnline: parsed.profile.autoRepairWhenOnline,
@@ -1784,6 +1795,9 @@ function defaultDeviceProfile(labels: Record<string, string> = {}, beeName = "")
     labels.availability ??
     inferAvailabilityClass(beeName);
   const availabilityClass = parseAvailabilityClass(rawClass) ?? "always_on";
+  const permissionProfile =
+    parsePermissionProfile(labels.permission_profile ?? labels.permissionProfile) ??
+    inferPermissionProfile(availabilityClass, beeName);
   const offlineGraceSeconds =
     parsePositiveInt(labels.offline_grace_seconds ?? labels.offlineGraceSeconds) ??
     defaultOfflineGraceSeconds(availabilityClass);
@@ -1791,6 +1805,7 @@ function defaultDeviceProfile(labels: Record<string, string> = {}, beeName = "")
 
   return {
     availabilityClass,
+    permissionProfile,
     offlineGraceSeconds,
     expectedWindows: parseCsv(labels.expected_windows ?? labels.expectedWindows),
     criticalServices,
@@ -1815,6 +1830,17 @@ function parseDeviceProfilePatch(
     const parsed = parseAvailabilityClass(input.availabilityClass);
     if (!parsed) return { error: "bad_request", reason: "availabilityClass is invalid" };
     availabilityClass = parsed;
+  }
+
+  let permissionProfile =
+    existing.permissionProfile ?? inferPermissionProfile(availabilityClass, "");
+  if (input.permissionProfile !== undefined) {
+    if (typeof input.permissionProfile !== "string") {
+      return { error: "bad_request", reason: "permissionProfile must be a string" };
+    }
+    const parsed = parsePermissionProfile(input.permissionProfile);
+    if (!parsed) return { error: "bad_request", reason: "permissionProfile is invalid" };
+    permissionProfile = parsed;
   }
 
   let offlineGraceSeconds = existing.offlineGraceSeconds;
@@ -1859,6 +1885,7 @@ function parseDeviceProfilePatch(
 
   const profile = {
     availabilityClass,
+    permissionProfile,
     offlineGraceSeconds,
     expectedWindows: expectedWindows.values,
     criticalServices: criticalServices.values,
@@ -1898,6 +1925,24 @@ function parseProfileStringList(
 
 function getDeviceProfileWarnings(profile: BeeDeviceProfile): string[] {
   const warnings: string[] = [];
+  if (profile.permissionProfile === "dev_box") {
+    warnings.push("Dev box can run repo tools on this machine; use only for trusted workstations.");
+  }
+  if (
+    profile.permissionProfile === "server_worker" &&
+    profile.availabilityClass !== "always_on" &&
+    profile.availabilityClass !== "critical"
+  ) {
+    warnings.push(
+      "Server worker fits always-on or critical Bees better than intermittent devices.",
+    );
+  }
+  if (
+    profile.permissionProfile === "read_only_observer" &&
+    profile.activeJobPolicy === "escalate"
+  ) {
+    warnings.push("Read-only observers can escalate incidents but will not run repair work.");
+  }
   if (
     (profile.availabilityClass === "critical" || profile.availabilityClass === "always_on") &&
     profile.offlineGraceSeconds > 10 * 60
@@ -1938,6 +1983,24 @@ function parseAvailabilityClass(value: string | undefined): BeeAvailabilityClass
     return value;
   }
   return undefined;
+}
+
+function parsePermissionProfile(value: string | undefined): PermissionProfileId | undefined {
+  return PERMISSION_PROFILE_IDS.includes(value as PermissionProfileId)
+    ? (value as PermissionProfileId)
+    : undefined;
+}
+
+function inferPermissionProfile(
+  availabilityClass: BeeAvailabilityClass,
+  beeName: string,
+): PermissionProfileId {
+  const normalizedName = beeName.toLowerCase();
+  if (normalizedName.includes("dev")) return "dev_box";
+  if (normalizedName.includes("browser")) return "browser_worker";
+  if (normalizedName.includes("finance")) return "finance_safe";
+  if (availabilityClass === "critical") return "server_worker";
+  return "personal_assistant";
 }
 
 function inferAvailabilityClass(beeName: string): BeeAvailabilityClass {

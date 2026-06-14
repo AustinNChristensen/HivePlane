@@ -17,7 +17,10 @@ import {
   getDefaultHivePlaneConfigDir,
   getHivePlaneConfigPaths,
   getPolicyPath,
+  POLICY_PROFILES,
+  applyPolicyProfile,
   loadOrCreateBeeIdentity,
+  policyProfileIds,
   readHivePlaneConfig,
   readHiveSession,
   readBeePolicy,
@@ -542,6 +545,34 @@ async function runIdentity(parsed: ArgvParseResult): Promise<void> {
 
 async function runPolicy(parsed: ArgvParseResult): Promise<void> {
   const sub = parsed.positional[0];
+  if (sub === "profiles") {
+    for (const id of policyProfileIds()) {
+      const profile = POLICY_PROFILES[id];
+      console.log(`${profile.id}\t${profile.risk}\t${profile.label} — ${profile.description}`);
+    }
+    return;
+  }
+  if (sub === "profile") {
+    const profileId = parsed.positional[1]?.trim();
+    if (!profileId) {
+      console.error("Usage: bee policy profile <profile-id>");
+      process.exit(2);
+    }
+    let policy: BeePolicy;
+    try {
+      policy = applyPolicyProfile(profileId);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      console.error("Run `bee policy profiles` to list available profiles.");
+      process.exit(2);
+    }
+    const profile = POLICY_PROFILES[profileId as keyof typeof POLICY_PROFILES];
+    writeBeePolicy(policy, parsed.configDir);
+    console.log(`Applied policy profile: ${profile.label} (${profile.risk} risk)`);
+    console.log(`Policy file: ${getPolicyPath(parsed.configDir)}`);
+    console.log("You can still customize with `bee policy allow <command>`.");
+    return;
+  }
   if (sub === "show") {
     const policy = readBeePolicy(parsed.configDir);
     console.log(JSON.stringify(policy, null, 2));
@@ -570,7 +601,7 @@ async function runPolicy(parsed: ArgvParseResult): Promise<void> {
     console.log(`Policy file: ${getPolicyPath(parsed.configDir)}`);
     return;
   }
-  console.error("Usage: bee policy (show|allow <command>)");
+  console.error("Usage: bee policy (show|profiles|profile <profile-id>|allow <command>)");
   process.exit(2);
 }
 
@@ -622,6 +653,8 @@ Usage:
                              Print/tail daemon logs (default Bee stdout)
   bee identity init|show     Generate or print the Bee Ed25519 identity
   bee policy show            Print local command policy JSON + file path
+  bee policy profiles        List common permission profiles
+  bee policy profile <id>    Apply a common permission profile
   bee policy allow <command> Allow a run_command basename on this Bee
   bee --version              Print version
   bee --help                 Print this help

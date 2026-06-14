@@ -267,6 +267,7 @@ describe("Hive server", () => {
     });
     bee.profile = {
       availabilityClass: "intermittent",
+      permissionProfile: "personal_assistant",
       offlineGraceSeconds: 12 * 60 * 60,
       expectedWindows: [],
       criticalServices: [],
@@ -307,6 +308,7 @@ describe("Hive server", () => {
     });
     bee.profile = {
       availabilityClass: "critical",
+      permissionProfile: "server_worker",
       offlineGraceSeconds: 30,
       expectedWindows: [],
       criticalServices: [],
@@ -1003,6 +1005,7 @@ describe("Hive server", () => {
         headers: { authorization: "Bearer secret", "content-type": "application/json" },
         body: JSON.stringify({
           availabilityClass: "critical",
+          permissionProfile: "server_worker",
           offlineGraceSeconds: 60,
           criticalServices: ["openclaw-gateway"],
         }),
@@ -1014,6 +1017,7 @@ describe("Hive server", () => {
         bee: {
           profile: {
             availabilityClass: string;
+            permissionProfile: string;
             offlineGraceSeconds: number;
             criticalServices: string[];
           };
@@ -1021,6 +1025,7 @@ describe("Hive server", () => {
       };
       expect(body.bee.profile).toMatchObject({
         availabilityClass: "critical",
+        permissionProfile: "server_worker",
         offlineGraceSeconds: 60,
         criticalServices: ["openclaw-gateway"],
       });
@@ -1055,6 +1060,36 @@ describe("Hive server", () => {
       expect(body).toMatchObject({
         error: "bad_request",
         reason: "offlineGraceSeconds must be an integer from 30 seconds to 7 days",
+      });
+    });
+  });
+
+  it("rejects invalid Bee permission profiles", async () => {
+    const state = createHiveServerState();
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_bad_permission_profile",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      healthChecks: [],
+    });
+
+    await withServer({ state, adminToken: "secret" }, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/bees/bee_bad_permission_profile/profile`, {
+        method: "PATCH",
+        headers: { authorization: "Bearer secret", "content-type": "application/json" },
+        body: JSON.stringify({
+          permissionProfile: "root_everything",
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { error: string; reason: string };
+      expect(body).toMatchObject({
+        error: "bad_request",
+        reason: "permissionProfile is invalid",
       });
     });
   });

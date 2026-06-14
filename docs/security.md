@@ -72,6 +72,19 @@ Sensitive actions should pause for approval by default:
 - destructive shell commands;
 - exposing secrets to tools.
 
+## Bee Permission Profiles
+
+Bee operators can apply common local policy presets with `bee policy profile <id>` and still edit `~/.hiveplane/policy.json` afterward. The dashboard also stores the selected profile on the Bee profile so operators can see the intended risk level without reading raw policy JSON.
+
+| Profile              | Risk   | Intended use                                         |
+| -------------------- | ------ | ---------------------------------------------------- |
+| `read_only_observer` | Low    | Health, inventory, and safe read-only status checks. |
+| `finance_safe`       | Low    | Finance-connected machines with writes gated.        |
+| `personal_assistant` | Medium | Default user machine assistant with approvals.       |
+| `browser_worker`     | Medium | Browser/app workflows with external writes gated.    |
+| `server_worker`      | Medium | Always-on infrastructure and recovery jobs.          |
+| `dev_box`            | High   | Trusted developer workstations running repo tools.   |
+
 ## Audit Logs
 
 HivePlane should record append-only audit events for:
