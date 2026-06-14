@@ -14,9 +14,9 @@ I do not see a clean one-to-one HivePlane clone in market. The market is crowded
 
 HivePlane's strongest differentiated wedge is:
 
-> A self-healing RMM/control plane for BYO AI-agent machines.
+> The setup and operations layer for multi-device AI systems: connect agents, machines, users, skills, tools, and models into one governed, self-healing mesh.
 
-That is different from "build an agent," "trace an agent," or "rent a cloud sandbox." The product value is managing messy real machines that run agents, local models, gateways, credentials, jobs, and human approvals.
+That is different from "build an agent," "trace an agent," or "rent a cloud sandbox." The product value is turning scattered AI tools into a durable system: permissions, capability sharing, machine/runtime health, safe recovery, and auditability.
 
 ## Positioning Map
 
@@ -231,11 +231,15 @@ HivePlane should not position as a generic "AI agent platform." That lane is bru
 
 Better positioning:
 
-> HivePlane is the open-source control plane for the machines that run your AI agents.
+> HivePlane is the open-source control plane for multi-device AI systems.
 
 Or more buyer-specific:
 
-> Keep self-hosted AI agents online, governed, and self-healing across your own Macs, servers, and local models.
+> Connect your agents, machines, users, skills, tools, and local models into one governed, self-healing AI mesh.
+
+The first-step promise:
+
+> Before a company, startup, or home lab adds more agents, it installs HivePlane to connect the pieces, assign permissions, and make the system recoverable.
 
 The wedge should stay operational:
 
@@ -243,6 +247,8 @@ The wedge should stay operational:
 - Is the gateway reachable?
 - Are local models installed and responsive?
 - Did the job actually run?
+- Which user, machine, agent, or skill is allowed to use this capability?
+- Can one AI system safely call another AI system without broad ambient access?
 - If something broke, can we diagnose, safely repair, verify, and alert?
 - Can a human approve risky repairs from one dashboard?
 
@@ -253,22 +259,25 @@ That is much more unique than building another agent framework.
 1. Add a first-class "Agent Runtime" abstraction.
    - Today we have Bee health and job types. Make OpenClaw/Hermes/Codex/etc. explicit runtime records with health, version, config, queue status, and last successful task.
 
-2. Add lightweight trace ingestion.
+2. Add a first-class "Capability/Skill Registry."
+   - Machines, agents, users, and skills should have explicit capabilities with owners, risk levels, required secrets, health state, and permission policies.
+
+3. Add lightweight trace ingestion.
    - Do not rebuild LangSmith yet. Add a small generic run/event API so agents can report task start/stop/tool/error/cost. This gives HivePlane source-of-truth proof that agents are actually doing work.
 
-3. Integrate Tailscale and/or Fleet instead of replacing them.
+4. Integrate Tailscale and/or Fleet instead of replacing them.
    - Tailscale for reachability/access posture.
    - Fleet for OS/software inventory later.
    - HivePlane owns AI runtime health on top.
 
-4. Package the Mac install path.
+5. Package the Mac install path.
    - Homebrew install, launchd services, signed/notarized package eventually.
    - The first open-source users will judge trust and quality by install reliability.
 
-5. Build an incident timeline page.
+6. Build an incident timeline page.
    - This is the core wow moment: detection -> diagnosis -> repair -> verification -> alert, with all logs attached.
 
-6. Add GitHub issue/PR delegation only after runtime health is crisp.
+7. Add GitHub issue/PR delegation only after runtime health is crisp.
    - It is tempting, but that moves us into Copilot/Codex/Devin territory. Better to be the ops layer that can supervise those workers.
 
 ## Verdict
@@ -277,4 +286,4 @@ Promising, but only if we keep the wedge narrow.
 
 The market does not need another generic agent builder. It does need operational tooling for the weird reality of running agents on local/private machines with gateways, models, credentials, long-running jobs, and flaky integrations.
 
-HivePlane's differentiated story is credible if we make self-healing + BYO agent-machine management excellent before chasing broad orchestration.
+HivePlane's differentiated story is credible if we make the connect/govern/manage/recover loop excellent before chasing broad orchestration.
