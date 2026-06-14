@@ -6,6 +6,7 @@ import type { BootstrapTokenRecord, SessionRecord } from "./auth.js";
 import { createJobsState, type JobRecord } from "./jobs.js";
 import {
   createHiveServerState,
+  type AuditLogEntry,
   type HiveBeeRecord,
   type HiveServerState,
   type HiveTaskRecord,
@@ -167,6 +168,7 @@ type PersistedSnapshot = {
   jobs: Array<[string, PersistedJob]>;
   incidents?: Array<[string, IncidentRecord]>;
   tasks?: Array<[string, HiveTaskRecord]>;
+  auditLog?: Array<[string, AuditLogEntry]>;
 };
 
 type PersistedBootstrapToken = Omit<BootstrapTokenRecord, "expiresAt" | "consumedAt"> & {
@@ -195,6 +197,7 @@ function serialize(state: HiveServerState): PersistedSnapshot {
     jobs: [...state.jobsState.jobs.entries()].map(([k, v]) => [k, serializeJob(v)]),
     incidents: [...state.incidents.entries()],
     tasks: [...state.tasks.entries()],
+    auditLog: [...state.auditLog.entries()],
   };
 }
 
@@ -230,6 +233,7 @@ function rehydrate(snapshot: PersistedSnapshot): HiveServerState {
     });
   }
   for (const [k, v] of snapshot.tasks ?? []) state.tasks.set(k, v);
+  for (const [k, v] of snapshot.auditLog ?? []) state.auditLog.set(k, v);
   return state;
 }
 

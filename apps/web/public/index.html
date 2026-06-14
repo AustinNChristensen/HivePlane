@@ -1441,6 +1441,7 @@
         incidents: [],
         jobs: [],
         tasks: [],
+        auditLog: [],
         selectedTask: null,
         selectedTaskJob: null,
         selectedJob: null,
@@ -3615,13 +3616,19 @@
           return;
         }
         try {
-          const [beesRes, jobsRes, tasksRes, incidentsRes] = await Promise.all([
+          const [beesRes, jobsRes, tasksRes, incidentsRes, auditRes] = await Promise.all([
             fetch("/api/bees"),
             fetch("/api/jobs", { headers: authHeaders() }),
             fetch("/api/tasks", { headers: authHeaders() }),
             fetch("/api/incidents", { headers: authHeaders() }),
+            fetch("/api/audit-log", { headers: authHeaders() }),
           ]);
-          if (jobsRes.status === 401 || tasksRes.status === 401 || incidentsRes.status === 401) {
+          if (
+            jobsRes.status === 401 ||
+            tasksRes.status === 401 ||
+            incidentsRes.status === 401 ||
+            auditRes.status === 401
+          ) {
             clearRejectedAdminToken();
             els.activityBody.innerHTML = `<div class="empty">Admin token rejected. Paste the current token and save again.</div>`;
             els.activityMeta.textContent = "—";
@@ -3631,16 +3638,19 @@
           if (!jobsRes.ok) throw new Error(`jobs HTTP ${jobsRes.status}`);
           if (!tasksRes.ok) throw new Error(`tasks HTTP ${tasksRes.status}`);
           if (!incidentsRes.ok) throw new Error(`incidents HTTP ${incidentsRes.status}`);
-          const [{ bees }, { jobs }, { tasks }, { incidents }] = await Promise.all([
+          if (!auditRes.ok) throw new Error(`audit HTTP ${auditRes.status}`);
+          const [{ bees }, { jobs }, { tasks }, { incidents }, { entries }] = await Promise.all([
             beesRes.json(),
             jobsRes.json(),
             tasksRes.json(),
             incidentsRes.json(),
+            auditRes.json(),
           ]);
           state.bees = bees ?? [];
           state.jobs = jobs ?? [];
           state.tasks = tasks ?? [];
           state.incidents = incidents ?? [];
+          state.auditLog = entries ?? [];
           renderActivity(buildActivityEntries());
         } catch (err) {
           els.activityBody.innerHTML = `<div class="empty">Failed to load activity: ${escapeHtml(err.message)}</div>`;
@@ -3650,6 +3660,20 @@
 
       function buildActivityEntries() {
         const entries = [];
+        state.auditLog.forEach((audit) => {
+          entries.push({
+            id: audit.id,
+            time: audit.createdAt,
+            kind: "audit",
+            status: audit.action,
+            actor: audit.actorId || audit.actorType || "user",
+            target: audit.resourceId || audit.resourceType || "hive",
+            title: audit.action,
+            detail: summarizeActivityData(audit.data),
+            jobId: audit.resourceType === "job" ? audit.resourceId : undefined,
+            important: /(?:delete|deny|cancel|approve|token|rotate)/.test(audit.action),
+          });
+        });
         state.incidents.forEach((incident) => {
           entries.push({
             id: `incident-${incident.id}`,

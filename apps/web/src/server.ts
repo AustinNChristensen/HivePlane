@@ -16,6 +16,7 @@ import {
   type BeeRegistrationRequest,
   type BeePermissions,
   type BootstrapTokenCreateRequest,
+  type JsonValue,
   type JobType,
   type JobStatus,
   type RescueHeartbeat,
@@ -191,6 +192,19 @@ export type HiveServerState = {
   incidents: Map<string, IncidentRecord>;
   /** Hive-level tasks assigned to Bees as sub-agent work. */
   tasks: Map<string, HiveTaskRecord>;
+  /** Operator/security audit entries keyed by audit id. */
+  auditLog: Map<string, AuditLogEntry>;
+};
+
+export type AuditLogEntry = {
+  id: string;
+  actorType: "user" | "bee" | "hive" | "system";
+  actorId?: string;
+  action: string;
+  resourceType?: string;
+  resourceId?: string;
+  data: Record<string, JsonValue>;
+  createdAt: string;
 };
 
 type DeviceProfilePatchResult =
@@ -278,6 +292,7 @@ export function createHiveServerState(): HiveServerState {
     jobsState: createJobsState(),
     incidents: new Map(),
     tasks: new Map(),
+    auditLog: new Map(),
   };
 }
 
@@ -582,6 +597,12 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         if (!deleteBee(state, beeId)) {
           return sendJson(response, 404, { error: "not_found", reason: "bee not registered" });
         }
+        recordAudit(state, request, now(), {
+          action: "bee.delete",
+          resourceType: "bee",
+          resourceId: beeId,
+          data: {},
+        });
         markDirty();
         return sendJson(response, 200, { deleted: true, beeId });
       }
@@ -600,6 +621,18 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           return sendJson(response, 400, parsed);
         }
         bee.profile = parsed.profile;
+        recordAudit(state, request, now(), {
+          action: "bee.profile.update",
+          resourceType: "bee",
+          resourceId: beeId,
+          data: {
+            availabilityClass: parsed.profile.availabilityClass,
+            offlineGraceSeconds: parsed.profile.offlineGraceSeconds,
+            activeJobPolicy: parsed.profile.activeJobPolicy,
+            autoRepairWhenOnline: parsed.profile.autoRepairWhenOnline,
+            warnings: parsed.warnings,
+          },
+        });
         markDirty();
         return sendJson(response, 200, {
           bee: serializeBee(bee, now()),
@@ -620,6 +653,15 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           });
         }
         const created = createBootstrapToken(state, parsed.data, now());
+        recordAudit(state, request, now(), {
+          action: "bootstrap_token.create",
+          resourceType: "bootstrap_token",
+          resourceId: created.tokenId,
+          data: {
+            beeName: parsed.data.beeName ?? null,
+            expiresAt: created.expiresAt,
+          },
+        });
         markDirty();
         return sendJson(response, 200, created);
       }
@@ -640,6 +682,13 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
       if (request.method === "POST" && url.pathname === "/api/pairing-key/rotate") {
         if (!checkAdmin(request, response, adminToken)) return;
         const record = ensureActivePairingKey(state, now(), true);
+        recordAudit(state, request, now(), {
+          action: "pairing_key.rotate",
+          resourceType: "pairing_key",
+          resourceId: record.code,
+          data: { expiresAt: record.expiresAt.toISOString() },
+        });
+        markDirty();
         return sendJson(response, 200, {
           type: "pairing_key.rotated",
           ...serializePairingKey(record),
@@ -744,6 +793,12 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         }
         const job = createJob(state.jobsState, beeId, parsed.data, now());
         if (jobNeedsApproval(job)) requireApproval(job);
+        recordAudit(state, request, now(), {
+          action: "job.create",
+          resourceType: "job",
+          resourceId: job.id,
+          data: { beeId, type: job.type, status: job.status },
+        });
         markDirty();
         return sendJson(response, 200, { job: serializeJob(job) });
       }
@@ -754,6 +809,12 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         const jobId = decodeURIComponent(approveJobMatch[1] ?? "");
         const job = approveJob(state.jobsState, jobId);
         if (!job) return sendJson(response, 404, { error: "not_found" });
+        recordAudit(state, request, now(), {
+          action: "job.approve",
+          resourceType: "job",
+          resourceId: job.id,
+          data: { beeId: job.beeId, type: job.type },
+        });
         markDirty();
         return sendJson(response, 200, { job: serializeJob(job) });
       }
@@ -764,6 +825,12 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         const jobId = decodeURIComponent(denyJobMatch[1] ?? "");
         const job = denyJob(state.jobsState, jobId, now());
         if (!job) return sendJson(response, 404, { error: "not_found" });
+        recordAudit(state, request, now(), {
+          action: "job.deny",
+          resourceType: "job",
+          resourceId: job.id,
+          data: { beeId: job.beeId, type: job.type },
+        });
         markDirty();
         return sendJson(response, 200, { job: serializeJob(job) });
       }
@@ -783,6 +850,14 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         const current = now();
         const job = cancelJob(state.jobsState, jobId, current);
         if (job) updateHiveTaskFromJob(state, job, current);
+        if (job) {
+          recordAudit(state, request, current, {
+            action: "job.cancel",
+            resourceType: "job",
+            resourceId: job.id,
+            data: { beeId: job.beeId, type: job.type },
+          });
+        }
         markDirty();
         return sendJson(response, 200, { job: job ? serializeJob(job) : null });
       }
@@ -825,6 +900,12 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           sourceJobId: source.id,
         });
         if (jobNeedsApproval(job)) requireApproval(job);
+        recordAudit(state, request, current, {
+          action: "job.retry",
+          resourceType: "job",
+          resourceId: source.id,
+          data: { beeId: source.beeId, type: source.type, newJobId: job.id },
+        });
         markDirty();
         return sendJson(response, 200, {
           job: serializeJob(job),
@@ -917,6 +998,11 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         return sendJson(response, 200, { tasks: serializeTasks(state) });
       }
 
+      if (request.method === "GET" && url.pathname === "/api/audit-log") {
+        if (!checkAdmin(request, response, adminToken)) return;
+        return sendJson(response, 200, { entries: serializeAuditLog(state) });
+      }
+
       const getTaskMatch = /^\/api\/tasks\/([^/]+)$/.exec(url.pathname);
       if (request.method === "GET" && getTaskMatch) {
         if (!checkAdmin(request, response, adminToken)) return;
@@ -949,6 +1035,12 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         delete task.jobId;
         delete task.lastError;
         scheduleHiveTask(state, task, current);
+        recordAudit(state, request, current, {
+          action: "task.retry",
+          resourceType: "task",
+          resourceId: task.id,
+          data: { title: task.title },
+        });
         markDirty();
         return sendJson(response, 200, { task: serializeTask(task) });
       }
@@ -973,6 +1065,12 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         task.status = "cancelled";
         task.updatedAt = current.toISOString();
         task.lastError = "Cancelled by Hive admin.";
+        recordAudit(state, request, current, {
+          action: "task.cancel",
+          resourceType: "task",
+          resourceId: task.id,
+          data: { title: task.title, jobId: task.jobId ?? null },
+        });
         markDirty();
         return sendJson(response, 200, { task: serializeTask(task) });
       }
@@ -990,6 +1088,16 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         const current = now();
         const task = createHiveTask(state, parsed.data, current);
         scheduleHiveTask(state, task, current);
+        recordAudit(state, request, current, {
+          action: "task.create",
+          resourceType: "task",
+          resourceId: task.id,
+          data: {
+            title: task.title,
+            requestedBy: task.requestedBy ?? null,
+            preferredBeeId: task.preferredBeeId ?? null,
+          },
+        });
         markDirty();
         return sendJson(response, 200, { task: serializeTask(task) });
       }
@@ -1010,6 +1118,11 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         }
         const current = now();
         await deliverIncidentNotifications(state, incidentNotifier, current, { force: true });
+        recordAudit(state, request, current, {
+          action: "incident_notifications.deliver",
+          resourceType: "incident",
+          data: { force: true },
+        });
         markDirty();
         return sendJson(response, 200, { incidents: serializeIncidents(state, current) });
       }
@@ -1463,6 +1576,44 @@ function serializeTasks(state: HiveServerState): HiveTaskRecord[] {
 
 function serializeTask(task: HiveTaskRecord): HiveTaskRecord {
   return { ...task, requirements: { ...task.requirements } };
+}
+
+function serializeAuditLog(state: HiveServerState): AuditLogEntry[] {
+  return [...state.auditLog.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function recordAudit(
+  state: HiveServerState,
+  request: IncomingMessage,
+  now: Date,
+  entry: Omit<AuditLogEntry, "id" | "actorType" | "actorId" | "createdAt">,
+): AuditLogEntry {
+  const actorId = actorIdFromRequest(request);
+  const audit: AuditLogEntry = {
+    id: `audit_${randomBytes(8).toString("hex")}`,
+    actorType: "user",
+    ...(actorId ? { actorId } : {}),
+    action: entry.action,
+    ...(entry.resourceType ? { resourceType: entry.resourceType } : {}),
+    ...(entry.resourceId ? { resourceId: entry.resourceId } : {}),
+    data: entry.data,
+    createdAt: now.toISOString(),
+  };
+  state.auditLog.set(audit.id, audit);
+  if (state.auditLog.size > 500) {
+    const oldest = [...state.auditLog.values()].sort((a, b) =>
+      a.createdAt.localeCompare(b.createdAt),
+    )[0];
+    if (oldest) state.auditLog.delete(oldest.id);
+  }
+  return audit;
+}
+
+function actorIdFromRequest(request: IncomingMessage): string {
+  const raw = request.headers["x-hiveplane-actor"];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value) return "admin-token";
+  return value.trim().slice(0, 120) || "admin-token";
 }
 
 function generateTaskId(): string {

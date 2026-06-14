@@ -104,6 +104,17 @@ function buildPopulatedState(): HiveServerState {
     updatedAt: "2026-05-09T20:10:00.000Z",
   });
 
+  state.auditLog.set("audit_aaaa", {
+    id: "audit_aaaa",
+    actorType: "user",
+    actorId: "operator@example.com",
+    action: "bootstrap_token.create",
+    resourceType: "bootstrap_token",
+    resourceId: "bt_aaaa",
+    data: { beeName: "test-bee" },
+    createdAt: "2026-05-09T20:11:00.000Z",
+  });
+
   return state;
 }
 
@@ -185,6 +196,14 @@ describe("attachPersistence — round-trip", () => {
       status: "assigned",
       assignedBeeId: "bee_persist",
       jobId: "job_aaaa",
+    });
+
+    // Audit log
+    expect(reloaded.auditLog.get("audit_aaaa")).toMatchObject({
+      actorId: "operator@example.com",
+      action: "bootstrap_token.create",
+      resourceType: "bootstrap_token",
+      resourceId: "bt_aaaa",
     });
   });
 

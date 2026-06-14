@@ -23,6 +23,39 @@ async function withServer<T>(
   }
 }
 
+describe("audit log", () => {
+  it("records admin mutations with actor and resource context", async () => {
+    const state = createHiveServerState();
+
+    await withServer({ state, adminToken: "secret" }, async (baseUrl) => {
+      const created = await fetch(`${baseUrl}/api/bootstrap-tokens`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer secret",
+          "content-type": "application/json",
+          "x-hiveplane-actor": "austin@example.com",
+        },
+        body: JSON.stringify({ beeName: "new-laptop" }),
+      });
+      expect(created.status).toBe(200);
+      const token = (await created.json()) as { tokenId: string };
+
+      const auditRes = await fetch(`${baseUrl}/api/audit-log`, {
+        headers: { authorization: "Bearer secret" },
+      });
+      expect(auditRes.status).toBe(200);
+      const { entries } = (await auditRes.json()) as { entries: Array<Record<string, unknown>> };
+      expect(entries[0]).toMatchObject({
+        actorType: "user",
+        actorId: "austin@example.com",
+        action: "bootstrap_token.create",
+        resourceType: "bootstrap_token",
+        resourceId: token.tokenId,
+      });
+    });
+  });
+});
+
 describe("Hive heartbeat state", () => {
   it("records first and latest Bee heartbeats", () => {
     const state = createHiveServerState();
