@@ -16,8 +16,8 @@ Keep iterating until every item below is either shipped and verified on `main`, 
 
 2. **Permission enforcement** — issue #32, paired with permissions UI #33
    - Goal: enforce scoped access around users, Bees, jobs/tasks, approvals, recovery actions, and audit visibility.
-   - Current state: schema and design docs exist, but the live server still needs real checks and the dashboard needs management UI.
    - Acceptance signal: a user without `run` cannot create work for a System, a Bee without access is not routed that work, and a user without `approve` cannot approve high-risk work.
+   - Status: core P0 enforcement shipped and dogfooded on 2026-06-14. Task creation/routing, job approvals, job/task control actions, automation controls, audit visibility, and incident visibility now use System-scoped permissions. Remaining polish overlaps with #72 real sign-in/session UX and can be tracked separately.
 
 3. **Stale P0 issue cleanup** — issues #11 and #16 first
    - Goal: close or retitle issues that no longer describe reality after the recent OpenClaw task routing, control-plane API, incident, audit, automation, connector, and artifact work.
