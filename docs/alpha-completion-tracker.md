@@ -32,6 +32,7 @@ Keep iterating until every item below is either shipped and verified on `main`, 
 5. **OpenClaw sub-agent management** — issue #36
    - Goal: support adding/listing OpenClaw sub-agents if the pitch is managing agent fleets, not just generic OpenClaw task execution.
    - Acceptance signal: an operator can define or discover OpenClaw sub-agents and route work to them through HivePlane.
+   - Status: first implementation shipped on 2026-06-14 with Hive sub-agent definitions, Sub-agents dashboard tab, Bee-reported sub-agent capabilities, daemon list/configure/delete/smoke adapter jobs, and task routing by requested sub-agent. Remaining: live dogfood of configure approval, Bee capability heartbeat after reconcile, smoke-test UI action, and any deeper native OpenClaw config integration once OpenClaw exposes a richer API.
 
 6. **CI workflow enablement** — issue #21
    - Goal: add GitHub Actions once repo workflow permissions allow it.
@@ -123,4 +124,21 @@ Live dogfood notes:
 - Chris Mac mini Bee reported Ollama installed/running with version `0.30.7`, endpoint `http://127.0.0.1:11434`, and model `gemma4:12b`;
 - `ollama_status`, `ollama_list_models`, and `ollama_smoke_test` jobs succeeded against the live Bee;
 - follow-up daemon cleanup sanitizes Ollama progress escape sequences before storing stdout/stderr or event artifacts.
+
+### 2026-06-14 — OpenClaw Sub-agent Management
+
+Shipped the first #36 implementation:
+
+- protocol now includes Bee-reported `subAgents` plus OpenClaw sub-agent adapter job types;
+- Bee daemon persists managed OpenClaw sub-agent definitions in a HivePlane-scoped `openclaw-sub-agents.json` registry;
+- daemon adapter jobs can list, configure, delete, and smoke-test managed OpenClaw sub-agents;
+- Hive stores desired sub-agent definitions, exposes `/api/sub-agents`, and queues reconcile jobs to eligible Bees;
+- task creation accepts `requestedSubAgentId`, route preview accounts for reported sub-agents, and scheduler only assigns that task to a Bee reporting the requested sub-agent;
+- dashboard now has a Sub-agents tab for defining/reconciling OpenClaw sub-agents, and the task form can target one.
+
+Still left in this area:
+
+- dogfood reconcile + approval against the live Chris Mac mini Bee and confirm the next heartbeat reports the configured sub-agent;
+- add a dashboard smoke action for configured sub-agents if it feels necessary after dogfood;
+- replace the HivePlane-scoped registry with native OpenClaw config/list operations if/when OpenClaw exposes them.
 - add richer model metadata beyond names and endpoint URL.

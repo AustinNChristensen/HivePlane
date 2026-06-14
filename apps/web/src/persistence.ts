@@ -12,6 +12,7 @@ import {
   type HiveAutomationRecord,
   type HiveOperatorRecord,
   type HiveServerState,
+  type HiveSubAgentDefinitionRecord,
   type HiveSystemRecord,
   type HiveTaskRecord,
   type IncidentRecord,
@@ -179,6 +180,7 @@ type PersistedSnapshot = {
   systems?: Array<[string, HiveSystemRecord]>;
   userSystemPermissions?: Array<[string, UserSystemPermissionRecord]>;
   beeSystemAccess?: Array<[string, BeeSystemAccessRecord]>;
+  subAgentDefinitions?: Array<[string, HiveSubAgentDefinitionRecord]>;
 };
 
 type PersistedBootstrapToken = Omit<BootstrapTokenRecord, "expiresAt" | "consumedAt"> & {
@@ -213,6 +215,7 @@ function serialize(state: HiveServerState): PersistedSnapshot {
     systems: [...state.systems.entries()],
     userSystemPermissions: [...state.userSystemPermissions.entries()],
     beeSystemAccess: [...state.beeSystemAccess.entries()],
+    subAgentDefinitions: [...state.subAgentDefinitions.entries()],
   };
 }
 
@@ -282,6 +285,17 @@ function rehydrate(snapshot: PersistedSnapshot): HiveServerState {
     state.userSystemPermissions.set(k, v);
   }
   for (const [k, v] of snapshot.beeSystemAccess ?? []) state.beeSystemAccess.set(k, v);
+  for (const [k, v] of snapshot.subAgentDefinitions ?? []) {
+    state.subAgentDefinitions.set(k, {
+      ...v,
+      systemId: v.systemId ?? "public",
+      tools: v.tools ?? [],
+      skills: v.skills ?? [],
+      workingDirectories: v.workingDirectories ?? [],
+      targetBeeIds: v.targetBeeIds ?? [],
+      enabled: v.enabled ?? true,
+    });
+  }
   return state;
 }
 

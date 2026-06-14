@@ -4,10 +4,12 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import {
   AgentSessionCapabilitySchema,
+  SubAgentCapabilitySchema,
   type AgentSessionCapability,
   type BeeCapabilities,
   type BeeHardware,
   type JsonValue,
+  type SubAgentCapability,
 } from "@hiveplane/protocol";
 import { getDefaultHivePlaneConfigDir } from "./identity.js";
 import type { BeeHardwareSnapshot } from "./index.js";
@@ -33,6 +35,7 @@ export async function collectBeeCapabilities(
     models: [],
     localModels: [],
     agentSessions: readAgentSessionRegistry(options.configDir),
+    subAgents: readOpenClawSubAgentRegistry(options.configDir),
     connectors: collectConnectorCapabilities(),
     tools: [],
     networking: [],
@@ -149,6 +152,12 @@ export function getAgentSessionRegistryPath(configDir = getDefaultHivePlaneConfi
   return join(configDir, "agent-sessions.json");
 }
 
+export function getOpenClawSubAgentRegistryPath(
+  configDir = getDefaultHivePlaneConfigDir(),
+): string {
+  return join(configDir, "openclaw-sub-agents.json");
+}
+
 export function readAgentSessionRegistry(configDir?: string): AgentSessionCapability[] {
   const path = getAgentSessionRegistryPath(configDir);
   try {
@@ -166,6 +175,23 @@ export function readAgentSessionRegistry(configDir?: string): AgentSessionCapabi
   }
 }
 
+export function readOpenClawSubAgentRegistry(configDir?: string): SubAgentCapability[] {
+  const path = getOpenClawSubAgentRegistryPath(configDir);
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const subAgents = Array.isArray(parsed) ? parsed : [];
+    return subAgents
+      .map((subAgent) => SubAgentCapabilitySchema.safeParse(subAgent))
+      .filter((result) => result.success)
+      .map((result) => result.data)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 100);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    return [];
+  }
+}
+
 export function upsertAgentSessionRegistry(
   session: AgentSessionCapability,
   configDir?: string,
@@ -176,6 +202,30 @@ export function upsertAgentSessionRegistry(
   sessions.unshift(normalized);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileSync(path, `${JSON.stringify(sessions.slice(0, 20), null, 2)}\n`, { mode: 0o600 });
+}
+
+export function upsertOpenClawSubAgentRegistry(
+  subAgent: SubAgentCapability,
+  configDir?: string,
+): void {
+  const normalized = SubAgentCapabilitySchema.parse(subAgent);
+  const path = getOpenClawSubAgentRegistryPath(configDir);
+  const subAgents = readOpenClawSubAgentRegistry(configDir).filter(
+    (item) => item.id !== normalized.id,
+  );
+  subAgents.unshift(normalized);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, `${JSON.stringify(subAgents.slice(0, 100), null, 2)}\n`, { mode: 0o600 });
+}
+
+export function deleteOpenClawSubAgentRegistry(id: string, configDir?: string): boolean {
+  const path = getOpenClawSubAgentRegistryPath(configDir);
+  const subAgents = readOpenClawSubAgentRegistry(configDir);
+  const next = subAgents.filter((item) => item.id !== id);
+  if (next.length === subAgents.length) return false;
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  return true;
 }
 
 export async function getOpenClawStatus(): Promise<RuntimeStatus> {

@@ -123,6 +123,22 @@ function buildPopulatedState(): HiveServerState {
     createdAt: "2026-05-09T20:11:00.000Z",
   });
 
+  state.subAgentDefinitions.set("subagent_aaaa", {
+    id: "subagent_aaaa",
+    name: "Repo reviewer",
+    runtime: "openclaw",
+    systemId: "public",
+    modelProvider: "ollama",
+    model: "gemma4:12b",
+    tools: ["github", "filesystem"],
+    skills: ["code-review"],
+    workingDirectories: ["/Users/chris/.hiveplane/install"],
+    targetBeeIds: ["bee_persist"],
+    enabled: true,
+    createdAt: "2026-05-09T20:12:00.000Z",
+    updatedAt: "2026-05-09T20:12:00.000Z",
+  });
+
   return state;
 }
 
@@ -212,6 +228,14 @@ describe("attachPersistence — round-trip", () => {
       action: "bootstrap_token.create",
       resourceType: "bootstrap_token",
       resourceId: "bt_aaaa",
+    });
+
+    expect(reloaded.subAgentDefinitions.get("subagent_aaaa")).toMatchObject({
+      name: "Repo reviewer",
+      runtime: "openclaw",
+      systemId: "public",
+      model: "gemma4:12b",
+      targetBeeIds: ["bee_persist"],
     });
   });
 

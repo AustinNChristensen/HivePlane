@@ -1507,6 +1507,9 @@
           <button class="tab" data-tab="tasks">
             <span><span class="nav-icon">+</span> Tasks</span>
           </button>
+          <button class="tab" data-tab="subagents">
+            <span><span class="nav-icon">S</span> Sub-agents</span>
+          </button>
           <button class="tab" data-tab="jobs">
             <span><span class="nav-icon">=</span> Jobs</span>
           </button>
@@ -1625,6 +1628,12 @@
                   </select>
                 </div>
                 <div class="form-field">
+                  <label for="taskSubAgent">Sub-agent</label>
+                  <select id="taskSubAgent">
+                    <option value="">Any matching sub-agent</option>
+                  </select>
+                </div>
+                <div class="form-field">
                   <label for="taskTargetSystem">System</label>
                   <select id="taskTargetSystem">
                     <option value="public">Public Demo</option>
@@ -1688,6 +1697,49 @@
                 <h3>Automations</h3>
                 <div id="automationsBody"></div>
               </div>
+            </div>
+          </section>
+
+          <section data-view="subagents" hidden>
+            <div class="panel">
+              <div class="panel-header">
+                <span>OpenClaw Sub-agents</span>
+                <span class="meta" id="subAgentsMeta">—</span>
+              </div>
+              <div class="form-row">
+                <div class="form-field">
+                  <label for="subAgentName">Name</label>
+                  <input id="subAgentName" placeholder="Repo reviewer" />
+                </div>
+                <div class="form-field">
+                  <label for="subAgentSystem">System</label>
+                  <select id="subAgentSystem"></select>
+                </div>
+                <div class="form-field">
+                  <label for="subAgentBee">Target Bee</label>
+                  <select id="subAgentBee">
+                    <option value="">Any healthy OpenClaw Bee</option>
+                  </select>
+                </div>
+                <div class="form-field">
+                  <label for="subAgentModelProvider">Model Provider</label>
+                  <input id="subAgentModelProvider" placeholder="ollama" />
+                </div>
+                <div class="form-field">
+                  <label for="subAgentModel">Model</label>
+                  <input id="subAgentModel" placeholder="gemma4:12b" />
+                </div>
+                <div class="form-field">
+                  <label for="subAgentTools">Tools</label>
+                  <input id="subAgentTools" placeholder="github, filesystem" />
+                </div>
+                <div class="form-field">
+                  <label for="subAgentWorkingDirs">Working dirs</label>
+                  <input id="subAgentWorkingDirs" placeholder="/repo/path" />
+                </div>
+                <button class="action" id="createSubAgent">Create Sub-agent</button>
+              </div>
+              <div id="subAgentsBody"></div>
             </div>
           </section>
 
@@ -1838,6 +1890,7 @@
         jobs: [],
         tasks: [],
         automations: [],
+        subAgents: [],
         auditLog: [],
         systems: [],
         operators: [],
@@ -1893,8 +1946,19 @@
         tasksMeta: document.getElementById("tasksMeta"),
         tasksBody: document.getElementById("tasksBody"),
         automationsBody: document.getElementById("automationsBody"),
+        subAgentsMeta: document.getElementById("subAgentsMeta"),
+        subAgentsBody: document.getElementById("subAgentsBody"),
+        subAgentName: document.getElementById("subAgentName"),
+        subAgentSystem: document.getElementById("subAgentSystem"),
+        subAgentBee: document.getElementById("subAgentBee"),
+        subAgentModelProvider: document.getElementById("subAgentModelProvider"),
+        subAgentModel: document.getElementById("subAgentModel"),
+        subAgentTools: document.getElementById("subAgentTools"),
+        subAgentWorkingDirs: document.getElementById("subAgentWorkingDirs"),
+        createSubAgent: document.getElementById("createSubAgent"),
         taskTitle: document.getElementById("taskTitle"),
         taskPreferredBee: document.getElementById("taskPreferredBee"),
+        taskSubAgent: document.getElementById("taskSubAgent"),
         taskTargetSystem: document.getElementById("taskTargetSystem"),
         taskBeeHint: document.getElementById("taskBeeHint"),
         taskRoutePreview: document.getElementById("taskRoutePreview"),
@@ -1956,6 +2020,7 @@
           overview: "production",
           bees: "bees",
           tasks: "dispatch",
+          subagents: "sub-agents",
           jobs: "jobs",
           activity: "activity",
           permissions: "permissions",
@@ -3506,8 +3571,10 @@
 
       // --- tasks view ----------------------------------------------------------
       els.taskPreferredBee.addEventListener("change", applySelectedBeeRequirements);
+      els.taskTargetSystem.addEventListener("change", renderTaskSubAgentOptions);
       [
         els.taskTargetSystem,
+        els.taskSubAgent,
         els.taskRuntime,
         els.taskTools,
         els.taskModelBackends,
@@ -3544,6 +3611,7 @@
         const title = els.taskTitle.value.trim();
         const instructions = els.taskInstructions.value.trim();
         const runtime = els.taskRuntime.value.trim();
+        const requestedSubAgentId = els.taskSubAgent.value.trim();
         const targetSystemId = els.taskTargetSystem.value.trim() || "public";
         const preferredBeeId = els.taskPreferredBee.value.trim();
         const sessionId = els.taskSessionId.value.trim();
@@ -3565,6 +3633,7 @@
             targetSystemId,
             requestedBy: "dashboard",
             ...(preferredBeeId ? { preferredBeeId } : {}),
+            ...(requestedSubAgentId ? { requestedSubAgentId } : {}),
             requirements: {
               runtimes: runtime ? [runtime] : [],
               tools,
@@ -3602,6 +3671,7 @@
           if (!res.ok) throw new Error(body.reason || body.message || `HTTP ${res.status}`);
           els.taskTitle.value = "";
           els.taskPreferredBee.value = "";
+          els.taskSubAgent.value = "";
           els.taskTargetSystem.value = "public";
           els.taskRuntime.value = "";
           els.taskSessionId.value = "";
@@ -3636,13 +3706,15 @@
           return;
         }
         try {
-          const [tasksRes, automationsRes, beesRes, systemsRes, beeGrantsRes] = await Promise.all([
-            fetch("/api/tasks", { headers: authHeaders() }),
-            fetch("/api/automations", { headers: authHeaders() }),
-            fetch("/api/bees"),
-            fetch("/api/systems", { headers: authHeaders() }),
-            fetch("/api/bee-system-access", { headers: authHeaders() }),
-          ]);
+          const [tasksRes, automationsRes, beesRes, systemsRes, beeGrantsRes, subAgentsRes] =
+            await Promise.all([
+              fetch("/api/tasks", { headers: authHeaders() }),
+              fetch("/api/automations", { headers: authHeaders() }),
+              fetch("/api/bees"),
+              fetch("/api/systems", { headers: authHeaders() }),
+              fetch("/api/bee-system-access", { headers: authHeaders() }),
+              fetch("/api/sub-agents", { headers: authHeaders() }),
+            ]);
           if (tasksRes.status === 401) {
             clearRejectedAdminToken();
             els.tasksBody.innerHTML = `<div class="empty">Admin token rejected. Paste the current token from <code>~/.hiveplane/hive-config.json</code> and save again.</div>`;
@@ -3653,6 +3725,7 @@
           if (!automationsRes.ok) throw new Error(`HTTP ${automationsRes.status}`);
           if (!systemsRes.ok) throw new Error(`systems HTTP ${systemsRes.status}`);
           if (!beeGrantsRes.ok) throw new Error(`Bee grants HTTP ${beeGrantsRes.status}`);
+          if (!subAgentsRes.ok) throw new Error(`sub-agents HTTP ${subAgentsRes.status}`);
           if (beesRes.ok) {
             const { bees } = await beesRes.json();
             state.bees = bees ?? [];
@@ -3662,9 +3735,12 @@
           }
           const { systems } = await systemsRes.json();
           const { grants: beeGrants } = await beeGrantsRes.json();
+          const { subAgents } = await subAgentsRes.json();
           state.systems = systems ?? [];
           state.beeSystemGrants = beeGrants ?? [];
+          state.subAgents = subAgents ?? [];
           renderTaskSystemOptions();
+          renderTaskSubAgentOptions();
           const { tasks } = await tasksRes.json();
           const { automations } = await automationsRes.json();
           state.tasks = tasks ?? [];
@@ -3735,6 +3811,31 @@
         }
       }
 
+      function renderTaskSubAgentOptions() {
+        const selected = els.taskSubAgent.value;
+        const targetSystemId = els.taskTargetSystem.value || "public";
+        const options = state.subAgents
+          .filter((subAgent) => subAgent.enabled !== false)
+          .filter((subAgent) => !targetSystemId || subAgent.systemId === targetSystemId)
+          .map(
+            (subAgent) =>
+              `<option value="${escapeHtml(subAgent.id)}" ${subAgent.id === selected ? "selected" : ""}>${escapeHtml(subAgent.name || subAgent.id)} · ${escapeHtml(subAgent.runtime || "agent")}</option>`,
+          );
+        els.taskSubAgent.innerHTML = [
+          `<option value="">Any matching sub-agent</option>`,
+          ...options,
+        ].join("");
+        if (
+          selected &&
+          ![...els.taskSubAgent.options].some((option) => option.value === selected)
+        ) {
+          els.taskSubAgent.insertAdjacentHTML(
+            "beforeend",
+            `<option value="${escapeHtml(selected)}" selected>${escapeHtml(shortId(selected))} (not available for this System)</option>`,
+          );
+        }
+      }
+
       function renderTaskRequirementOptions() {
         const selectedRuntime = els.taskRuntime.value;
         const selectedTools = selectedValues(els.taskTools);
@@ -3775,7 +3876,8 @@
         const models = summarizeCaps(caps.models);
         const connectors = summarizeConnectors(caps.connectors || []);
         const sessions = summarizeAgentSessions(caps.agentSessions || []);
-        els.taskBeeHint.textContent = `${beeDisplayName(selectedBeeId)} capabilities: runtimes ${runtimes}; tools ${tools}; models ${models}; connectors ${connectors}; sessions ${sessions}.`;
+        const subAgents = summarizeSubAgents(caps.subAgents || []);
+        els.taskBeeHint.textContent = `${beeDisplayName(selectedBeeId)} capabilities: runtimes ${runtimes}; tools ${tools}; models ${models}; connectors ${connectors}; sub-agents ${subAgents}; sessions ${sessions}.`;
       }
 
       function renderTaskRoutePreview() {
@@ -3797,8 +3899,11 @@
         const winner = matches[0];
         const required = currentTaskRequirements();
         const targetSystemId = els.taskTargetSystem.value || "public";
+        const requestedSubAgentId = els.taskSubAgent.value || "";
+        const selectedSubAgent = state.subAgents.find((item) => item.id === requestedSubAgentId);
         const reqText = [
           targetSystemId ? `system ${targetSystemId}` : "",
+          selectedSubAgent ? `sub-agent ${selectedSubAgent.name || selectedSubAgent.id}` : "",
           required.runtimes.length ? `runtime ${required.runtimes.join(", ")}` : "",
           required.tools.length ? `tools ${required.tools.join(", ")}` : "",
           required.modelBackends.length ? `model backend ${required.modelBackends.join(", ")}` : "",
@@ -3828,15 +3933,26 @@
       function matchingTaskBees() {
         const preferredBeeId = els.taskPreferredBee.value.trim();
         const targetSystemId = els.taskTargetSystem.value || "public";
+        const requestedSubAgentId = els.taskSubAgent.value.trim();
         const requirements = currentTaskRequirements();
         return [...state.bees]
           .filter((bee) => {
             if (preferredBeeId && bee.beeId !== preferredBeeId) return false;
             if (bee.status !== "online" || bee.operationalState !== "healthy") return false;
             if (!beeCanAccessTargetSystem(bee.beeId, targetSystemId)) return false;
+            if (requestedSubAgentId && !beeReportsSubAgent(bee, requestedSubAgentId)) return false;
             return beeMatchesRequirements(bee, requirements);
           })
           .sort((a, b) => (a.activeJobs ?? 0) - (b.activeJobs ?? 0));
+      }
+
+      function beeReportsSubAgent(bee, subAgentId) {
+        return (bee.capabilities?.subAgents || []).some(
+          (subAgent) =>
+            subAgent.id === subAgentId &&
+            subAgent.runtime === "openclaw" &&
+            subAgent.status !== "unavailable",
+        );
       }
 
       function beeCanAccessTargetSystem(beeId, systemId) {
@@ -3920,6 +4036,22 @@
           .filter(Boolean)
           .join(", ");
         return items.length > 3 ? `${shown}, +${items.length - 3}` : shown;
+      }
+
+      function summarizeSubAgents(subAgents) {
+        const items = Array.isArray(subAgents) ? subAgents.filter(Boolean) : [];
+        if (!items.length) return "—";
+        const shown = items
+          .slice(0, 3)
+          .map((subAgent) => subAgent.name || subAgent.id || subAgent.runtime)
+          .filter(Boolean)
+          .join(", ");
+        return items.length > 3 ? `${shown}, +${items.length - 3}` : shown;
+      }
+
+      function subAgentLabel(id) {
+        const subAgent = state.subAgents.find((item) => item.id === id);
+        return subAgent?.name || shortId(id);
       }
 
       function summarizeCaps(values) {
@@ -4020,7 +4152,7 @@
                       <td data-label="Title">${escapeHtml(task.title || "—")}</td>
                       <td data-label="System">${escapeHtml(task.targetSystemId || "public")}</td>
                       <td data-label="Bee">${task.assignedBeeId ? renderBeeName(task.assignedBeeId) : "—"}</td>
-                      <td data-label="Requirements">${renderTaskRequirementsSummary(task.requirements || {})}</td>
+                      <td data-label="Requirements">${task.requestedSubAgentId ? pill(subAgentLabel(task.requestedSubAgentId)) : ""} ${renderTaskRequirementsSummary(task.requirements || {})}</td>
                       <td data-label="Job">${task.jobId ? `<button class="ghost" data-action="task-job" data-job-id="${escapeHtml(task.jobId)}">${escapeHtml(shortId(task.jobId))}</button>` : "—"}</td>
                       <td data-label="Updated" title="${escapeHtml(task.updatedAt || "")}">${relativeTime(task.updatedAt)}</td>
                       <td data-label="Detail">${escapeHtml(task.lastError || task.instructions || "—")}</td>
@@ -5270,6 +5402,189 @@
           </table>`;
       }
 
+      // --- sub-agents view ----------------------------------------------------
+      els.createSubAgent.addEventListener("click", async () => {
+        if (!state.adminToken) {
+          els.subAgentsMeta.textContent = "set an admin/operator token first";
+          return;
+        }
+        const name = els.subAgentName.value.trim();
+        if (!name) {
+          els.subAgentsMeta.textContent = "name is required";
+          return;
+        }
+        els.createSubAgent.disabled = true;
+        try {
+          const targetBeeId = els.subAgentBee.value.trim();
+          const payload = {
+            name,
+            runtime: "openclaw",
+            systemId: els.subAgentSystem.value || "public",
+            ...(els.subAgentModelProvider.value.trim()
+              ? { modelProvider: els.subAgentModelProvider.value.trim() }
+              : {}),
+            ...(els.subAgentModel.value.trim() ? { model: els.subAgentModel.value.trim() } : {}),
+            tools: csvValues(els.subAgentTools.value),
+            workingDirectories: csvValues(els.subAgentWorkingDirs.value),
+            targetBeeIds: targetBeeId ? [targetBeeId] : [],
+          };
+          const res = await fetch("/api/sub-agents", {
+            method: "POST",
+            headers: { ...authHeaders(), "content-type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            els.subAgentsMeta.textContent = "token rejected — paste the current token";
+            return;
+          }
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.reason || body.message || `HTTP ${res.status}`);
+          els.subAgentName.value = "";
+          els.subAgentModelProvider.value = "";
+          els.subAgentModel.value = "";
+          els.subAgentTools.value = "";
+          els.subAgentWorkingDirs.value = "";
+          els.subAgentsMeta.textContent = "sub-agent created";
+          await refreshSubAgents();
+        } catch (err) {
+          els.subAgentsMeta.textContent = `create failed: ${err.message}`;
+        } finally {
+          els.createSubAgent.disabled = false;
+        }
+      });
+
+      async function refreshSubAgents() {
+        if (!state.adminToken) {
+          els.subAgentsBody.innerHTML = `<div class="empty">Set an admin/operator token to manage sub-agents.</div>`;
+          els.subAgentsMeta.textContent = "—";
+          return;
+        }
+        try {
+          const [subAgentsRes, systemsRes, beesRes] = await Promise.all([
+            fetch("/api/sub-agents", { headers: authHeaders() }),
+            fetch("/api/systems", { headers: authHeaders() }),
+            fetch("/api/bees"),
+          ]);
+          if (subAgentsRes.status === 401 || systemsRes.status === 401) {
+            clearRejectedAdminToken();
+            els.subAgentsBody.innerHTML = `<div class="empty">Token rejected. Paste the current admin or operator token and save again.</div>`;
+            els.subAgentsMeta.textContent = "—";
+            return;
+          }
+          if (!subAgentsRes.ok) throw new Error(`sub-agents HTTP ${subAgentsRes.status}`);
+          if (!systemsRes.ok) throw new Error(`systems HTTP ${systemsRes.status}`);
+          const { subAgents } = await subAgentsRes.json();
+          const { systems } = await systemsRes.json();
+          state.subAgents = subAgents ?? [];
+          state.systems = systems ?? [];
+          if (beesRes.ok) {
+            const { bees } = await beesRes.json();
+            state.bees = bees ?? [];
+          }
+          renderSubAgentControls();
+          renderSubAgents();
+          els.subAgentsMeta.textContent = `${state.subAgents.length} definitions · updated ${new Date().toLocaleTimeString()}`;
+        } catch (err) {
+          els.subAgentsBody.innerHTML = `<div class="empty">Failed to load sub-agents: ${escapeHtml(err.message)}</div>`;
+          els.subAgentsMeta.textContent = "—";
+        }
+      }
+
+      function renderSubAgentControls() {
+        const selectedSystem = els.subAgentSystem.value || "public";
+        const fallbackSystems = [{ id: "public", name: "Public Demo", permissions: ["admin"] }];
+        const adminSystems = (state.systems.length ? state.systems : fallbackSystems).filter(
+          (system) => (system.permissions || []).includes("admin"),
+        );
+        els.subAgentSystem.innerHTML =
+          adminSystems
+            .map(
+              (system) =>
+                `<option value="${escapeHtml(system.id)}" ${system.id === selectedSystem ? "selected" : ""}>${escapeHtml(system.name || system.id)}</option>`,
+            )
+            .join("") || `<option value="public">Public Demo</option>`;
+        const selectedBee = els.subAgentBee.value;
+        const bees = state.bees.filter((bee) =>
+          (bee.capabilities?.runtimes || []).includes("openclaw"),
+        );
+        els.subAgentBee.innerHTML = [
+          `<option value="">Any healthy OpenClaw Bee</option>`,
+          ...bees.map(
+            (bee) =>
+              `<option value="${escapeHtml(bee.beeId)}" ${bee.beeId === selectedBee ? "selected" : ""}>${escapeHtml(beeDisplayName(bee.beeId))}</option>`,
+          ),
+        ].join("");
+      }
+
+      function renderSubAgents() {
+        if (!state.subAgents.length) {
+          els.subAgentsBody.innerHTML = `<div class="empty">No sub-agents defined yet.</div>`;
+          return;
+        }
+        els.subAgentsBody.innerHTML = `
+          <table>
+            <thead><tr><th>Name</th><th>System</th><th>Runtime</th><th>Targets</th><th>Reported</th><th>Actions</th></tr></thead>
+            <tbody>
+              ${state.subAgents
+                .map((subAgent) => {
+                  const reported = state.bees.filter((bee) => beeReportsSubAgent(bee, subAgent.id));
+                  const targets = subAgent.targetBeeIds?.length
+                    ? subAgent.targetBeeIds.map(renderBeeName).join(", ")
+                    : "Any healthy OpenClaw Bee";
+                  return `
+                    <tr>
+                      <td data-label="Name">${escapeHtml(subAgent.name || subAgent.id)} ${subAgent.enabled === false ? pill("disabled", "failed") : ""}<div class="meta mono">${escapeHtml(shortId(subAgent.id))}</div></td>
+                      <td data-label="System">${escapeHtml(subAgent.systemId || "public")}</td>
+                      <td data-label="Runtime">${pill(subAgent.runtime || "openclaw")} ${subAgent.model ? pill(subAgent.model) : ""}</td>
+                      <td data-label="Targets">${targets}</td>
+                      <td data-label="Reported">${reported.length ? reported.map((bee) => renderBeeName(bee.beeId)).join(", ") : "—"}</td>
+                      <td data-label="Actions">
+                        <button class="action" data-action="reconcile-subagent" data-sub-agent-id="${escapeHtml(subAgent.id)}">Reconcile</button>
+                      </td>
+                    </tr>`;
+                })
+                .join("")}
+            </tbody>
+          </table>`;
+        els.subAgentsBody
+          .querySelectorAll("[data-action='reconcile-subagent']")
+          .forEach((button) => {
+            button.addEventListener("click", () =>
+              reconcileSubAgent(button.dataset.subAgentId, button),
+            );
+          });
+      }
+
+      async function reconcileSubAgent(subAgentId, button) {
+        button.disabled = true;
+        try {
+          const res = await fetch(`/api/sub-agents/${encodeURIComponent(subAgentId)}/reconcile`, {
+            method: "POST",
+            headers: authHeaders(),
+          });
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.reason || body.message || `HTTP ${res.status}`);
+          els.subAgentsMeta.textContent = `${body.jobs?.length || 0} reconcile job${body.jobs?.length === 1 ? "" : "s"} queued`;
+          await refreshSubAgents();
+          if (body.jobs?.[0]?.id) {
+            state.selectedJobId = body.jobs[0].id;
+            refreshJobs();
+          }
+        } catch (err) {
+          els.subAgentsMeta.textContent = `reconcile failed: ${err.message}`;
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      function csvValues(value) {
+        return String(value || "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+
       els.closeBeeModal.addEventListener("click", closeBeeModal);
       els.beeModal.addEventListener("click", (event) => {
         if (event.target === els.beeModal) closeBeeModal();
@@ -5344,6 +5659,8 @@
           refreshPairingCard();
         } else if (state.activeTab === "tasks") {
           refreshTasks();
+        } else if (state.activeTab === "subagents") {
+          refreshSubAgents();
         } else if (state.activeTab === "jobs") {
           refreshJobs();
         } else if (state.activeTab === "activity") {

@@ -44,6 +44,23 @@ export const AgentSessionCapabilitySchema = z.object({
   metadata: JsonObjectSchema.default({}),
 });
 
+export const SubAgentCapabilitySchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  runtime: z.string().min(1),
+  status: z
+    .enum(["available", "configured", "degraded", "unavailable", "unknown"])
+    .default("unknown"),
+  systemId: z.string().min(1).optional(),
+  modelProvider: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  tools: z.array(z.string().min(1)).default([]),
+  skills: z.array(z.string().min(1)).default([]),
+  workingDirectories: z.array(z.string().min(1)).default([]),
+  updatedAt: IsoDateTimeSchema,
+  metadata: JsonObjectSchema.default({}),
+});
+
 export const ConnectorCapabilitySchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
@@ -59,6 +76,7 @@ export const BeeCapabilitiesSchema = z.object({
   models: z.array(z.string().min(1)).default([]),
   localModels: z.array(LocalModelCapabilitySchema).default([]),
   agentSessions: z.array(AgentSessionCapabilitySchema).optional(),
+  subAgents: z.array(SubAgentCapabilitySchema).optional(),
   connectors: z.array(ConnectorCapabilitySchema).optional(),
   tools: z.array(z.string().min(1)).default([]),
   networking: z.array(z.string().min(1)).default([]),
@@ -228,6 +246,10 @@ export const JobTypeSchema = z.enum([
   "connect_to_host_gateway",
   "run_healthcheck",
   "openclaw_status",
+  "openclaw_subagents_list",
+  "openclaw_subagent_configure",
+  "openclaw_subagent_delete",
+  "openclaw_subagent_smoke_test",
   "ollama_status",
   "ollama_list_models",
   "update_bee",
@@ -370,6 +392,7 @@ export type BeeStatus = z.infer<typeof BeeStatusSchema>;
 export type BeeHardware = z.infer<typeof BeeHardwareSchema>;
 export type LocalModelCapability = z.infer<typeof LocalModelCapabilitySchema>;
 export type AgentSessionCapability = z.infer<typeof AgentSessionCapabilitySchema>;
+export type SubAgentCapability = z.infer<typeof SubAgentCapabilitySchema>;
 export type ConnectorCapability = z.infer<typeof ConnectorCapabilitySchema>;
 export type BeeCapabilities = z.infer<typeof BeeCapabilitiesSchema>;
 export type BeeHealthCheck = z.infer<typeof BeeHealthCheckSchema>;

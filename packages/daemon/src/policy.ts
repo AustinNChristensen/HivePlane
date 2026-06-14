@@ -54,6 +54,8 @@ export const APPROVAL_REQUIRED_JOB_TYPES: JobType[] = [
   "configure_runtime",
   "install_model_backend",
   "configure_model",
+  "openclaw_subagent_configure",
+  "openclaw_subagent_delete",
   "connect_to_host_gateway",
   "update_bee",
   "repair_imessage_bridge",
@@ -78,10 +80,11 @@ export type PolicyProfile = {
 const OBSERVE_JOBS: JobType[] = [
   "run_healthcheck",
   "openclaw_status",
+  "openclaw_subagents_list",
   "ollama_status",
   "ollama_list_models",
 ];
-const AGENT_JOBS: JobType[] = [...OBSERVE_JOBS, "agent_task"];
+const AGENT_JOBS: JobType[] = [...OBSERVE_JOBS, "agent_task", "openclaw_subagent_smoke_test"];
 
 export const POLICY_PROFILES: Record<PolicyProfileId, PolicyProfile> = {
   read_only_observer: {

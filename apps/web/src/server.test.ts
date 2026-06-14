@@ -518,6 +518,163 @@ describe("Hive server", () => {
     );
   });
 
+  it("defines OpenClaw sub-agents and routes tasks only to Bees reporting them", async () => {
+    const state = createHiveServerState();
+    const capabilities = {
+      runtimes: ["openclaw"],
+      modelBackends: ["ollama"],
+      models: ["gemma4:12b"],
+      localModels: [
+        {
+          backend: "ollama",
+          name: "gemma4:12b",
+          endpointUrl: "http://127.0.0.1:11434",
+          resourceHints: {},
+        },
+      ],
+      tools: ["github", "filesystem"],
+      networking: ["tailscale"],
+      hardware: {
+        platform: "darwin-arm64" as const,
+        hostname: "bee-agent",
+        cpuCores: 10,
+        memoryGb: 32,
+      },
+    };
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_agent",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      capabilities,
+      healthChecks: [],
+    });
+
+    await withServer(
+      { state, adminToken: "secret", now: () => new Date("2026-05-09T08:00:05.000Z") },
+      async (baseUrl) => {
+        const created = await fetch(`${baseUrl}/api/sub-agents`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            name: "Repo reviewer",
+            runtime: "openclaw",
+            systemId: "public",
+            modelProvider: "ollama",
+            model: "gemma4:12b",
+            tools: ["github", "filesystem"],
+            workingDirectories: ["/Users/chris/.hiveplane/install"],
+            targetBeeIds: ["bee_agent"],
+          }),
+        });
+        expect(created.status).toBe(200);
+        const createdBody = (await created.json()) as {
+          subAgent: { id: string; name: string; runtime: string };
+        };
+        expect(createdBody.subAgent).toMatchObject({ name: "Repo reviewer", runtime: "openclaw" });
+
+        const reconcile = await fetch(
+          `${baseUrl}/api/sub-agents/${createdBody.subAgent.id}/reconcile`,
+          {
+            method: "POST",
+            headers: { authorization: "Bearer secret" },
+          },
+        );
+        expect(reconcile.status).toBe(200);
+        const reconcileBody = (await reconcile.json()) as {
+          jobs: Array<{ type: string; status: string; payload: { id: string } }>;
+        };
+        expect(reconcileBody.jobs).toEqual([
+          expect.objectContaining({
+            type: "openclaw_subagent_configure",
+            status: "waiting_for_approval",
+            payload: expect.objectContaining({ id: createdBody.subAgent.id }),
+          }),
+        ]);
+
+        const blocked = await fetch(`${baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            title: "Review repo",
+            instructions: "Find the risky code.",
+            requestedSubAgentId: createdBody.subAgent.id,
+            requirements: { runtimes: ["openclaw"], tools: ["github"] },
+          }),
+        });
+        expect(blocked.status).toBe(200);
+        const blockedBody = (await blocked.json()) as {
+          task: { status: string; lastError: string };
+        };
+        expect(blockedBody.task).toMatchObject({
+          status: "blocked",
+          lastError: "No healthy Bee currently matches the task requirements.",
+        });
+
+        upsertBeeHeartbeat(state, {
+          type: "bee.heartbeat",
+          beeId: "bee_agent",
+          timestamp: "2026-05-09T08:00:10.000Z",
+          daemonVersion: "0.0.7",
+          status: "online",
+          activeJobs: 0,
+          capabilities: {
+            ...capabilities,
+            subAgents: [
+              {
+                id: createdBody.subAgent.id,
+                name: "Repo reviewer",
+                runtime: "openclaw",
+                status: "configured",
+                systemId: "public",
+                modelProvider: "ollama",
+                model: "gemma4:12b",
+                tools: ["github", "filesystem"],
+                skills: [],
+                workingDirectories: ["/Users/chris/.hiveplane/install"],
+                updatedAt: "2026-05-09T08:00:10.000Z",
+                metadata: {},
+              },
+            ],
+          },
+          healthChecks: [],
+        });
+
+        const assigned = await fetch(`${baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            title: "Review repo again",
+            instructions: "Find the risky code.",
+            requestedSubAgentId: createdBody.subAgent.id,
+            requirements: { runtimes: ["openclaw"], tools: ["github"] },
+          }),
+        });
+        expect(assigned.status).toBe(200);
+        const assignedBody = (await assigned.json()) as {
+          task: { status: string; assignedBeeId: string; jobId: string };
+        };
+        expect(assignedBody.task).toMatchObject({
+          status: "assigned",
+          assignedBeeId: "bee_agent",
+        });
+        const jobs = (await (
+          await fetch(`${baseUrl}/api/jobs`, { headers: { authorization: "Bearer secret" } })
+        ).json()) as { jobs: Array<{ id: string; payload: { subAgentId?: string } }> };
+        expect(jobs.jobs).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: assignedBody.task.jobId,
+              payload: expect.objectContaining({ subAgentId: createdBody.subAgent.id }),
+            }),
+          ]),
+        );
+      },
+    );
+  });
+
   it("enforces operator run permissions and Bee system access for Hive tasks", async () => {
     const state = createHiveServerState();
     upsertBeeHeartbeat(state, {

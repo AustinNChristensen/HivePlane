@@ -4,8 +4,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   collectConnectorCapabilities,
+  deleteOpenClawSubAgentRegistry,
+  getOpenClawSubAgentRegistryPath,
   readAgentSessionRegistry,
+  readOpenClawSubAgentRegistry,
   upsertAgentSessionRegistry,
+  upsertOpenClawSubAgentRegistry,
   getAgentSessionRegistryPath,
 } from "./capabilities.js";
 
@@ -38,6 +42,41 @@ describe("agent session registry", () => {
         workingDirectory: "/repo",
       }),
     ]);
+  });
+});
+
+describe("OpenClaw sub-agent registry", () => {
+  it("persists managed sub-agent definitions as Bee capability metadata", () => {
+    const dir = newDir();
+    upsertOpenClawSubAgentRegistry(
+      {
+        id: "subagent_123",
+        name: "Repo reviewer",
+        runtime: "openclaw",
+        status: "configured",
+        systemId: "dev",
+        modelProvider: "ollama",
+        model: "gemma4:12b",
+        tools: ["github", "filesystem"],
+        skills: ["code-review"],
+        workingDirectories: ["/repo"],
+        updatedAt: "2026-05-09T08:00:00.000Z",
+        metadata: { source: "hive" },
+      },
+      dir,
+    );
+
+    expect(getOpenClawSubAgentRegistryPath(dir)).toBe(join(dir, "openclaw-sub-agents.json"));
+    expect(readOpenClawSubAgentRegistry(dir)).toEqual([
+      expect.objectContaining({
+        id: "subagent_123",
+        runtime: "openclaw",
+        model: "gemma4:12b",
+        workingDirectories: ["/repo"],
+      }),
+    ]);
+    expect(deleteOpenClawSubAgentRegistry("subagent_123", dir)).toBe(true);
+    expect(readOpenClawSubAgentRegistry(dir)).toEqual([]);
   });
 });
 

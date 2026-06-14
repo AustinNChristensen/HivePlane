@@ -623,6 +623,105 @@ describe("JobExecutor", () => {
     expect(typeof body.output.installed).toBe("boolean");
   });
 
+  it("manages and smoke-tests HivePlane OpenClaw sub-agent definitions", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const configDir = mkdtempSync(join(tmpdir(), "hp-openclaw-subagents-"));
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const spawnImpl = makeSpawn({
+      stdoutChunks: ['{"ok":true,"subAgentId":"subagent_123"}\n'],
+      exitCode: 0,
+    }) as unknown as typeof import("node:child_process").spawn;
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      configDir,
+      daemonVersion: "0.0.1-test",
+      policy: {
+        runCommand: { allow: [], unsafeAllowAll: false },
+        jobs: {
+          allow: [
+            "openclaw_subagent_configure",
+            "openclaw_subagents_list",
+            "openclaw_subagent_smoke_test",
+          ],
+        },
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl,
+      openclawPathOverride: "/tmp/openclaw-test",
+    });
+
+    await executor.execute(
+      makeJob({
+        id: "job_configure",
+        type: "openclaw_subagent_configure",
+        payload: {
+          id: "subagent_123",
+          name: "Repo reviewer",
+          runtime: "openclaw",
+          systemId: "dev",
+          modelProvider: "ollama",
+          model: "gemma4:12b",
+          tools: ["github", "filesystem"],
+          skills: ["code-review"],
+          workingDirectories: ["/repo"],
+        },
+      }),
+    );
+    await executor.execute(
+      makeJob({
+        id: "job_list",
+        type: "openclaw_subagents_list",
+        payload: {},
+      }),
+    );
+    await executor.execute(
+      makeJob({
+        id: "job_smoke",
+        type: "openclaw_subagent_smoke_test",
+        payload: { id: "subagent_123" },
+      }),
+    );
+
+    expect(spawnImpl).toHaveBeenCalledWith(
+      "/tmp/openclaw-test",
+      expect.arrayContaining(["agent", "--session-key", "hiveplane-subagent-subagent_123-smoke"]),
+      expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+    );
+    const completedBodies = (fetchImpl.mock.calls as unknown as Array<[URL, RequestInit]>)
+      .map((call) => JSON.parse(Buffer.from(call[1].body as Uint8Array).toString("utf8")))
+      .filter((payload) => payload.type === "job.complete");
+    expect(completedBodies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          jobId: "job_configure",
+          status: "succeeded",
+          output: expect.objectContaining({
+            subAgent: expect.objectContaining({ id: "subagent_123", model: "gemma4:12b" }),
+          }),
+        }),
+        expect.objectContaining({
+          jobId: "job_list",
+          status: "succeeded",
+          output: expect.objectContaining({
+            subAgents: [expect.objectContaining({ id: "subagent_123", name: "Repo reviewer" })],
+          }),
+        }),
+        expect.objectContaining({
+          jobId: "job_smoke",
+          status: "succeeded",
+          output: expect.objectContaining({
+            subAgentId: "subagent_123",
+            sessionKey: "hiveplane-subagent-subagent_123-smoke",
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("ollama_list_models completes through the adapter path", async () => {
     const identity = await makeIdentity();
     const session = makeSession();

@@ -11,12 +11,16 @@ import {
   type JsonValue,
 } from "@hiveplane/protocol";
 import {
+  deleteOpenClawSubAgentRegistry,
+  getOpenClawSubAgentRegistryPath,
   getOllamaStatus,
   getOpenClawStatus,
   findOllamaExecutable,
   listOllamaModels,
+  readOpenClawSubAgentRegistry,
   runtimeStatusToJson,
   upsertAgentSessionRegistry,
+  upsertOpenClawSubAgentRegistry,
 } from "./capabilities.js";
 import type { BeeIdentity } from "./identity.js";
 import type { HiveSession } from "./session.js";
@@ -108,6 +112,18 @@ export class JobExecutor {
           break;
         case "openclaw_status":
           outcome = await this.runOpenClawStatus(job);
+          break;
+        case "openclaw_subagents_list":
+          outcome = await this.runOpenClawSubAgentsList(job);
+          break;
+        case "openclaw_subagent_configure":
+          outcome = await this.runOpenClawSubAgentConfigure(job);
+          break;
+        case "openclaw_subagent_delete":
+          outcome = await this.runOpenClawSubAgentDelete(job);
+          break;
+        case "openclaw_subagent_smoke_test":
+          outcome = await this.runOpenClawSubAgentSmokeTest(job, signal);
           break;
         case "ollama_status":
           outcome = await this.runOllamaStatus(job);
@@ -338,6 +354,166 @@ export class JobExecutor {
     const status = await getOpenClawStatus();
     await this.emit(job, "info", "openclaw.status.result", runtimeStatusToJson(status));
     return { status: "succeeded", output: runtimeStatusToJson(status) };
+  }
+
+  private async runOpenClawSubAgentsList(job: Job): Promise<JobOutcome> {
+    const subAgents = readOpenClawSubAgentRegistry(this.options.configDir);
+    const output = {
+      runtime: "openclaw",
+      configPath: getOpenClawSubAgentRegistryPath(this.options.configDir),
+      subAgents: subAgents.map(subAgentCapabilityToJson),
+    };
+    await this.emit(job, "info", "openclaw.subagents.list", {
+      count: subAgents.length,
+      configPath: output.configPath,
+    });
+    return { status: "succeeded", output };
+  }
+
+  private async runOpenClawSubAgentConfigure(job: Job): Promise<JobOutcome> {
+    const id =
+      typeof job.payload.id === "string" && job.payload.id.trim()
+        ? job.payload.id.trim()
+        : `subagent_${randomBytes(8).toString("hex")}`;
+    const name =
+      typeof job.payload.name === "string" && job.payload.name.trim()
+        ? job.payload.name.trim()
+        : id;
+    const runtime =
+      typeof job.payload.runtime === "string" && job.payload.runtime.trim()
+        ? job.payload.runtime.trim()
+        : "openclaw";
+    if (runtime !== "openclaw") {
+      return {
+        status: "failed",
+        error: {
+          code: "unsupported_runtime",
+          message: "openclaw_subagent_configure only supports runtime=openclaw",
+        },
+      };
+    }
+
+    const subAgent = {
+      id,
+      name,
+      runtime,
+      status: "configured" as const,
+      ...(typeof job.payload.systemId === "string" && job.payload.systemId.trim()
+        ? { systemId: job.payload.systemId.trim() }
+        : {}),
+      ...(typeof job.payload.modelProvider === "string" && job.payload.modelProvider.trim()
+        ? { modelProvider: job.payload.modelProvider.trim() }
+        : {}),
+      ...(typeof job.payload.model === "string" && job.payload.model.trim()
+        ? { model: job.payload.model.trim() }
+        : {}),
+      tools: readStringArray(job.payload.tools),
+      skills: readStringArray(job.payload.skills),
+      workingDirectories: readStringArray(job.payload.workingDirectories),
+      updatedAt: new Date().toISOString(),
+      metadata: readObject(job.payload.metadata) ?? {},
+    };
+
+    upsertOpenClawSubAgentRegistry(subAgent, this.options.configDir);
+    await this.emit(job, "info", "openclaw.subagent.configured", {
+      id: subAgent.id,
+      name: subAgent.name,
+      configPath: getOpenClawSubAgentRegistryPath(this.options.configDir),
+    });
+    return {
+      status: "succeeded",
+      output: {
+        subAgent: subAgentCapabilityToJson(subAgent),
+        configPath: getOpenClawSubAgentRegistryPath(this.options.configDir),
+      },
+    };
+  }
+
+  private async runOpenClawSubAgentDelete(job: Job): Promise<JobOutcome> {
+    const id = typeof job.payload.id === "string" ? job.payload.id.trim() : "";
+    if (!id) {
+      return {
+        status: "failed",
+        error: { code: "missing_sub_agent_id", message: "openclaw_subagent_delete requires id" },
+      };
+    }
+    const deleted = deleteOpenClawSubAgentRegistry(id, this.options.configDir);
+    await this.emit(job, deleted ? "info" : "warn", "openclaw.subagent.deleted", { id, deleted });
+    return {
+      status: "succeeded",
+      output: {
+        id,
+        deleted,
+        configPath: getOpenClawSubAgentRegistryPath(this.options.configDir),
+      },
+    };
+  }
+
+  private async runOpenClawSubAgentSmokeTest(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
+    const id = typeof job.payload.id === "string" ? job.payload.id.trim() : "";
+    if (!id) {
+      return {
+        status: "failed",
+        error: {
+          code: "missing_sub_agent_id",
+          message: "openclaw_subagent_smoke_test requires id",
+        },
+      };
+    }
+
+    const subAgent = readOpenClawSubAgentRegistry(this.options.configDir).find(
+      (candidate) => candidate.id === id,
+    );
+    if (!subAgent) {
+      return {
+        status: "failed",
+        error: {
+          code: "sub_agent_not_found",
+          message: `OpenClaw sub-agent '${id}' is not configured`,
+        },
+      };
+    }
+
+    const openclawPath =
+      this.options.openclawPathOverride ??
+      findExecutable(["/opt/homebrew/bin/openclaw", "/usr/local/bin/openclaw"]);
+    if (!openclawPath) {
+      return {
+        status: "failed",
+        error: { code: "openclaw_not_found", message: "openclaw CLI not found on this Bee" },
+      };
+    }
+
+    const timeoutSeconds = typeof job.timeoutSeconds === "number" ? job.timeoutSeconds : 120;
+    const sessionKey = `hiveplane-subagent-${id}-smoke`;
+    const result = await this.runStreamingProcess(
+      job,
+      openclawPath,
+      [
+        "agent",
+        "--session-key",
+        sessionKey,
+        "--message",
+        buildOpenClawSubAgentSmokePrompt(subAgent),
+        "--json",
+        "--timeout",
+        String(timeoutSeconds),
+      ],
+      signal,
+      { stdout: "openclaw.subagent_smoke.stdout", stderr: "openclaw.subagent_smoke.stderr" },
+    );
+
+    if (result.status === "succeeded") {
+      return {
+        status: "succeeded",
+        output: {
+          subAgentId: id,
+          sessionKey,
+          ...result.output,
+        },
+      };
+    }
+    return result;
   }
 
   private async runOllamaStatus(job: Job): Promise<JobOutcome> {
@@ -1136,6 +1312,63 @@ function buildOpenClawTaskPrompt(task: {
     "Instructions:",
     task.instructions,
   ].join("\n");
+}
+
+function buildOpenClawSubAgentSmokePrompt(subAgent: {
+  id: string;
+  name: string;
+  runtime: string;
+  systemId?: string | undefined;
+  modelProvider?: string | undefined;
+  model?: string | undefined;
+  tools: string[];
+  skills: string[];
+  workingDirectories: string[];
+}): string {
+  return [
+    "You are running a HivePlane OpenClaw sub-agent smoke test.",
+    "Reply with a short JSON object that includes ok=true and the subAgentId. Do not take external actions.",
+    "",
+    `Sub-agent ID: ${subAgent.id}`,
+    `Name: ${subAgent.name}`,
+    `Runtime: ${subAgent.runtime}`,
+    `System: ${subAgent.systemId ?? "unspecified"}`,
+    `Model provider: ${subAgent.modelProvider ?? "runtime default"}`,
+    `Model: ${subAgent.model ?? "runtime default"}`,
+    `Tools: ${JSON.stringify(subAgent.tools)}`,
+    `Skills: ${JSON.stringify(subAgent.skills)}`,
+    `Working directories: ${JSON.stringify(subAgent.workingDirectories)}`,
+  ].join("\n");
+}
+
+function subAgentCapabilityToJson(subAgent: {
+  id: string;
+  name: string;
+  runtime: string;
+  status: string;
+  systemId?: string | undefined;
+  modelProvider?: string | undefined;
+  model?: string | undefined;
+  tools: string[];
+  skills: string[];
+  workingDirectories: string[];
+  updatedAt: string;
+  metadata: Record<string, JsonValue>;
+}): Record<string, JsonValue> {
+  return {
+    id: subAgent.id,
+    name: subAgent.name,
+    runtime: subAgent.runtime,
+    status: subAgent.status,
+    ...(subAgent.systemId ? { systemId: subAgent.systemId } : {}),
+    ...(subAgent.modelProvider ? { modelProvider: subAgent.modelProvider } : {}),
+    ...(subAgent.model ? { model: subAgent.model } : {}),
+    tools: subAgent.tools,
+    skills: subAgent.skills,
+    workingDirectories: subAgent.workingDirectories,
+    updatedAt: subAgent.updatedAt,
+    metadata: subAgent.metadata,
+  };
 }
 
 function parseJsonObject(stdout: string): Record<string, JsonValue> | undefined {

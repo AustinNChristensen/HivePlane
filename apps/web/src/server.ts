@@ -224,6 +224,8 @@ export type HiveServerState = {
   userSystemPermissions: Map<string, UserSystemPermissionRecord>;
   /** Bee access keyed by `${beeId}:${systemId}`. */
   beeSystemAccess: Map<string, BeeSystemAccessRecord>;
+  /** Desired sub-agent definitions keyed by sub-agent id. */
+  subAgentDefinitions: Map<string, HiveSubAgentDefinitionRecord>;
 };
 
 export type HiveOrgRole = "owner" | "admin" | "developer" | "operator" | "viewer";
@@ -267,6 +269,22 @@ export type BeeSystemAccessRecord = {
   createdAt: string;
 };
 
+export type HiveSubAgentDefinitionRecord = {
+  id: string;
+  name: string;
+  runtime: string;
+  systemId: string;
+  modelProvider?: string;
+  model?: string;
+  tools: string[];
+  skills: string[];
+  workingDirectories: string[];
+  targetBeeIds: string[];
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AuditLogEntry = {
   id: string;
   actorType: "user" | "bee" | "hive" | "system";
@@ -306,6 +324,7 @@ export type HiveTaskRecord = {
   targetSystemId: string;
   requestedBy?: string;
   preferredBeeId?: string;
+  requestedSubAgentId?: string;
   requirements: HiveTaskRequirements;
   context?: WorkContext;
   status: HiveTaskStatus;
@@ -403,6 +422,7 @@ export function createHiveServerState(): HiveServerState {
     systems: new Map(),
     userSystemPermissions: new Map(),
     beeSystemAccess: new Map(),
+    subAgentDefinitions: new Map(),
   };
   seedDefaultSystems(state, new Date("2026-01-01T00:00:00.000Z"));
   return state;
@@ -594,6 +614,7 @@ const CreateHiveTaskRequestSchema = z.object({
   targetSystemId: z.string().min(1).default("public"),
   requestedBy: z.string().min(1).max(120).optional(),
   preferredBeeId: z.string().min(1).optional(),
+  requestedSubAgentId: z.string().min(1).optional(),
   requirements: TaskRequirementsSchema,
   context: z
     .object({
@@ -605,6 +626,19 @@ const CreateHiveTaskRequestSchema = z.object({
       metadata: z.record(z.unknown()).default({}),
     })
     .default({}),
+});
+
+const CreateSubAgentDefinitionRequestSchema = z.object({
+  name: z.string().min(1).max(120),
+  runtime: z.string().min(1).default("openclaw"),
+  systemId: z.string().min(1).default("public"),
+  modelProvider: z.string().min(1).max(120).optional(),
+  model: z.string().min(1).max(200).optional(),
+  tools: z.array(z.string().min(1)).default([]),
+  skills: z.array(z.string().min(1)).default([]),
+  workingDirectories: z.array(z.string().min(1)).default([]),
+  targetBeeIds: z.array(z.string().min(1)).default([]),
+  enabled: z.boolean().default(true),
 });
 
 const CreateHiveAutomationRequestSchema = CreateHiveTaskRequestSchema.extend({
@@ -649,6 +683,8 @@ const RESCUE_JOB_TYPES: readonly JobType[] = [
 const AUTO_APPROVED_JOB_TYPES = new Set<JobType>([
   "run_healthcheck",
   "openclaw_status",
+  "openclaw_subagents_list",
+  "openclaw_subagent_smoke_test",
   "ollama_status",
   "ollama_list_models",
   "ollama_smoke_test",
@@ -1344,6 +1380,95 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         return sendJson(response, 200, { jobs });
       }
 
+      if (request.method === "GET" && url.pathname === "/api/sub-agents") {
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
+        const subAgents = serializeSubAgentDefinitions(state).filter((subAgent) =>
+          hasSystemPermission(state, actor, subAgent.systemId || "public", "view"),
+        );
+        return sendJson(response, 200, { subAgents });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/sub-agents") {
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
+        const { body } = await readJson(request);
+        const parsed = CreateSubAgentDefinitionRequestSchema.safeParse(body);
+        if (!parsed.success) {
+          return sendJson(response, 400, {
+            error: "bad_request",
+            message: parsed.error.message,
+          });
+        }
+        if (!state.systems.has(parsed.data.systemId)) {
+          return sendJson(response, 400, {
+            error: "unknown_system",
+            reason: `System '${parsed.data.systemId}' does not exist.`,
+          });
+        }
+        if (!requireSystemPermissionOrSend(response, state, actor, parsed.data.systemId, "admin")) {
+          return;
+        }
+        const current = now();
+        const subAgent = createSubAgentDefinition(state, parsed.data, current);
+        recordAudit(state, request, current, {
+          action: "sub_agent.create",
+          resourceType: "sub_agent",
+          resourceId: subAgent.id,
+          data: {
+            name: subAgent.name,
+            runtime: subAgent.runtime,
+            systemId: subAgent.systemId,
+            targetBeeIds: subAgent.targetBeeIds,
+          },
+        });
+        markDirty();
+        return sendJson(response, 200, { subAgent: serializeSubAgentDefinition(subAgent) });
+      }
+
+      const reconcileSubAgentMatch = /^\/api\/sub-agents\/([^/]+)\/reconcile$/.exec(url.pathname);
+      if (request.method === "POST" && reconcileSubAgentMatch) {
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
+        const subAgentId = decodeURIComponent(reconcileSubAgentMatch[1] ?? "");
+        const subAgent = state.subAgentDefinitions.get(subAgentId);
+        if (!subAgent) return sendJson(response, 404, { error: "not_found" });
+        if (!requireSystemPermissionOrSend(response, state, actor, subAgent.systemId, "admin")) {
+          return;
+        }
+        const current = now();
+        const targetBees = selectBeesForSubAgent(state, subAgent, current);
+        const jobs = targetBees.map((bee) => {
+          const job = createJob(
+            state.jobsState,
+            bee.beeId,
+            {
+              type: "openclaw_subagent_configure",
+              payload: subAgentJobPayload(subAgent),
+              context: {
+                files: [],
+                artifacts: [],
+                metadata: { targetSystemId: subAgent.systemId, subAgentId: subAgent.id },
+              },
+            },
+            current,
+          );
+          if (jobNeedsApproval(job)) requireApproval(job);
+          return serializeJob(job);
+        });
+        recordAudit(state, request, current, {
+          action: "sub_agent.reconcile",
+          resourceType: "sub_agent",
+          resourceId: subAgent.id,
+          data: {
+            jobIds: jobs.map((job) => String(job.id)),
+            targetBeeIds: targetBees.map((bee) => bee.beeId),
+          },
+        });
+        markDirty();
+        return sendJson(response, 200, { subAgent: serializeSubAgentDefinition(subAgent), jobs });
+      }
+
       if (request.method === "GET" && url.pathname === "/api/tasks") {
         const actor = requireOperatorOrSend(request, response, state, adminToken);
         if (!actor) return;
@@ -1537,6 +1662,27 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           !requireSystemPermissionOrSend(response, state, actor, parsed.data.targetSystemId, "run")
         ) {
           return;
+        }
+        if (parsed.data.requestedSubAgentId) {
+          const subAgent = state.subAgentDefinitions.get(parsed.data.requestedSubAgentId);
+          if (!subAgent) {
+            return sendJson(response, 400, {
+              error: "unknown_sub_agent",
+              reason: `Sub-agent '${parsed.data.requestedSubAgentId}' does not exist.`,
+            });
+          }
+          if (!subAgent.enabled) {
+            return sendJson(response, 409, {
+              error: "sub_agent_disabled",
+              reason: `Sub-agent '${subAgent.name}' is disabled.`,
+            });
+          }
+          if (subAgent.systemId !== parsed.data.targetSystemId) {
+            return sendJson(response, 400, {
+              error: "sub_agent_system_mismatch",
+              reason: `Sub-agent '${subAgent.name}' belongs to System '${subAgent.systemId}', not '${parsed.data.targetSystemId}'.`,
+            });
+          }
         }
         const current = now();
         const task = createHiveTask(state, parsed.data, current);
@@ -2306,6 +2452,24 @@ function serializeTasks(state: HiveServerState): HiveTaskRecord[] {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+function serializeSubAgentDefinitions(state: HiveServerState): HiveSubAgentDefinitionRecord[] {
+  return [...state.subAgentDefinitions.values()]
+    .map(serializeSubAgentDefinition)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function serializeSubAgentDefinition(
+  subAgent: HiveSubAgentDefinitionRecord,
+): HiveSubAgentDefinitionRecord {
+  return {
+    ...subAgent,
+    tools: [...subAgent.tools],
+    skills: [...subAgent.skills],
+    workingDirectories: [...subAgent.workingDirectories],
+    targetBeeIds: [...subAgent.targetBeeIds],
+  };
+}
+
 function serializeAutomations(state: HiveServerState): HiveAutomationRecord[] {
   return [...state.automations.values()]
     .map((automation) => ({
@@ -2405,6 +2569,10 @@ function generateAutomationId(): string {
   return `auto_${randomBytes(8).toString("hex")}`;
 }
 
+function generateSubAgentId(): string {
+  return `subagent_${randomBytes(8).toString("hex")}`;
+}
+
 function normalizeTaskRequirements(requirements: HiveTaskRequirements): HiveTaskRequirements {
   return {
     runtimes: dedupeStrings(requirements.runtimes),
@@ -2436,6 +2604,7 @@ function createHiveTask(
     targetSystemId: request.targetSystemId,
     ...(request.requestedBy ? { requestedBy: request.requestedBy.trim() } : {}),
     ...(request.preferredBeeId ? { preferredBeeId: request.preferredBeeId } : {}),
+    ...(request.requestedSubAgentId ? { requestedSubAgentId: request.requestedSubAgentId } : {}),
     requirements: normalizeTaskRequirements(request.requirements),
     context: normalizeWorkContext(request.context as WorkContext),
     status: "queued",
@@ -2444,6 +2613,30 @@ function createHiveTask(
   };
   state.tasks.set(task.id, task);
   return task;
+}
+
+function createSubAgentDefinition(
+  state: HiveServerState,
+  request: z.infer<typeof CreateSubAgentDefinitionRequestSchema>,
+  now: Date,
+): HiveSubAgentDefinitionRecord {
+  const subAgent: HiveSubAgentDefinitionRecord = {
+    id: generateSubAgentId(),
+    name: request.name.trim(),
+    runtime: request.runtime.trim(),
+    systemId: request.systemId,
+    ...(request.modelProvider ? { modelProvider: request.modelProvider.trim() } : {}),
+    ...(request.model ? { model: request.model.trim() } : {}),
+    tools: dedupeStrings(request.tools),
+    skills: dedupeStrings(request.skills),
+    workingDirectories: dedupeStrings(request.workingDirectories),
+    targetBeeIds: dedupeStrings(request.targetBeeIds),
+    enabled: request.enabled,
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+  };
+  state.subAgentDefinitions.set(subAgent.id, subAgent);
+  return subAgent;
 }
 
 function createHiveAutomation(
@@ -2592,6 +2785,7 @@ function scheduleHiveTask(state: HiveServerState, task: HiveTaskRecord, now: Dat
         title: task.title,
         instructions: task.instructions,
         targetSystemId: task.targetSystemId,
+        ...(task.requestedSubAgentId ? { subAgentId: task.requestedSubAgentId } : {}),
         requestedBy: task.requestedBy ?? "hive",
         requirements: task.requirements,
         context: task.context ?? emptyWorkContext(),
@@ -2620,6 +2814,7 @@ function selectBeeForTask(
       if (bee.operationalState !== "healthy") return false;
       if (!matchesTaskRequirements(bee, task.requirements)) return false;
       if (!beeCanAccessSystem(state, bee.beeId, task.targetSystemId)) return false;
+      if (task.requestedSubAgentId && !beeHasSubAgent(bee, task.requestedSubAgentId)) return false;
       return true;
     })
     .sort((a, b) => {
@@ -2630,6 +2825,49 @@ function selectBeeForTask(
       return (a.activeJobs ?? 0) - (b.activeJobs ?? 0);
     });
   return candidates[0] ?? null;
+}
+
+function beeHasSubAgent(bee: HiveBeeRecord, subAgentId: string): boolean {
+  return (bee.capabilities?.subAgents ?? []).some(
+    (subAgent) =>
+      subAgent.id === subAgentId &&
+      subAgent.runtime === "openclaw" &&
+      subAgent.status !== "unavailable",
+  );
+}
+
+function selectBeesForSubAgent(
+  state: HiveServerState,
+  subAgent: HiveSubAgentDefinitionRecord,
+  now: Date,
+): HiveBeeRecord[] {
+  const targetIds = new Set(subAgent.targetBeeIds);
+  return serializeBees(state, now).filter((bee) => {
+    if (targetIds.size > 0 && !targetIds.has(bee.beeId)) return false;
+    if (bee.status !== "online") return false;
+    if (bee.operationalState !== "healthy") return false;
+    if (!bee.capabilities?.runtimes.includes(subAgent.runtime)) return false;
+    if (!beeCanAccessSystem(state, bee.beeId, subAgent.systemId)) return false;
+    return true;
+  });
+}
+
+function subAgentJobPayload(subAgent: HiveSubAgentDefinitionRecord): Record<string, JsonValue> {
+  return {
+    id: subAgent.id,
+    name: subAgent.name,
+    runtime: subAgent.runtime,
+    systemId: subAgent.systemId,
+    ...(subAgent.modelProvider ? { modelProvider: subAgent.modelProvider } : {}),
+    ...(subAgent.model ? { model: subAgent.model } : {}),
+    tools: subAgent.tools,
+    skills: subAgent.skills,
+    workingDirectories: subAgent.workingDirectories,
+    metadata: {
+      source: "hive",
+      enabled: subAgent.enabled,
+    },
+  };
 }
 
 function normalizeWorkContext(context: WorkContext): WorkContext {
