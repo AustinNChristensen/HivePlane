@@ -866,6 +866,79 @@
         display: grid;
         gap: 14px;
       }
+      .bee-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: rgba(7, 5, 16, 0.72);
+        backdrop-filter: blur(12px);
+      }
+      .bee-modal[hidden] {
+        display: none;
+      }
+      .bee-modal-panel {
+        width: min(1040px, 100%);
+        max-height: min(860px, calc(100vh - 48px));
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        overflow: hidden;
+        border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+        border-radius: 8px;
+        background: linear-gradient(180deg, rgba(24, 19, 44, 0.97), rgba(10, 8, 22, 0.98));
+        box-shadow:
+          0 28px 80px rgba(0, 0, 0, 0.42),
+          0 0 32px rgba(139, 92, 255, 0.16);
+      }
+      .bee-modal-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: start;
+        padding: 18px 20px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      .bee-modal-title {
+        display: grid;
+        gap: 6px;
+        min-width: 0;
+      }
+      .bee-modal-title strong {
+        font-size: 20px;
+        font-weight: 700;
+      }
+      .bee-modal-title .mono {
+        color: var(--muted);
+      }
+      .bee-modal-tabs {
+        display: flex;
+        gap: 8px;
+        padding: 12px 20px;
+        overflow-x: auto;
+        border-bottom: 1px solid var(--border);
+      }
+      .bee-modal-tab {
+        white-space: nowrap;
+      }
+      .bee-modal-tab.active {
+        border-color: color-mix(in srgb, var(--accent-2) 72%, var(--border));
+        color: var(--text);
+        background: rgba(25, 227, 210, 0.1);
+        box-shadow: inset 0 0 0 1px rgba(25, 227, 210, 0.12);
+      }
+      .bee-modal-body {
+        overflow: auto;
+      }
+      .bee-detail-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+      .bee-detail-grid .detail-section {
+        align-content: start;
+      }
       .detail-section {
         display: grid;
         gap: 8px;
@@ -953,6 +1026,23 @@
         .auth-popover {
           right: auto;
           left: 0;
+        }
+        .bee-modal {
+          padding: 12px;
+          align-items: stretch;
+        }
+        .bee-modal-panel {
+          max-height: calc(100vh - 24px);
+        }
+        .bee-modal-header {
+          padding: 14px;
+        }
+        .bee-modal-tabs {
+          padding: 10px 14px;
+        }
+        .bee-detail-grid,
+        .job-detail-grid {
+          grid-template-columns: 1fr;
         }
       }
     </style>
@@ -1146,6 +1236,17 @@
       </div>
     </div>
 
+    <div class="bee-modal" id="beeModal" role="dialog" aria-modal="true" hidden>
+      <div class="bee-modal-panel">
+        <div class="bee-modal-header">
+          <div class="bee-modal-title" id="beeModalTitle"></div>
+          <button class="ghost" id="closeBeeModal" type="button">Close</button>
+        </div>
+        <div class="bee-modal-tabs" id="beeModalTabs"></div>
+        <div class="bee-modal-body" id="beeModalBody"></div>
+      </div>
+    </div>
+
     <script>
       const ADMIN_KEY = "hiveplane.adminToken";
       const POLL_MS = 5000;
@@ -1164,6 +1265,8 @@
         selectedTaskJob: null,
         selectedJob: null,
         eventFilter: "signal",
+        selectedBeeDetailTab: "overview",
+        beeModalOpen: false,
         searchQuery: "",
       };
 
@@ -1178,6 +1281,11 @@
         authStatus: document.getElementById("authStatus"),
         beesMeta: document.getElementById("beesMeta"),
         beesBody: document.getElementById("beesBody"),
+        beeModal: document.getElementById("beeModal"),
+        beeModalTitle: document.getElementById("beeModalTitle"),
+        beeModalTabs: document.getElementById("beeModalTabs"),
+        beeModalBody: document.getElementById("beeModalBody"),
+        closeBeeModal: document.getElementById("closeBeeModal"),
         incidentsMeta: document.getElementById("incidentsMeta"),
         incidentsBody: document.getElementById("incidentsBody"),
         jobsMeta: document.getElementById("jobsMeta"),
@@ -1485,8 +1593,16 @@
           const { bees, incidents } = await res.json();
           state.bees = bees ?? [];
           state.incidents = incidents ?? [];
+          if (
+            state.beeModalOpen &&
+            state.selectedBeeId &&
+            !state.bees.some((bee) => bee.beeId === state.selectedBeeId)
+          ) {
+            closeBeeModal();
+          }
           ensureSelectedBee(bees ?? []);
           renderBees(bees ?? []);
+          renderBeeModal();
           renderIncidents(incidents ?? []);
           els.beesMeta.textContent = `${bees.length} connected · updated ${new Date().toLocaleTimeString()}`;
         } catch (err) {
@@ -1692,6 +1808,7 @@
           row.addEventListener("click", () => {
             state.selectedBeeId = row.dataset.beeId;
             switchTab("bees");
+            openBeeModal(row.dataset.beeId);
           });
         });
         els.overviewBody.querySelectorAll("[data-action='overview-job']").forEach((row) => {
@@ -1719,7 +1836,6 @@
         }
         const rows = bees
           .map((b) => {
-            const selected = b.beeId === state.selectedBeeId;
             return `
               <tr class="${b.beeId === state.selectedBeeId ? "selected" : ""}" data-action="select-bee" data-bee-id="${escapeHtml(b.beeId)}">
                 <td>${pill(b.status || "unknown")}</td>
@@ -1736,7 +1852,7 @@
                 <td title="${escapeHtml(b.firstSeenAt || "")}">${relativeTime(b.firstSeenAt)}</td>
                 <td>
                   <div class="actions">
-                    <button class="ghost" data-action="select-bee-button" data-bee-id="${escapeHtml(b.beeId)}">Detail</button>
+                    <button class="ghost" data-action="open-bee" data-bee-id="${escapeHtml(b.beeId)}">Detail</button>
                     <button class="ghost" data-action="healthcheck" data-bee-id="${escapeHtml(b.beeId)}">Healthcheck</button>
                     <button class="ghost" data-action="adapter-job" data-job-type="restart_bee" data-bee-id="${escapeHtml(b.beeId)}">Recover</button>
                     <button class="ghost" data-action="adapter-job" data-job-type="openclaw_status" data-bee-id="${escapeHtml(b.beeId)}">OpenClaw</button>
@@ -1753,11 +1869,6 @@
                   </div>
                 </td>
               </tr>
-              ${
-                selected
-                  ? `<tr class="detail-row"><td colspan="13"><div class="inline-detail bee-detail">${renderBeeDetail(b)}</div></td></tr>`
-                  : ""
-              }
             `;
           })
           .join("");
@@ -1812,15 +1923,65 @@
             if (event.target.closest("button")) return;
             if (event.target.closest("form")) return;
             state.selectedBeeId = row.dataset.beeId;
-            renderBees(bees);
+            openBeeModal(row.dataset.beeId);
           });
         });
-        els.beesBody.querySelectorAll("[data-action='select-bee-button']").forEach((button) => {
+        els.beesBody.querySelectorAll("[data-action='open-bee']").forEach((button) => {
           button.addEventListener("click", () => {
-            state.selectedBeeId = button.dataset.beeId;
-            renderBees(bees);
+            openBeeModal(button.dataset.beeId);
           });
         });
+      }
+      function openBeeModal(beeId) {
+        state.selectedBeeId = beeId;
+        state.beeModalOpen = true;
+        state.selectedBeeDetailTab = state.selectedBeeDetailTab || "overview";
+        renderBees(state.bees);
+        renderBeeModal();
+      }
+      function closeBeeModal() {
+        state.beeModalOpen = false;
+        els.beeModal.hidden = true;
+      }
+      function renderBeeModal() {
+        const bee = state.bees.find((item) => item.beeId === state.selectedBeeId);
+        if (!state.beeModalOpen || !bee) {
+          els.beeModal.hidden = true;
+          return;
+        }
+        els.beeModal.hidden = false;
+        els.beeModalTitle.innerHTML = `
+          <strong>${escapeHtml(bee.beeName || shortId(bee.beeId))}</strong>
+          <div>${pill(bee.status || "unknown")} ${pill(bee.operationalState || "healthy")} <span class="mono">${escapeHtml(bee.beeId)}</span></div>
+        `;
+        els.beeModalTabs.innerHTML = beeDetailTabs()
+          .map(
+            (tab) =>
+              `<button class="ghost bee-modal-tab ${state.selectedBeeDetailTab === tab.id ? "active" : ""}" data-action="bee-detail-tab" data-tab="${escapeHtml(tab.id)}">${escapeHtml(tab.label)}</button>`,
+          )
+          .join("");
+        els.beeModalBody.innerHTML = `<div class="bee-detail">${renderBeeDetail(bee)}</div>`;
+        els.beeModalTabs.querySelectorAll("[data-action='bee-detail-tab']").forEach((button) => {
+          button.addEventListener("click", () => {
+            state.selectedBeeDetailTab = button.dataset.tab;
+            renderBeeModal();
+          });
+        });
+        els.beeModalBody.querySelectorAll("[data-action='profile-form']").forEach((form) => {
+          form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            saveBeeProfile(form);
+          });
+        });
+      }
+      function beeDetailTabs() {
+        return [
+          { id: "overview", label: "Overview" },
+          { id: "availability", label: "Availability" },
+          { id: "capabilities", label: "Capabilities" },
+          { id: "rescue", label: "Rescue" },
+          { id: "health", label: "Health" },
+        ];
       }
       function renderIncidents(incidents) {
         const active = incidents.filter((incident) => incident.status !== "resolved");
@@ -1915,40 +2076,47 @@
         const allow = permissions.runCommand?.allow || [];
         const rescue = bee.rescue || null;
         const profile = bee.profile || {};
+        const tab = beeDetailTabs().some((item) => item.id === state.selectedBeeDetailTab)
+          ? state.selectedBeeDetailTab
+          : "overview";
 
-        return `
-          <div>${pill(bee.status || "unknown")} ${pill(bee.operationalState || "healthy")} <span class="mono">${escapeHtml(bee.beeName || shortId(bee.beeId))}</span></div>
+        const identitySection = `
           <div class="detail-section">
             <h3>Identity</h3>
             <div class="kv-list">
               ${kv("Bee ID", `<span class="mono">${escapeHtml(bee.beeId)}</span>`)}
-              ${kv("Version", escapeHtml(bee.daemonVersion || "—"))}
-              ${kv("Last heartbeat", `${relativeTime(bee.lastSeenAt)} <span class="mono">(${escapeHtml(bee.lastSeenAt || "—")})</span>`)}
-              ${kv("First seen", `${relativeTime(bee.firstSeenAt)} <span class="mono">(${escapeHtml(bee.firstSeenAt || "—")})</span>`)}
+              ${kv("Version", escapeHtml(bee.daemonVersion || "-"))}
+              ${kv("Last heartbeat", `${relativeTime(bee.lastSeenAt)} <span class="mono">(${escapeHtml(bee.lastSeenAt || "-")})</span>`)}
+              ${kv("First seen", `${relativeTime(bee.firstSeenAt)} <span class="mono">(${escapeHtml(bee.firstSeenAt || "-")})</span>`)}
               ${kv("Heartbeats", escapeHtml(bee.heartbeatCount ?? 0))}
             </div>
           </div>
+        `;
+        const hardwareSection = `
+          <div class="detail-section">
+            <h3>Hardware</h3>
+            <div class="kv-list">
+              ${kv("Hostname", escapeHtml(hardware.hostname || "-"))}
+              ${kv("Platform", escapeHtml(hardware.platform || "-"))}
+              ${kv("CPU", escapeHtml(hardware.cpuCores ?? "-"))}
+              ${kv("Memory", hardware.memoryGb ? `${escapeHtml(hardware.memoryGb)} GB` : "-")}
+            </div>
+          </div>
+        `;
+        const availabilitySection = `
           <div class="detail-section">
             <h3>Availability</h3>
             <div class="kv-list">
               ${kv("Class", pill(profile.availabilityClass || "always_on"))}
-              ${kv("Offline grace", `${escapeHtml(profile.offlineGraceSeconds || "—")}s`)}
+              ${kv("Offline grace", `${escapeHtml(profile.offlineGraceSeconds || "-")}s`)}
               ${kv("Active jobs", escapeHtml(profile.activeJobPolicy || "escalate"))}
               ${kv("Auto repair", profile.autoRepairWhenOnline === false ? pill("off", "failed") : pill("on", "online"))}
               ${kv("Critical checks", capList(profile.criticalServices || []))}
               ${kv("Expected windows", capList(profile.expectedWindows || []))}
             </div>
-            ${renderProfileEditor(bee)}
           </div>
-          <div class="detail-section">
-            <h3>Hardware</h3>
-            <div class="kv-list">
-              ${kv("Hostname", escapeHtml(hardware.hostname || "—"))}
-              ${kv("Platform", escapeHtml(hardware.platform || "—"))}
-              ${kv("CPU", escapeHtml(hardware.cpuCores ?? "—"))}
-              ${kv("Memory", hardware.memoryGb ? `${escapeHtml(hardware.memoryGb)} GB` : "—")}
-            </div>
-          </div>
+        `;
+        const capabilitySection = `
           <div class="detail-section">
             <h3>Capabilities</h3>
             ${capGroup("Runtimes", capabilities.runtimes)}
@@ -1957,30 +2125,50 @@
             ${capGroup("Tools", capabilities.tools)}
             ${capGroup("Networking", capabilities.networking)}
           </div>
+        `;
+        const rescueSection = `
           <div class="detail-section">
             <h3>Rescue</h3>
             ${
               rescue
                 ? `<div class="kv-list">
                     ${kv("Status", `${pill(rescue.status || "unknown")} <span title="${escapeHtml(rescue.lastSeenAt || "")}">${relativeTime(rescue.lastSeenAt)}</span>`)}
-                    ${kv("Version", escapeHtml(rescue.rescueVersion || "—"))}
+                    ${kv("Version", escapeHtml(rescue.rescueVersion || "-"))}
                     ${kv("Heartbeats", escapeHtml(rescue.heartbeatCount ?? 0))}
                     ${kv("Actions", capList(rescue.capabilities?.actions || []))}
                   </div>`
                 : `<div class="empty">No Rescue Agent heartbeat yet.</div>`
             }
           </div>
+        `;
+        const permissionsSection = `
           <div class="detail-section">
             <h3>Permissions</h3>
             <div class="kv-list">
               ${kv("Commands", permissions.runCommand?.unsafeAllowAll ? pill("unsafe allow all", "failed") : capList(allow))}
             </div>
           </div>
+        `;
+        const healthSection = `
           <div class="detail-section">
             <h3>Health</h3>
             ${renderHealthDetail(bee.healthChecks || [])}
           </div>
         `;
+
+        if (tab === "availability") {
+          return `${availabilitySection}${renderProfileEditor(bee)}`;
+        }
+        if (tab === "capabilities") {
+          return `<div class="bee-detail-grid">${capabilitySection}${permissionsSection}</div>`;
+        }
+        if (tab === "rescue") {
+          return rescueSection;
+        }
+        if (tab === "health") {
+          return healthSection;
+        }
+        return `<div class="bee-detail-grid">${identitySection}${hardwareSection}${availabilitySection}${rescueSection}</div>`;
       }
       function renderProfileEditor(bee) {
         const profile = bee.profile || {};
@@ -3118,6 +3306,13 @@
           button.textContent = "Copied";
           setTimeout(() => (button.textContent = original), 1200);
         });
+      });
+      els.closeBeeModal.addEventListener("click", closeBeeModal);
+      els.beeModal.addEventListener("click", (event) => {
+        if (event.target === els.beeModal) closeBeeModal();
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && state.beeModalOpen) closeBeeModal();
       });
 
       // --- tokens view ---------------------------------------------------------
