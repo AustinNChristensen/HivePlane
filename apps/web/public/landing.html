@@ -40,11 +40,13 @@
 
       html {
         scroll-behavior: smooth;
+        overflow-x: hidden;
       }
 
       body {
         margin: 0;
         min-height: 100vh;
+        overflow-x: hidden;
         background:
           radial-gradient(circle at 76% 8%, rgba(25, 227, 210, 0.22), transparent 30rem),
           radial-gradient(circle at 10% 4%, rgba(139, 92, 255, 0.28), transparent 28rem),
@@ -67,7 +69,9 @@
       }
 
       .site-shell {
+        width: 100%;
         min-height: 100vh;
+        overflow-x: hidden;
       }
 
       .nav {
@@ -240,11 +244,15 @@
 
       .product-visual {
         position: relative;
+        min-width: 0;
         min-height: 560px;
       }
 
       .dashboard-frame {
         position: relative;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
         overflow: hidden;
         border: 1px solid var(--border-strong);
         border-radius: 14px;
@@ -291,6 +299,10 @@
       }
 
       .frame-label {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
         color: var(--muted);
         font-family: var(--mono);
         font-size: 12px;
@@ -327,6 +339,7 @@
       }
 
       .mock-main {
+        min-width: 0;
         padding: 20px;
       }
 
@@ -340,6 +353,7 @@
       .mock-stat,
       .mock-panel,
       .route-card {
+        min-width: 0;
         border: 1px solid var(--border);
         border-radius: 9px;
         background: rgba(255, 255, 255, 0.025);
@@ -389,12 +403,14 @@
 
       .mock-title {
         font-weight: 700;
+        overflow-wrap: anywhere;
       }
 
       .mock-subtitle {
         margin-top: 2px;
         color: var(--muted);
         font-size: 12px;
+        overflow-wrap: anywhere;
       }
 
       .status {
@@ -407,6 +423,7 @@
         color: var(--text);
         background: color-mix(in srgb, var(--good) 16%, var(--panel-2));
         font-size: 11px;
+        white-space: nowrap;
       }
 
       .status::before {
@@ -462,7 +479,7 @@
 
       .floating-card {
         position: absolute;
-        right: -18px;
+        right: 12px;
         bottom: 34px;
         width: min(300px, 56%);
         padding: 16px;
@@ -675,7 +692,7 @@
         .floating-card {
           position: static;
           width: auto;
-          margin: 12px;
+          margin: 12px 0 0;
         }
 
         footer {
@@ -694,6 +711,20 @@
 
         .mock-stats {
           grid-template-columns: 1fr;
+        }
+
+        .mock-main {
+          padding: 14px;
+        }
+
+        .mock-row {
+          grid-template-columns: 1fr;
+          gap: 8px;
+          align-items: start;
+        }
+
+        .status {
+          justify-self: start;
         }
 
         .section {
