@@ -97,6 +97,7 @@ function buildPopulatedState(): HiveServerState {
     id: "task_aaaa",
     title: "Persist task",
     instructions: "Keep this task across restarts.",
+    targetSystemId: "public",
     requirements: {
       runtimes: ["openclaw"],
       tools: ["filesystem"],

@@ -31,11 +31,13 @@ import {
   extractBearer,
   formatPairingKeyForDisplay,
   generateBootstrapToken,
+  generateOperatorToken,
   generatePairingKey,
   generateSessionToken,
   getRequiredAdminToken,
   isAuthRequired,
   looksLikeBootstrapToken,
+  looksLikeOperatorToken,
   looksLikePairingKey,
   looksLikeSessionToken,
   PAIRING_KEY_DEFAULT_TTL_MS,
@@ -214,6 +216,55 @@ export type HiveServerState = {
   automations: Map<string, HiveAutomationRecord>;
   /** Operator/security audit entries keyed by audit id. */
   auditLog: Map<string, AuditLogEntry>;
+  /** Human/operator identities keyed by user id. */
+  operators: Map<string, HiveOperatorRecord>;
+  /** System authorization domains keyed by system id. */
+  systems: Map<string, HiveSystemRecord>;
+  /** User grants keyed by `${userId}:${systemId}:${permission}`. */
+  userSystemPermissions: Map<string, UserSystemPermissionRecord>;
+  /** Bee access keyed by `${beeId}:${systemId}`. */
+  beeSystemAccess: Map<string, BeeSystemAccessRecord>;
+};
+
+export type HiveOrgRole = "owner" | "admin" | "developer" | "operator" | "viewer";
+export type HiveSystemRisk = "low" | "medium" | "high" | "critical";
+export type HiveSystemPermission = "view" | "run" | "approve" | "admin" | "audit";
+export type BeeSystemAccessMode = "none" | "limited" | "universal";
+
+export type HiveOperatorRecord = {
+  userId: string;
+  email: string;
+  name?: string;
+  role: HiveOrgRole;
+  tokenHash: string;
+  createdAt: string;
+  revokedAt?: string;
+};
+
+export type HiveSystemRecord = {
+  id: string;
+  slug: string;
+  name: string;
+  risk: HiveSystemRisk;
+  description?: string;
+  archivedAt?: string;
+  createdAt: string;
+};
+
+export type UserSystemPermissionRecord = {
+  userId: string;
+  systemId: string;
+  permission: HiveSystemPermission;
+  grantedByUserId?: string;
+  createdAt: string;
+};
+
+export type BeeSystemAccessRecord = {
+  beeId: string;
+  systemId: string;
+  access: BeeSystemAccessMode;
+  grantedByUserId?: string;
+  createdAt: string;
 };
 
 export type AuditLogEntry = {
@@ -252,6 +303,7 @@ export type HiveTaskRecord = {
   id: string;
   title: string;
   instructions: string;
+  targetSystemId: string;
   requestedBy?: string;
   preferredBeeId?: string;
   requirements: HiveTaskRequirements;
@@ -270,6 +322,7 @@ export type HiveAutomationRecord = {
   id: string;
   title: string;
   instructions: string;
+  targetSystemId: string;
   requestedBy?: string;
   preferredBeeId?: string;
   requirements: HiveTaskRequirements;
@@ -335,7 +388,7 @@ export type CreateHiveServerOptions = {
 };
 
 export function createHiveServerState(): HiveServerState {
-  return {
+  const state: HiveServerState = {
     bees: new Map(),
     bootstrapTokens: new Map(),
     sessions: new Map(),
@@ -346,7 +399,13 @@ export function createHiveServerState(): HiveServerState {
     tasks: new Map(),
     automations: new Map(),
     auditLog: new Map(),
+    operators: new Map(),
+    systems: new Map(),
+    userSystemPermissions: new Map(),
+    beeSystemAccess: new Map(),
   };
+  seedDefaultSystems(state, new Date("2026-01-01T00:00:00.000Z"));
+  return state;
 }
 
 /** How long a freshly-minted pairing key stays valid by default. */
@@ -532,6 +591,7 @@ const TaskRequirementsSchema = z
 const CreateHiveTaskRequestSchema = z.object({
   title: z.string().min(1).max(120),
   instructions: z.string().min(1).max(8000),
+  targetSystemId: z.string().min(1).default("public"),
   requestedBy: z.string().min(1).max(120).optional(),
   preferredBeeId: z.string().min(1).optional(),
   requirements: TaskRequirementsSchema,
@@ -556,6 +616,24 @@ const CreateHiveAutomationRequestSchema = CreateHiveTaskRequestSchema.extend({
     .max(60 * 60 * 24 * 30)
     .optional(),
   enabled: z.boolean().default(true),
+});
+
+const CreateOperatorRequestSchema = z.object({
+  email: z.string().email(),
+  name: z.string().min(1).max(120).optional(),
+  role: z.enum(["owner", "admin", "developer", "operator", "viewer"]).default("operator"),
+});
+
+const GrantSystemPermissionRequestSchema = z.object({
+  userId: z.string().min(1),
+  systemId: z.string().min(1).default("public"),
+  permissions: z.array(z.enum(["view", "run", "approve", "admin", "audit"])).min(1),
+});
+
+const GrantBeeSystemAccessRequestSchema = z.object({
+  beeId: z.string().min(1),
+  systemId: z.string().min(1).default("public"),
+  access: z.enum(["none", "limited", "universal"]).default("limited"),
 });
 
 const HIVE_VERSION = "0.0.7";
@@ -678,6 +756,114 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
       if (request.method === "GET" && url.pathname === "/api/hive-info") {
         const info = await getHiveInfo(bindHost, bindPort);
         return sendJson(response, 200, info);
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/auth/me") {
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
+        return sendJson(response, 200, {
+          actor,
+          permissions: serializeActorPermissions(state, actor),
+        });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/systems") {
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
+        return sendJson(response, 200, {
+          systems: serializeSystemsForActor(state, actor),
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/operators") {
+        const actor = requireOperatorOrSend(request, response, state, adminToken, {
+          minRole: "admin",
+        });
+        if (!actor) return;
+        const { body } = await readJson(request);
+        const parsed = CreateOperatorRequestSchema.safeParse(body);
+        if (!parsed.success) {
+          return sendJson(response, 400, {
+            error: "bad_request",
+            message: parsed.error.message,
+          });
+        }
+        const current = now();
+        const created = createOperator(state, parsed.data, current);
+        recordAudit(state, request, current, {
+          action: "operator.create",
+          resourceType: "operator",
+          resourceId: created.operator.userId,
+          data: { email: created.operator.email, role: created.operator.role },
+        });
+        markDirty();
+        return sendJson(response, 200, {
+          operator: redactOperator(created.operator),
+          token: created.token,
+          tokenId: created.tokenId,
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/system-permissions") {
+        const actor = requireOperatorOrSend(request, response, state, adminToken, {
+          minRole: "admin",
+        });
+        if (!actor) return;
+        const { body } = await readJson(request);
+        const parsed = GrantSystemPermissionRequestSchema.safeParse(body);
+        if (!parsed.success) {
+          return sendJson(response, 400, {
+            error: "bad_request",
+            message: parsed.error.message,
+          });
+        }
+        if (!state.operators.has(parsed.data.userId)) {
+          return sendJson(response, 404, { error: "not_found", reason: "operator not found" });
+        }
+        if (!state.systems.has(parsed.data.systemId)) {
+          return sendJson(response, 404, { error: "not_found", reason: "system not found" });
+        }
+        const current = now();
+        const grants = grantSystemPermissions(state, parsed.data, actor, current);
+        recordAudit(state, request, current, {
+          action: "system_permission.grant",
+          resourceType: "system",
+          resourceId: parsed.data.systemId,
+          data: { userId: parsed.data.userId, permissions: parsed.data.permissions },
+        });
+        markDirty();
+        return sendJson(response, 200, { grants });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/bee-system-access") {
+        const actor = requireOperatorOrSend(request, response, state, adminToken, {
+          minRole: "admin",
+        });
+        if (!actor) return;
+        const { body } = await readJson(request);
+        const parsed = GrantBeeSystemAccessRequestSchema.safeParse(body);
+        if (!parsed.success) {
+          return sendJson(response, 400, {
+            error: "bad_request",
+            message: parsed.error.message,
+          });
+        }
+        if (!state.bees.has(parsed.data.beeId)) {
+          return sendJson(response, 404, { error: "not_found", reason: "bee not registered" });
+        }
+        if (!state.systems.has(parsed.data.systemId)) {
+          return sendJson(response, 404, { error: "not_found", reason: "system not found" });
+        }
+        const current = now();
+        const grant = grantBeeSystemAccess(state, parsed.data, actor, current);
+        recordAudit(state, request, current, {
+          action: "bee_system_access.grant",
+          resourceType: "bee",
+          resourceId: parsed.data.beeId,
+          data: { systemId: parsed.data.systemId, access: parsed.data.access },
+        });
+        markDirty();
+        return sendJson(response, 200, { grant });
       }
 
       if (request.method === "GET" && url.pathname === "/api/bees") {
@@ -904,10 +1090,23 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
 
       const approveJobMatch = /^\/api\/jobs\/([^/]+)\/approve$/.exec(url.pathname);
       if (request.method === "POST" && approveJobMatch) {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
         const jobId = decodeURIComponent(approveJobMatch[1] ?? "");
-        const job = approveJob(state.jobsState, jobId);
-        if (!job) return sendJson(response, 404, { error: "not_found" });
+        const existing = findJob(state.jobsState, jobId);
+        if (!existing) return sendJson(response, 404, { error: "not_found" });
+        if (
+          !requireSystemPermissionOrSend(
+            response,
+            state,
+            actor,
+            jobTargetSystemId(existing),
+            "approve",
+          )
+        ) {
+          return;
+        }
+        const job = approveJob(state.jobsState, jobId) ?? existing;
         recordAudit(state, request, now(), {
           action: "job.approve",
           resourceType: "job",
@@ -920,10 +1119,23 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
 
       const denyJobMatch = /^\/api\/jobs\/([^/]+)\/deny$/.exec(url.pathname);
       if (request.method === "POST" && denyJobMatch) {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
         const jobId = decodeURIComponent(denyJobMatch[1] ?? "");
-        const job = denyJob(state.jobsState, jobId, now());
-        if (!job) return sendJson(response, 404, { error: "not_found" });
+        const existing = findJob(state.jobsState, jobId);
+        if (!existing) return sendJson(response, 404, { error: "not_found" });
+        if (
+          !requireSystemPermissionOrSend(
+            response,
+            state,
+            actor,
+            jobTargetSystemId(existing),
+            "approve",
+          )
+        ) {
+          return;
+        }
+        const job = denyJob(state.jobsState, jobId, now()) ?? existing;
         recordAudit(state, request, now(), {
           action: "job.deny",
           resourceType: "job",
@@ -1254,7 +1466,8 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
       }
 
       if (request.method === "POST" && url.pathname === "/api/tasks") {
-        if (!checkAdmin(request, response, adminToken)) return;
+        const actor = requireOperatorOrSend(request, response, state, adminToken);
+        if (!actor) return;
         const { body } = await readJson(request);
         const parsed = CreateHiveTaskRequestSchema.safeParse(body);
         if (!parsed.success) {
@@ -1262,6 +1475,11 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
             error: "bad_request",
             message: parsed.error.message,
           });
+        }
+        if (
+          !requireSystemPermissionOrSend(response, state, actor, parsed.data.targetSystemId, "run")
+        ) {
+          return;
         }
         const current = now();
         const task = createHiveTask(state, parsed.data, current);
@@ -1272,6 +1490,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
           resourceId: task.id,
           data: {
             title: task.title,
+            targetSystemId: task.targetSystemId,
             requestedBy: task.requestedBy ?? null,
             preferredBeeId: task.preferredBeeId ?? null,
           },
@@ -1366,6 +1585,164 @@ function checkAdmin(
   return true;
 }
 
+type OperatorAuth =
+  | { ok: true; actor: AuthenticatedOperator }
+  | { ok: false; status: number; body: Record<string, unknown> };
+
+type AuthenticatedOperator = {
+  userId: string;
+  role: HiveOrgRole;
+  email?: string;
+  adminToken: boolean;
+};
+
+function requireOperator(
+  request: IncomingMessage,
+  state: HiveServerState,
+  adminToken: string | undefined,
+  options: { minRole?: HiveOrgRole } = {},
+): OperatorAuth {
+  const bearer = extractBearer(request);
+  if ("error" in bearer) {
+    return { ok: false, status: 401, body: { error: "unauthorized", reason: bearer.error } };
+  }
+
+  if (adminToken && safeEquals(bearer.token, adminToken)) {
+    return { ok: true, actor: { userId: "admin-token", role: "owner", adminToken: true } };
+  }
+
+  if (!looksLikeOperatorToken(bearer.token)) {
+    return {
+      ok: false,
+      status: 401,
+      body: { error: "unauthorized", reason: "operator token shape invalid" },
+    };
+  }
+
+  const tokenHash = sha256Hex(bearer.token);
+  const operator = [...state.operators.values()].find((candidate) =>
+    safeEquals(candidate.tokenHash, tokenHash),
+  );
+  if (!operator) {
+    return {
+      ok: false,
+      status: 401,
+      body: { error: "unauthorized", reason: "operator token not recognized" },
+    };
+  }
+  if (operator.revokedAt) {
+    return {
+      ok: false,
+      status: 401,
+      body: { error: "unauthorized", reason: "operator token revoked" },
+    };
+  }
+  const actor: AuthenticatedOperator = {
+    userId: operator.userId,
+    role: operator.role,
+    email: operator.email,
+    adminToken: false,
+  };
+  if (options.minRole && !roleAtLeast(actor.role, options.minRole)) {
+    return {
+      ok: false,
+      status: 403,
+      body: {
+        error: "forbidden",
+        reason: `requires ${options.minRole} role or higher`,
+      },
+    };
+  }
+  return { ok: true, actor };
+}
+
+function requireOperatorOrSend(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: HiveServerState,
+  adminToken: string | undefined,
+  options: { minRole?: HiveOrgRole } = {},
+): AuthenticatedOperator | null {
+  const auth = requireOperator(request, state, adminToken, options);
+  if (!auth.ok) {
+    sendJson(response, auth.status, auth.body);
+    return null;
+  }
+  return auth.actor;
+}
+
+const ROLE_RANK: Record<HiveOrgRole, number> = {
+  viewer: 0,
+  operator: 1,
+  developer: 2,
+  admin: 3,
+  owner: 4,
+};
+const SYSTEM_PERMISSIONS: HiveSystemPermission[] = ["view", "run", "approve", "admin", "audit"];
+
+function roleAtLeast(role: HiveOrgRole, minRole: HiveOrgRole): boolean {
+  return ROLE_RANK[role] >= ROLE_RANK[minRole];
+}
+
+function hasSystemPermission(
+  state: HiveServerState,
+  actor: AuthenticatedOperator,
+  systemId: string,
+  permission: HiveSystemPermission,
+): boolean {
+  if (actor.adminToken || actor.role === "owner" || actor.role === "admin") return true;
+  if (!state.systems.has(systemId)) return false;
+  const direct = state.userSystemPermissions.has(
+    systemPermissionKey(actor.userId, systemId, permission),
+  );
+  if (direct) return true;
+  if (permission === "view") {
+    return state.userSystemPermissions.has(systemPermissionKey(actor.userId, systemId, "run"));
+  }
+  return false;
+}
+
+function requireSystemPermissionOrSend(
+  response: ServerResponse,
+  state: HiveServerState,
+  actor: AuthenticatedOperator,
+  systemId: string,
+  permission: HiveSystemPermission,
+): boolean {
+  if (!state.systems.has(systemId)) {
+    sendJson(response, 404, { error: "not_found", reason: `system ${systemId} not found` });
+    return false;
+  }
+  if (!hasSystemPermission(state, actor, systemId, permission)) {
+    sendJson(response, 403, {
+      error: "forbidden",
+      reason: `operator lacks ${permission} permission for ${systemId}`,
+    });
+    return false;
+  }
+  return true;
+}
+
+function beeCanAccessSystem(state: HiveServerState, beeId: string, systemId: string): boolean {
+  const direct = state.beeSystemAccess.get(beeSystemAccessKey(beeId, systemId));
+  if (direct) return direct.access !== "none";
+  const universal = state.beeSystemAccess.get(beeSystemAccessKey(beeId, "*"));
+  if (universal) return universal.access === "universal";
+  return systemId === "public";
+}
+
+function systemPermissionKey(
+  userId: string,
+  systemId: string,
+  permission: HiveSystemPermission,
+): string {
+  return `${userId}:${systemId}:${permission}`;
+}
+
+function beeSystemAccessKey(beeId: string, systemId: string): string {
+  return `${beeId}:${systemId}`;
+}
+
 export function createBootstrapToken(
   state: HiveServerState,
   payload: BootstrapTokenCreateRequest,
@@ -1386,6 +1763,112 @@ export function createBootstrapToken(
     token: rawToken,
     expiresAt: expiresAt.toISOString(),
   };
+}
+
+function seedDefaultSystems(state: HiveServerState, now: Date): void {
+  const defaults: Array<Omit<HiveSystemRecord, "createdAt">> = [
+    {
+      id: "infra",
+      slug: "infra",
+      name: "Infrastructure",
+      risk: "high",
+      description: "Hive, Bee, Rescue, installers, service restarts, and fleet health.",
+    },
+    {
+      id: "dev",
+      slug: "dev",
+      name: "Development",
+      risk: "medium",
+      description: "Repositories, coding agents, local development tools, and build/test tasks.",
+    },
+    {
+      id: "personal",
+      slug: "personal",
+      name: "Personal Assistant",
+      risk: "high",
+      description: "Personal workflows such as Messages, Mail, Calendar, and local apps.",
+    },
+    {
+      id: "finance",
+      slug: "finance",
+      name: "Finance",
+      risk: "critical",
+      description: "Accounting, payments, tax, and other high-risk financial workflows.",
+    },
+    {
+      id: "public",
+      slug: "public",
+      name: "Public Demo",
+      risk: "low",
+      description: "Low-risk examples and demo work.",
+    },
+  ];
+
+  for (const system of defaults) {
+    if (state.systems.has(system.id)) continue;
+    state.systems.set(system.id, { ...system, createdAt: now.toISOString() });
+  }
+}
+
+function createOperator(
+  state: HiveServerState,
+  request: z.infer<typeof CreateOperatorRequestSchema>,
+  now: Date,
+): { operator: HiveOperatorRecord; token: string; tokenId: string } {
+  const token = generateOperatorToken();
+  const email = request.email.trim().toLowerCase();
+  const userId = `user_${sha256Hex(email).slice(0, 16)}`;
+  const operator: HiveOperatorRecord = {
+    userId,
+    email,
+    ...(request.name ? { name: request.name.trim() } : {}),
+    role: request.role,
+    tokenHash: token.tokenHash,
+    createdAt: now.toISOString(),
+  };
+  state.operators.set(userId, operator);
+  return { operator, token: token.rawToken, tokenId: token.tokenId };
+}
+
+function grantSystemPermissions(
+  state: HiveServerState,
+  request: z.infer<typeof GrantSystemPermissionRequestSchema>,
+  actor: AuthenticatedOperator,
+  now: Date,
+): UserSystemPermissionRecord[] {
+  const grants: UserSystemPermissionRecord[] = [];
+  for (const permission of request.permissions) {
+    const grant: UserSystemPermissionRecord = {
+      userId: request.userId,
+      systemId: request.systemId,
+      permission,
+      grantedByUserId: actor.userId,
+      createdAt: now.toISOString(),
+    };
+    state.userSystemPermissions.set(
+      systemPermissionKey(request.userId, request.systemId, permission),
+      grant,
+    );
+    grants.push(grant);
+  }
+  return grants;
+}
+
+function grantBeeSystemAccess(
+  state: HiveServerState,
+  request: z.infer<typeof GrantBeeSystemAccessRequestSchema>,
+  actor: AuthenticatedOperator,
+  now: Date,
+): BeeSystemAccessRecord {
+  const grant: BeeSystemAccessRecord = {
+    beeId: request.beeId,
+    systemId: request.systemId,
+    access: request.access,
+    grantedByUserId: actor.userId,
+    createdAt: now.toISOString(),
+  };
+  state.beeSystemAccess.set(beeSystemAccessKey(request.beeId, request.systemId), grant);
+  return grant;
 }
 
 type RegisterError = { error: string; reason: string };
@@ -1710,6 +2193,14 @@ function serializeJob(job: JobRecord): Record<string, unknown> {
   };
 }
 
+function jobTargetSystemId(job: JobRecord): string {
+  if (typeof job.payload.targetSystemId === "string") return job.payload.targetSystemId;
+  if (job.context?.metadata && typeof job.context.metadata.targetSystemId === "string") {
+    return job.context.metadata.targetSystemId;
+  }
+  return "public";
+}
+
 function jobNeedsApproval(job: JobRecord): boolean {
   if (AUTO_APPROVED_JOB_TYPES.has(job.type)) return false;
   if (job.type === "run_command") {
@@ -1778,6 +2269,41 @@ function serializeTask(task: HiveTaskRecord): HiveTaskRecord {
 
 function serializeAuditLog(state: HiveServerState): AuditLogEntry[] {
   return [...state.auditLog.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function redactOperator(operator: HiveOperatorRecord): Omit<HiveOperatorRecord, "tokenHash"> {
+  const { tokenHash: _tokenHash, ...safe } = operator;
+  return safe;
+}
+
+function serializeActorPermissions(
+  state: HiveServerState,
+  actor: AuthenticatedOperator,
+): Record<string, HiveSystemPermission[]> {
+  const permissions: Record<string, HiveSystemPermission[]> = {};
+  for (const system of state.systems.values()) {
+    const allowed = SYSTEM_PERMISSIONS.filter((permission) =>
+      hasSystemPermission(state, actor, system.id, permission),
+    );
+    if (allowed.length > 0) permissions[system.id] = allowed;
+  }
+  return permissions;
+}
+
+function serializeSystemsForActor(
+  state: HiveServerState,
+  actor: AuthenticatedOperator,
+): Array<HiveSystemRecord & { permissions: HiveSystemPermission[] }> {
+  return [...state.systems.values()]
+    .filter((system) => !system.archivedAt)
+    .map((system) => ({
+      ...system,
+      permissions: SYSTEM_PERMISSIONS.filter((permission) =>
+        hasSystemPermission(state, actor, system.id, permission),
+      ),
+    }))
+    .filter((system) => system.permissions.length > 0)
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function recordAudit(
@@ -1850,6 +2376,7 @@ function createHiveTask(
     id: generateTaskId(),
     title: request.title.trim(),
     instructions: request.instructions.trim(),
+    targetSystemId: request.targetSystemId,
     ...(request.requestedBy ? { requestedBy: request.requestedBy.trim() } : {}),
     ...(request.preferredBeeId ? { preferredBeeId: request.preferredBeeId } : {}),
     requirements: normalizeTaskRequirements(request.requirements),
@@ -1874,6 +2401,7 @@ function createHiveAutomation(
     id: generateAutomationId(),
     title: request.title.trim(),
     instructions: request.instructions.trim(),
+    targetSystemId: request.targetSystemId,
     ...(request.requestedBy ? { requestedBy: request.requestedBy.trim() } : {}),
     ...(request.preferredBeeId ? { preferredBeeId: request.preferredBeeId } : {}),
     requirements: normalizeTaskRequirements(request.requirements),
@@ -1923,6 +2451,7 @@ function runAutomation(
     {
       title: automation.title,
       instructions: automation.instructions,
+      targetSystemId: automation.targetSystemId,
       requestedBy: automation.requestedBy ?? `automation:${automation.id}`,
       ...(automation.preferredBeeId ? { preferredBeeId: automation.preferredBeeId } : {}),
       requirements: automation.requirements,
@@ -2005,6 +2534,7 @@ function scheduleHiveTask(state: HiveServerState, task: HiveTaskRecord, now: Dat
         taskId: task.id,
         title: task.title,
         instructions: task.instructions,
+        targetSystemId: task.targetSystemId,
         requestedBy: task.requestedBy ?? "hive",
         requirements: task.requirements,
         context: task.context ?? emptyWorkContext(),
@@ -2032,6 +2562,7 @@ function selectBeeForTask(
       if (bee.status !== "online") return false;
       if (bee.operationalState !== "healthy") return false;
       if (!matchesTaskRequirements(bee, task.requirements)) return false;
+      if (!beeCanAccessSystem(state, bee.beeId, task.targetSystemId)) return false;
       return true;
     })
     .sort((a, b) => {

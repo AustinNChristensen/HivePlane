@@ -518,6 +518,202 @@ describe("Hive server", () => {
     );
   });
 
+  it("enforces operator run permissions and Bee system access for Hive tasks", async () => {
+    const state = createHiveServerState();
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_agent",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      capabilities: {
+        runtimes: ["openclaw"],
+        modelBackends: [],
+        models: [],
+        localModels: [],
+        tools: ["github"],
+        networking: [],
+        hardware: {
+          platform: "darwin-arm64",
+          hostname: "bee-agent",
+          cpuCores: 10,
+          memoryGb: 32,
+        },
+      },
+      healthChecks: [],
+    });
+
+    await withServer(
+      { state, adminToken: "secret", now: () => new Date("2026-05-09T08:00:05.000Z") },
+      async (baseUrl) => {
+        const operatorResponse = await fetch(`${baseUrl}/api/operators`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({ email: "operator@example.com", role: "operator" }),
+        });
+        expect(operatorResponse.status).toBe(200);
+        const operatorBody = (await operatorResponse.json()) as {
+          token: string;
+          operator: { userId: string };
+        };
+
+        const forbiddenTask = await fetch(`${baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${operatorBody.token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            title: "Finance task",
+            instructions: "Inspect finance files.",
+            targetSystemId: "finance",
+            requirements: { runtimes: ["openclaw"], tools: ["github"] },
+          }),
+        });
+        expect(forbiddenTask.status).toBe(403);
+
+        const grantResponse = await fetch(`${baseUrl}/api/system-permissions`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            userId: operatorBody.operator.userId,
+            systemId: "finance",
+            permissions: ["run"],
+          }),
+        });
+        expect(grantResponse.status).toBe(200);
+
+        const blockedTask = await fetch(`${baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${operatorBody.token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            title: "Finance task",
+            instructions: "Inspect finance files.",
+            targetSystemId: "finance",
+            requirements: { runtimes: ["openclaw"], tools: ["github"] },
+          }),
+        });
+        expect(blockedTask.status).toBe(200);
+        const blockedBody = (await blockedTask.json()) as { task: { status: string } };
+        expect(blockedBody.task.status).toBe("blocked");
+
+        const beeGrant = await fetch(`${baseUrl}/api/bee-system-access`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            beeId: "bee_agent",
+            systemId: "finance",
+            access: "limited",
+          }),
+        });
+        expect(beeGrant.status).toBe(200);
+
+        const assignedTask = await fetch(`${baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${operatorBody.token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            title: "Finance task",
+            instructions: "Inspect finance files.",
+            targetSystemId: "finance",
+            requirements: { runtimes: ["openclaw"], tools: ["github"] },
+          }),
+        });
+        expect(assignedTask.status).toBe(200);
+        const assignedBody = (await assignedTask.json()) as {
+          task: { status: string; assignedBeeId: string };
+        };
+        expect(assignedBody.task).toMatchObject({
+          status: "assigned",
+          assignedBeeId: "bee_agent",
+        });
+      },
+    );
+  });
+
+  it("requires approve permission for system-scoped job approval decisions", async () => {
+    const state = createHiveServerState();
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_agent",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      healthChecks: [],
+    });
+
+    await withServer(
+      { state, adminToken: "secret", now: () => new Date("2026-05-09T08:00:05.000Z") },
+      async (baseUrl) => {
+        const operatorResponse = await fetch(`${baseUrl}/api/operators`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({ email: "approver@example.com", role: "operator" }),
+        });
+        const operatorBody = (await operatorResponse.json()) as {
+          token: string;
+          operator: { userId: string };
+        };
+
+        const grantRun = await fetch(`${baseUrl}/api/system-permissions`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            userId: operatorBody.operator.userId,
+            systemId: "finance",
+            permissions: ["run"],
+          }),
+        });
+        expect(grantRun.status).toBe(200);
+
+        const jobResponse = await fetch(`${baseUrl}/api/bees/bee_agent/jobs`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            type: "run_command",
+            payload: { command: "rm -rf /tmp/example" },
+            context: { metadata: { targetSystemId: "finance" } },
+          }),
+        });
+        expect(jobResponse.status).toBe(200);
+        const jobBody = (await jobResponse.json()) as { job: { id: string; status: string } };
+        expect(jobBody.job.status).toBe("waiting_for_approval");
+
+        const forbiddenApproval = await fetch(`${baseUrl}/api/jobs/${jobBody.job.id}/approve`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${operatorBody.token}` },
+        });
+        expect(forbiddenApproval.status).toBe(403);
+
+        const grantApprove = await fetch(`${baseUrl}/api/system-permissions`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            userId: operatorBody.operator.userId,
+            systemId: "finance",
+            permissions: ["approve"],
+          }),
+        });
+        expect(grantApprove.status).toBe(200);
+
+        const approved = await fetch(`${baseUrl}/api/jobs/${jobBody.job.id}/approve`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${operatorBody.token}` },
+        });
+        expect(approved.status).toBe(200);
+        const approvedBody = (await approved.json()) as { job: { status: string } };
+        expect(approvedBody.job.status).toBe("queued");
+      },
+    );
+  });
+
   it("blocks Hive tasks when no healthy Bee matches requirements", async () => {
     const state = createHiveServerState();
     upsertBeeHeartbeat(state, {

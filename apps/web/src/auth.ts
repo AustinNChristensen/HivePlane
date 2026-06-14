@@ -4,6 +4,7 @@ import type { IncomingMessage } from "node:http";
 const BOOTSTRAP_TOKEN_PREFIX = "hp_boot_";
 const PAIRING_KEY_PREFIX = "hp_pair_";
 const SESSION_TOKEN_PREFIX = "hp_sess_";
+const OPERATOR_TOKEN_PREFIX = "hp_user_";
 
 /**
  * Crockford base32 alphabet (no `0/O/1/I/L/U`). Pairing keys are read aloud and
@@ -74,6 +75,16 @@ export function generateSessionToken(): {
   return { sessionId, rawToken, tokenHash: sha256Hex(rawToken) };
 }
 
+export function generateOperatorToken(): {
+  tokenId: string;
+  rawToken: string;
+  tokenHash: string;
+} {
+  const tokenId = `ot_${randomBytes(8).toString("hex")}`;
+  const rawToken = `${OPERATOR_TOKEN_PREFIX}${randomBytes(24).toString("base64url")}`;
+  return { tokenId, rawToken, tokenHash: sha256Hex(rawToken) };
+}
+
 export function looksLikeBootstrapToken(token: string): boolean {
   return token.startsWith(BOOTSTRAP_TOKEN_PREFIX);
 }
@@ -84,6 +95,10 @@ export function looksLikePairingKey(token: string): boolean {
 
 export function looksLikeSessionToken(token: string): boolean {
   return token.startsWith(SESSION_TOKEN_PREFIX);
+}
+
+export function looksLikeOperatorToken(token: string): boolean {
+  return token.startsWith(OPERATOR_TOKEN_PREFIX);
 }
 
 /**

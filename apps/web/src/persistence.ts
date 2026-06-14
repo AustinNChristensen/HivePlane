@@ -7,11 +7,15 @@ import { createJobsState, type JobRecord } from "./jobs.js";
 import {
   createHiveServerState,
   type AuditLogEntry,
+  type BeeSystemAccessRecord,
   type HiveBeeRecord,
   type HiveAutomationRecord,
+  type HiveOperatorRecord,
   type HiveServerState,
+  type HiveSystemRecord,
   type HiveTaskRecord,
   type IncidentRecord,
+  type UserSystemPermissionRecord,
 } from "./server.js";
 
 /**
@@ -171,6 +175,10 @@ type PersistedSnapshot = {
   tasks?: Array<[string, HiveTaskRecord]>;
   automations?: Array<[string, HiveAutomationRecord]>;
   auditLog?: Array<[string, AuditLogEntry]>;
+  operators?: Array<[string, HiveOperatorRecord]>;
+  systems?: Array<[string, HiveSystemRecord]>;
+  userSystemPermissions?: Array<[string, UserSystemPermissionRecord]>;
+  beeSystemAccess?: Array<[string, BeeSystemAccessRecord]>;
 };
 
 type PersistedBootstrapToken = Omit<BootstrapTokenRecord, "expiresAt" | "consumedAt"> & {
@@ -201,6 +209,10 @@ function serialize(state: HiveServerState): PersistedSnapshot {
     tasks: [...state.tasks.entries()],
     automations: [...state.automations.entries()],
     auditLog: [...state.auditLog.entries()],
+    operators: [...state.operators.entries()],
+    systems: [...state.systems.entries()],
+    userSystemPermissions: [...state.userSystemPermissions.entries()],
+    beeSystemAccess: [...state.beeSystemAccess.entries()],
   };
 }
 
@@ -240,6 +252,7 @@ function rehydrate(snapshot: PersistedSnapshot): HiveServerState {
   for (const [k, v] of snapshot.tasks ?? []) {
     state.tasks.set(k, {
       ...v,
+      targetSystemId: v.targetSystemId ?? "public",
       ...(v.context
         ? {
             context: {
@@ -256,8 +269,19 @@ function rehydrate(snapshot: PersistedSnapshot): HiveServerState {
         : {}),
     });
   }
-  for (const [k, v] of snapshot.automations ?? []) state.automations.set(k, v);
+  for (const [k, v] of snapshot.automations ?? []) {
+    state.automations.set(k, { ...v, targetSystemId: v.targetSystemId ?? "public" });
+  }
   for (const [k, v] of snapshot.auditLog ?? []) state.auditLog.set(k, v);
+  for (const [k, v] of snapshot.operators ?? []) state.operators.set(k, v);
+  if (snapshot.systems) {
+    state.systems.clear();
+    for (const [k, v] of snapshot.systems) state.systems.set(k, v);
+  }
+  for (const [k, v] of snapshot.userSystemPermissions ?? []) {
+    state.userSystemPermissions.set(k, v);
+  }
+  for (const [k, v] of snapshot.beeSystemAccess ?? []) state.beeSystemAccess.set(k, v);
   return state;
 }
 
