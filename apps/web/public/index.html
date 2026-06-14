@@ -2263,6 +2263,7 @@
             saveBeeProfile(form);
           });
         });
+        bindIncidentJobButtons(els.beeModalBody);
       }
       function beeDetailTabs() {
         return [
@@ -2270,6 +2271,7 @@
           { id: "availability", label: "Availability" },
           { id: "capabilities", label: "Capabilities" },
           { id: "rescue", label: "Rescue" },
+          { id: "recovery", label: "Recovery" },
           { id: "health", label: "Health" },
         ];
       }
@@ -2338,7 +2340,11 @@
             renderIncidents(state.incidents);
           });
         });
-        els.incidentsBody.querySelectorAll("[data-action='incident-job']").forEach((button) => {
+        bindIncidentJobButtons(els.incidentsBody);
+      }
+
+      function bindIncidentJobButtons(root) {
+        root.querySelectorAll("[data-action='incident-job']").forEach((button) => {
           button.addEventListener("click", () => {
             state.selectedJobId = button.dataset.jobId;
             state.selectedJob = null;
@@ -2602,6 +2608,12 @@
             }
           </div>
         `;
+        const recoverySection = `
+          <div class="detail-section">
+            <h3>Recovery History</h3>
+            ${renderBeeRecoveryHistory(bee.beeId)}
+          </div>
+        `;
         const permissionsSection = `
           <div class="detail-section">
             <h3>Permissions</h3>
@@ -2626,10 +2638,33 @@
         if (tab === "rescue") {
           return rescueSection;
         }
+        if (tab === "recovery") {
+          return recoverySection;
+        }
         if (tab === "health") {
           return healthSection;
         }
         return `<div class="bee-detail-grid">${identitySection}${hardwareSection}${availabilitySection}${rescueSection}</div>`;
+      }
+      function renderBeeRecoveryHistory(beeId) {
+        const incidents = state.incidents
+          .filter((incident) => incident.beeId === beeId)
+          .sort(
+            (a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime(),
+          );
+        if (!incidents.length) {
+          return `<div class="empty">No incidents or recovery attempts recorded for this Bee.</div>`;
+        }
+        return incidents
+          .map(
+            (incident) => `
+              <details ${incident.status !== "resolved" ? "open" : ""}>
+                <summary>${pill(incident.status || "open")} ${escapeHtml(incident.summary || incident.kind || incident.id)}</summary>
+                ${renderIncidentDetail(incident)}
+              </details>
+            `,
+          )
+          .join("");
       }
       function renderProfileEditor(bee) {
         const profile = bee.profile || {};
