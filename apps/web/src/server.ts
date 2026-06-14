@@ -43,6 +43,7 @@ import { getHiveInfo } from "./hive-info.js";
 import {
   appendEvents,
   approveJob,
+  cancelJob,
   claimPendingJobs,
   completeJob,
   CreateJobRequestSchema,
@@ -194,7 +195,14 @@ type DeviceProfilePatchResult =
   | { profile: BeeDeviceProfile; warnings: string[] }
   | { error: string; reason: string };
 
-export type HiveTaskStatus = "queued" | "assigned" | "running" | "succeeded" | "failed" | "blocked";
+export type HiveTaskStatus =
+  | "queued"
+  | "assigned"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "blocked"
+  | "cancelled";
 
 export type HiveTaskRequirements = {
   runtimes: string[];
@@ -874,6 +882,30 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         return sendJson(response, 200, { task: serializeTask(task) });
       }
 
+      const cancelTaskMatch = /^\/api\/tasks\/([^/]+)\/cancel$/.exec(url.pathname);
+      if (request.method === "POST" && cancelTaskMatch) {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const taskId = decodeURIComponent(cancelTaskMatch[1] ?? "");
+        const task = state.tasks.get(taskId);
+        if (!task) return sendJson(response, 404, { error: "not_found" });
+        if (["succeeded", "failed", "cancelled"].includes(task.status)) {
+          return sendJson(response, 409, {
+            error: "task_not_cancellable",
+            reason: `Task is already ${task.status}.`,
+          });
+        }
+        const current = now();
+        if (task.jobId) {
+          const job = cancelJob(state.jobsState, task.jobId, current);
+          if (job) updateHiveTaskFromJob(state, job, current);
+        }
+        task.status = "cancelled";
+        task.updatedAt = current.toISOString();
+        task.lastError = "Cancelled by Hive admin.";
+        markDirty();
+        return sendJson(response, 200, { task: serializeTask(task) });
+      }
+
       if (request.method === "POST" && url.pathname === "/api/tasks") {
         if (!checkAdmin(request, response, adminToken)) return;
         const { body } = await readJson(request);
@@ -1412,6 +1444,7 @@ function scheduleOpenHiveTasks(state: HiveServerState, now: Date): void {
 }
 
 function scheduleHiveTask(state: HiveServerState, task: HiveTaskRecord, now: Date): void {
+  if (task.status === "cancelled") return;
   if (task.jobId && state.jobsState.jobs.get(task.jobId)?.status !== "cancelled") return;
   const bee = selectBeeForTask(state, task, now);
   if (!bee) {
@@ -1489,7 +1522,7 @@ function updateHiveTaskFromJob(state: HiveServerState, job: JobRecord, now: Date
     task.status = "succeeded";
     delete task.lastError;
   } else if (job.status === "failed" || job.status === "timed_out" || job.status === "cancelled") {
-    task.status = "failed";
+    task.status = job.status === "cancelled" ? "cancelled" : "failed";
     task.lastError =
       typeof job.error?.message === "string"
         ? job.error.message

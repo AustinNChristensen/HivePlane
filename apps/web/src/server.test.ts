@@ -541,6 +541,95 @@ describe("Hive server", () => {
     );
   });
 
+  it("cancels Hive tasks and ignores late Bee completion status", async () => {
+    const state = createHiveServerState();
+    upsertBeeHeartbeat(state, {
+      type: "bee.heartbeat",
+      beeId: "bee_agent",
+      timestamp: "2026-05-09T08:00:00.000Z",
+      daemonVersion: "0.0.7",
+      status: "online",
+      activeJobs: 0,
+      capabilities: {
+        runtimes: ["openclaw"],
+        modelBackends: [],
+        models: [],
+        tools: ["filesystem"],
+        networking: [],
+        hardware: {
+          platform: "darwin-arm64",
+          hostname: "bee-agent",
+          cpuCores: 10,
+          memoryGb: 32,
+        },
+      },
+      healthChecks: [],
+    });
+
+    await withServer(
+      { state, adminToken: "secret", now: () => new Date("2026-05-09T08:00:05.000Z") },
+      async (baseUrl) => {
+        const createResponse = await fetch(`${baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({
+            title: "Long task",
+            instructions: "Run until cancelled.",
+            requirements: { runtimes: ["openclaw"] },
+          }),
+        });
+        expect(createResponse.status).toBe(200);
+        const createBody = (await createResponse.json()) as {
+          task: { id: string; status: string; jobId: string };
+        };
+
+        const cancelResponse = await fetch(`${baseUrl}/api/tasks/${createBody.task.id}/cancel`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret" },
+        });
+        expect(cancelResponse.status).toBe(200);
+        const cancelBody = (await cancelResponse.json()) as {
+          task: { status: string; lastError: string };
+        };
+        expect(cancelBody.task).toMatchObject({
+          status: "cancelled",
+          lastError: "Cancelled by Hive admin.",
+        });
+
+        const completeResponse = await fetch(
+          `${baseUrl}/api/jobs/${createBody.task.jobId}/complete`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              type: "job.complete",
+              jobId: createBody.task.jobId,
+              beeId: "bee_agent",
+              status: "succeeded",
+              completedAt: "2026-05-09T08:00:07.000Z",
+              output: { message: "too late" },
+            }),
+          },
+        );
+        expect(completeResponse.status).toBe(200);
+
+        const detailResponse = await fetch(`${baseUrl}/api/tasks/${createBody.task.id}`, {
+          headers: { authorization: "Bearer secret" },
+        });
+        expect(detailResponse.status).toBe(200);
+        const detail = (await detailResponse.json()) as {
+          task: { status: string };
+          job: { status: string; error: { code: string } };
+        };
+        expect(detail.task.status).toBe("cancelled");
+        expect(detail.job).toMatchObject({
+          status: "cancelled",
+          error: { code: "job_cancelled" },
+        });
+      },
+    );
+  });
+
   it("verifies a successful repair before resolving an incident", async () => {
     const state = createHiveServerState();
     upsertBeeHeartbeat(state, {

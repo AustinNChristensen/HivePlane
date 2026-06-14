@@ -487,6 +487,17 @@
         border-radius: 6px;
         padding: 8px 10px;
       }
+      details.event summary {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .event.important {
+        border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+      }
       .event .event-head {
         display: flex;
         justify-content: space-between;
@@ -494,6 +505,12 @@
         color: var(--muted);
         font-size: 11px;
         margin-bottom: 4px;
+      }
+      .event-body-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: start;
       }
       .event .event-body {
         margin: 0;
@@ -650,8 +667,20 @@
               <input id="taskTitle" placeholder="Summarize this repo" />
             </div>
             <div class="form-field">
+              <label for="taskPreferredBee">Bee</label>
+              <input id="taskPreferredBee" placeholder="any healthy Bee" />
+            </div>
+            <div class="form-field">
               <label for="taskRuntime">Runtime</label>
               <input id="taskRuntime" placeholder="openclaw" />
+            </div>
+            <div class="form-field">
+              <label for="taskTools">Tools</label>
+              <input id="taskTools" placeholder="github, filesystem" />
+            </div>
+            <div class="form-field">
+              <label for="taskModels">Models</label>
+              <input id="taskModels" placeholder="gemma4:12b" />
             </div>
             <button class="action" id="createTask">Assign Task</button>
           </div>
@@ -729,7 +758,10 @@
         tasksMeta: document.getElementById("tasksMeta"),
         tasksBody: document.getElementById("tasksBody"),
         taskTitle: document.getElementById("taskTitle"),
+        taskPreferredBee: document.getElementById("taskPreferredBee"),
         taskRuntime: document.getElementById("taskRuntime"),
+        taskTools: document.getElementById("taskTools"),
+        taskModels: document.getElementById("taskModels"),
         taskInstructions: document.getElementById("taskInstructions"),
         createTask: document.getElementById("createTask"),
         tokenBeeName: document.getElementById("tokenBeeName"),
@@ -1609,6 +1641,9 @@
         const title = els.taskTitle.value.trim();
         const instructions = els.taskInstructions.value.trim();
         const runtime = els.taskRuntime.value.trim();
+        const preferredBeeId = els.taskPreferredBee.value.trim();
+        const tools = parseCsv(els.taskTools.value);
+        const models = parseCsv(els.taskModels.value);
         if (!title || !instructions) {
           els.tasksMeta.textContent = "title and instructions are required";
           return;
@@ -1619,7 +1654,8 @@
             title,
             instructions,
             requestedBy: "dashboard",
-            requirements: { runtimes: runtime ? [runtime] : [], tools: [], models: [] },
+            ...(preferredBeeId ? { preferredBeeId } : {}),
+            requirements: { runtimes: runtime ? [runtime] : [], tools, models },
           };
           const res = await fetch("/api/tasks", {
             method: "POST",
@@ -1634,6 +1670,10 @@
           const body = await res.json();
           if (!res.ok) throw new Error(body.reason || body.message || `HTTP ${res.status}`);
           els.taskTitle.value = "";
+          els.taskPreferredBee.value = "";
+          els.taskRuntime.value = "";
+          els.taskTools.value = "";
+          els.taskModels.value = "";
           els.taskInstructions.value = "";
           state.selectedTaskId = body.task?.id || state.selectedTaskId;
           state.selectedTask = null;
@@ -1680,6 +1720,13 @@
         } catch (err) {
           els.tasksBody.innerHTML = `<div class="empty">Failed to load tasks: ${escapeHtml(err.message)}</div>`;
         }
+      }
+
+      function parseCsv(value) {
+        return value
+          .split(",")
+          .map((part) => part.trim())
+          .filter(Boolean);
       }
 
       function renderTasks(tasks) {
@@ -1810,8 +1857,13 @@
               : ""
           }
           ${
-            ["blocked", "failed", "succeeded"].includes(task.status)
+            ["blocked", "failed", "succeeded", "cancelled"].includes(task.status)
               ? `<div class="actions"><button class="action" data-action="retry-task" data-task-id="${escapeHtml(task.id)}">Retry</button></div>`
+              : ""
+          }
+          ${
+            ["queued", "assigned", "running"].includes(task.status)
+              ? `<div class="actions"><button class="ghost danger" data-action="cancel-task" data-task-id="${escapeHtml(task.id)}">Cancel</button></div>`
               : ""
           }
           ${
@@ -1842,6 +1894,9 @@
         root.querySelector("[data-action='retry-task']")?.addEventListener("click", (event) => {
           retryTask(event.currentTarget.dataset.taskId, event.currentTarget);
         });
+        root.querySelector("[data-action='cancel-task']")?.addEventListener("click", (event) => {
+          cancelTask(event.currentTarget.dataset.taskId, event.currentTarget);
+        });
       }
 
       async function retryTask(taskId, button) {
@@ -1867,6 +1922,33 @@
           await refreshTasks();
         } catch (err) {
           renderInlineTaskError(`Retry failed: ${err.message}`);
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      async function cancelTask(taskId, button) {
+        if (!state.adminToken || !taskId) return;
+        button.disabled = true;
+        try {
+          const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, {
+            method: "POST",
+            headers: authHeaders(),
+          });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            renderInlineTaskError("Admin token rejected. The stale saved token was cleared.");
+            return;
+          }
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.reason || body.message || `HTTP ${res.status}`);
+          state.selectedTaskId = body.task?.id || taskId;
+          state.selectedTask = null;
+          state.selectedTaskJob = null;
+          els.tasksMeta.textContent = "task cancelled";
+          await refreshTasks();
+        } catch (err) {
+          renderInlineTaskError(`Cancel failed: ${err.message}`);
         } finally {
           button.disabled = false;
         }
@@ -2112,16 +2194,51 @@
         } else {
           body = JSON.stringify(event.data || {}, null, 2);
         }
+        const eventType = String(event.type || "");
+        const noisy = /(?:stdout|stderr)$/.test(eventType) || event.level === "debug";
+        const important =
+          event.level === "error" ||
+          /(?:complete|failed|error|status|final|start)$/.test(eventType) ||
+          eventType.includes("missing");
+        const bodyId = `copy_${Math.random().toString(36).slice(2)}`;
+        const label = `#${escapeHtml(event.sequence ?? "—")} · ${escapeHtml(eventType)} · ${escapeHtml(event.level)}`;
+        const content = `<div class="event-body-row">
+            <pre class="event-body" id="${bodyId}">${escapeHtml(body || "—")}</pre>
+            <button class="ghost" data-action="copy-event" data-copy-target="${bodyId}">Copy</button>
+          </div>`;
+        if (noisy) {
+          return `
+            <details class="event ${important ? "important" : ""}">
+              <summary>
+                <span>${label}</span>
+                <span title="${escapeHtml(event.createdAt || "")}">${relativeTime(event.createdAt)}</span>
+              </summary>
+              ${content}
+            </details>
+          `;
+        }
         return `
-          <div class="event">
+          <div class="event ${important ? "important" : ""}">
             <div class="event-head">
-              <span>#${escapeHtml(event.sequence ?? "—")} · ${escapeHtml(event.type)} · ${escapeHtml(event.level)}</span>
+              <span>${label}</span>
               <span title="${escapeHtml(event.createdAt || "")}">${relativeTime(event.createdAt)}</span>
             </div>
-            <pre class="event-body">${escapeHtml(body || "—")}</pre>
+            ${content}
           </div>
         `;
       }
+
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-action='copy-event']");
+        if (!button) return;
+        const target = document.getElementById(button.dataset.copyTarget);
+        if (!target) return;
+        navigator.clipboard.writeText(target.textContent || "").then(() => {
+          const original = button.textContent;
+          button.textContent = "Copied";
+          setTimeout(() => (button.textContent = original), 1200);
+        });
+      });
 
       // --- tokens view ---------------------------------------------------------
       els.mintToken.addEventListener("click", async () => {

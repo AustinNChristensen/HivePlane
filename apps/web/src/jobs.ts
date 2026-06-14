@@ -91,6 +91,21 @@ export function denyJob(state: JobsState, jobId: string, now: Date): JobRecord |
   return job;
 }
 
+export function cancelJob(
+  state: JobsState,
+  jobId: string,
+  now: Date,
+  reason = "cancelled by Hive admin",
+): JobRecord | null {
+  const job = state.jobs.get(jobId);
+  if (!job) return null;
+  if (["succeeded", "failed", "cancelled", "timed_out"].includes(job.status)) return job;
+  job.status = "cancelled";
+  job.completedAt = now;
+  job.error = { code: "job_cancelled", message: reason };
+  return job;
+}
+
 /** Atomically transition queued jobs for this bee to "assigned" and return them as Job protos. */
 export function claimPendingJobs(
   state: JobsState,
@@ -120,6 +135,10 @@ export function appendEvents(
 ): JobRecord | null {
   const job = state.jobs.get(jobId);
   if (!job) return null;
+  if (job.status === "cancelled") {
+    job.events.push(...events);
+    return job;
+  }
   if (job.status === "queued" || job.status === "assigned") {
     job.status = "running";
   }
@@ -137,6 +156,7 @@ export function completeJob(
 ): JobRecord | null {
   const job = state.jobs.get(jobId);
   if (!job) return null;
+  if (job.status === "cancelled") return job;
   job.status = payload.status;
   job.completedAt = now;
   if (payload.output) job.output = payload.output as Record<string, JsonValue>;
