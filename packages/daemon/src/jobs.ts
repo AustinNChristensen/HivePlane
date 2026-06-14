@@ -232,10 +232,28 @@ export class JobExecutor {
 
   private async runBeeUpdate(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
     const cwd = typeof job.payload.installDir === "string" ? job.payload.installDir : process.cwd();
-    await this.emit(job, "info", "bee_update.start", { cwd });
+    const ref =
+      typeof job.payload.ref === "string" && job.payload.ref.trim() ? job.payload.ref : "main";
+    const remoteRef = `origin/${ref}`;
+    await this.emit(job, "info", "bee_update.start", { cwd, ref });
 
-    const git = await this.runUpdateCommand(job, "git", ["pull", "--ff-only"], cwd, signal);
-    if (!git.ok) return git.outcome;
+    const fetch = await this.runUpdateCommand(
+      job,
+      "git",
+      ["fetch", "--prune", "origin", ref],
+      cwd,
+      signal,
+    );
+    if (!fetch.ok) return fetch.outcome;
+
+    const reset = await this.runUpdateCommand(
+      job,
+      "git",
+      ["reset", "--hard", remoteRef],
+      cwd,
+      signal,
+    );
+    if (!reset.ok) return reset.outcome;
 
     const install = await this.runUpdateCommand(
       job,
@@ -254,7 +272,9 @@ export class JobExecutor {
       status: "succeeded",
       output: {
         cwd,
-        git: git.summary,
+        ref,
+        fetch: fetch.summary,
+        reset: reset.summary,
         install: install.summary,
         restartScheduled: true,
       },

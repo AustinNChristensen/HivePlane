@@ -488,7 +488,7 @@ describe("JobExecutor", () => {
     expect(Array.isArray(body.output.models)).toBe(true);
   });
 
-  it("update_bee runs git pull and pnpm install before completing", async () => {
+  it("update_bee fetches, hard-resets stale checkouts, and installs deps before completing", async () => {
     const identity = await makeIdentity();
     const session = makeSession();
     const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
@@ -515,11 +515,17 @@ describe("JobExecutor", () => {
     expect(spawnImpl).toHaveBeenNthCalledWith(
       1,
       "git",
-      ["pull", "--ff-only"],
+      ["fetch", "--prune", "origin", "main"],
       expect.objectContaining({ cwd: "/tmp/hiveplane" }),
     );
     expect(spawnImpl).toHaveBeenNthCalledWith(
       2,
+      "git",
+      ["reset", "--hard", "origin/main"],
+      expect.objectContaining({ cwd: "/tmp/hiveplane" }),
+    );
+    expect(spawnImpl).toHaveBeenNthCalledWith(
+      3,
       "pnpm",
       ["install", "--frozen-lockfile", "--silent"],
       expect.objectContaining({ cwd: "/tmp/hiveplane" }),
@@ -530,6 +536,7 @@ describe("JobExecutor", () => {
     ];
     const body = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
     expect(body.status).toBe("succeeded");
+    expect(body.output.ref).toBe("main");
     expect(body.output.restartScheduled).toBe(true);
   });
 });

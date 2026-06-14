@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -32,6 +32,7 @@ describe("install-path smoke test", () => {
   const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
   const hiveEntry = join(repoRoot, "packages", "cli", "src", "hive.ts");
   const beeEntry = join(repoRoot, "packages", "cli", "src", "bee.ts");
+  const beeInstallScript = join(repoRoot, "infra", "install", "bee.sh");
 
   it("hive --version runs through the install shim path", async () => {
     if (!existsSync(tsxBin)) return;
@@ -74,5 +75,15 @@ describe("install-path smoke test", () => {
     });
     expect(stderr).not.toMatch(/ERR_MODULE_NOT_FOUND/);
     expect(stdout).toMatch(/Hive URL:/);
+  });
+
+  it("bee.sh has clear fresh-machine prereqs and one-command pairing hooks", () => {
+    const script = readFileSync(beeInstallScript, "utf8");
+    expect(script).toContain("Node 20+ is required");
+    expect(script).toContain("git is required");
+    expect(script).toContain("pnpm not found, enabling via corepack");
+    expect(script).toContain("HIVEPLANE_HIVE_URL is required for one-command pairing");
+    expect(script).toContain("HIVEPLANE_PAIRING_KEY or HIVEPLANE_BOOTSTRAP_TOKEN is required");
+    expect(script).toContain("bee start                 # auto-installs launchd/systemd unit");
   });
 });
