@@ -1134,7 +1134,7 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         }
         const filePath = join(installScriptsDir, name);
         try {
-          const body = readFileSync(filePath, "utf8");
+          const body = renderInstallScript(readFileSync(filePath, "utf8"));
           response.writeHead(200, {
             "content-type": "text/x-shellscript; charset=utf-8",
             "cache-control": "no-store",
@@ -2492,6 +2492,25 @@ async function readJson(request: IncomingMessage): Promise<{ body: unknown; raw:
   const raw = Buffer.concat(chunks);
   if (raw.length === 0) return { body: {}, raw };
   return { body: JSON.parse(raw.toString("utf8")), raw };
+}
+
+function renderInstallScript(body: string): string {
+  const repoUrl =
+    process.env.HIVEPLANE_REPO_URL ?? "https://github.com/AustinNChristensen/HivePlane.git";
+  const repoRef = process.env.HIVEPLANE_REPO_REF ?? "main";
+  return body
+    .replace(
+      /^REPO_URL="\$\{HIVEPLANE_REPO_URL:-[^"]+\}"$/m,
+      `REPO_URL="\${HIVEPLANE_REPO_URL:-${shellDoubleQuoteDefault(repoUrl)}}"`,
+    )
+    .replace(
+      /^REPO_REF="\$\{HIVEPLANE_REPO_REF:-[^"]+\}"$/m,
+      `REPO_REF="\${HIVEPLANE_REPO_REF:-${shellDoubleQuoteDefault(repoRef)}}"`,
+    );
+}
+
+function shellDoubleQuoteDefault(value: string): string {
+  return value.replace(/["\\$`]/g, "\\$&");
 }
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {

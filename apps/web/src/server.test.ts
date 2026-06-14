@@ -1100,8 +1100,15 @@ describe("Hive server", () => {
 
   it("serves install scripts and 404s on unknown ones", async () => {
     const installDir = mkdtempSync(join(tmpdir(), "hiveplane-install-test-"));
-    writeFileSync(join(installDir, "bee.sh"), "#!/bin/sh\necho hi from bee installer\n");
+    writeFileSync(
+      join(installDir, "bee.sh"),
+      '#!/bin/sh\nREPO_URL="${HIVEPLANE_REPO_URL:-https://github.com/AustinNChristensen/HivePlane.git}"\nREPO_REF="${HIVEPLANE_REPO_REF:-main}"\necho hi from bee installer\n',
+    );
     writeFileSync(join(installDir, "hive.sh"), "#!/bin/sh\necho hi from hive installer\n");
+    const oldRepoUrl = process.env.HIVEPLANE_REPO_URL;
+    const oldRepoRef = process.env.HIVEPLANE_REPO_REF;
+    process.env.HIVEPLANE_REPO_URL = "https://github.com/example/fork.git";
+    process.env.HIVEPLANE_REPO_REF = "release-1";
 
     const server = createHiveServer({ installScriptsDir: installDir });
     server.listen(0, "127.0.0.1");
@@ -1116,7 +1123,12 @@ describe("Hive server", () => {
       const beeRes = await fetch(`${baseUrl}/install/bee.sh`);
       expect(beeRes.status).toBe(200);
       expect(beeRes.headers.get("content-type")).toContain("text/x-shellscript");
-      expect(await beeRes.text()).toContain("hi from bee installer");
+      const beeBody = await beeRes.text();
+      expect(beeBody).toContain("hi from bee installer");
+      expect(beeBody).toContain(
+        'REPO_URL="${HIVEPLANE_REPO_URL:-https://github.com/example/fork.git}"',
+      );
+      expect(beeBody).toContain('REPO_REF="${HIVEPLANE_REPO_REF:-release-1}"');
 
       const hiveRes = await fetch(`${baseUrl}/install/hive.sh`);
       expect(hiveRes.status).toBe(200);
@@ -1126,6 +1138,10 @@ describe("Hive server", () => {
       expect(wrongRes.status).toBe(404);
     } finally {
       server.close();
+      if (oldRepoUrl === undefined) delete process.env.HIVEPLANE_REPO_URL;
+      else process.env.HIVEPLANE_REPO_URL = oldRepoUrl;
+      if (oldRepoRef === undefined) delete process.env.HIVEPLANE_REPO_REF;
+      else process.env.HIVEPLANE_REPO_REF = oldRepoRef;
     }
   });
 
