@@ -1439,6 +1439,7 @@
         operatorId: localStorage.getItem(OPERATOR_KEY) || "admin",
         selectedJobId: "",
         selectedTaskId: "",
+        selectedIncidentId: "",
         selectedBeeId: "",
         bees: [],
         incidents: [],
@@ -2279,6 +2280,12 @@
           els.incidentsBody.innerHTML = `<div class="empty">No incidents yet.</div>`;
           return;
         }
+        if (
+          state.selectedIncidentId &&
+          !incidents.some((incident) => incident.id === state.selectedIncidentId)
+        ) {
+          state.selectedIncidentId = "";
+        }
         els.incidentsBody.innerHTML = `
           <table>
             <thead>
@@ -2296,9 +2303,10 @@
             </thead>
             <tbody>
               ${incidents
-                .map(
-                  (incident) => `
-                    <tr>
+                .map((incident) => {
+                  const selected = incident.id === state.selectedIncidentId;
+                  return `
+                    <tr class="${selected ? "selected" : ""}" data-action="select-incident-row" data-incident-id="${escapeHtml(incident.id)}">
                       <td>${pill(incident.status || "open")}</td>
                       <td>${pill(incident.severity || "warning")}</td>
                       <td>${renderBeeName(incident.beeId)}</td>
@@ -2312,11 +2320,24 @@
                       <td>${renderIncidentNotifications(incident.notifications || [])}</td>
                       <td title="${escapeHtml(incident.updatedAt || "")}">${relativeTime(incident.updatedAt)}</td>
                     </tr>
-                  `,
-                )
+                    ${
+                      selected
+                        ? `<tr class="detail-row"><td colspan="9"><div class="inline-detail job-detail">${renderIncidentDetail(incident)}</div></td></tr>`
+                        : ""
+                    }
+                  `;
+                })
                 .join("")}
             </tbody>
           </table>`;
+        els.incidentsBody.querySelectorAll("[data-action='select-incident-row']").forEach((row) => {
+          row.addEventListener("click", (event) => {
+            if (event.target.closest("button, details, a")) return;
+            state.selectedIncidentId =
+              state.selectedIncidentId === row.dataset.incidentId ? "" : row.dataset.incidentId;
+            renderIncidents(state.incidents);
+          });
+        });
         els.incidentsBody.querySelectorAll("[data-action='incident-job']").forEach((button) => {
           button.addEventListener("click", () => {
             state.selectedJobId = button.dataset.jobId;
@@ -2325,6 +2346,108 @@
             refreshJobs();
           });
         });
+      }
+
+      function renderIncidentDetail(incident) {
+        const attempts = incident.attempts || [];
+        const verification = incident.verification;
+        return `
+          <div>${pill(incident.status || "open")} <span class="mono">${escapeHtml(incident.id)}</span></div>
+          <div class="job-detail-grid">
+            <div class="kv"><span>Bee</span><div>${renderBeeName(incident.beeId)}</div></div>
+            <div class="kv"><span>Kind</span><div class="mono">${escapeHtml(incident.kind || "—")}</div></div>
+            <div class="kv"><span>Detected</span><div title="${escapeHtml(incident.detectedAt || "")}">${relativeTime(incident.detectedAt)}</div></div>
+            <div class="kv"><span>Updated</span><div title="${escapeHtml(incident.updatedAt || "")}">${relativeTime(incident.updatedAt)}</div></div>
+          </div>
+          <details open>
+            <summary>diagnosis</summary>
+            <pre class="snippet">${escapeHtml(incident.lastDiagnosis || incident.summary || "No diagnosis recorded yet.")}</pre>
+          </details>
+          <div class="detail-section">
+            <h3>Recovery Plan</h3>
+            <div class="kv-list">
+              ${kv("Next action", `<span class="mono">${escapeHtml(incident.nextAction || "—")}</span>`)}
+              ${kv("Approval state", escapeHtml(incident.status === "needs_approval" ? "operator approval required" : "not waiting on approval"))}
+              ${kv("Final status", escapeHtml(incident.resolvedAt ? `resolved ${relativeTime(incident.resolvedAt)}` : incident.status || "open"))}
+            </div>
+          </div>
+          <div class="detail-section">
+            <h3>Repair Attempts</h3>
+            ${attempts.length ? attempts.map(renderIncidentAttempt).join("") : `<div class="empty">No repair attempt has been queued yet.</div>`}
+          </div>
+          <div class="detail-section">
+            <h3>Verification</h3>
+            ${verification ? renderIncidentVerification(verification) : `<div class="empty">Verification will queue after a repair job succeeds.</div>`}
+          </div>
+          <div class="detail-section">
+            <h3>Alerts</h3>
+            ${renderIncidentNotificationDetail(incident.notifications || [])}
+          </div>
+        `;
+      }
+
+      function renderIncidentAttempt(attempt) {
+        const job = jobById(attempt.jobId);
+        const status = attempt.status || job?.status || "queued";
+        return `
+          <details open>
+            <summary>${escapeHtml(attempt.action || "repair")} · ${pill(status)}</summary>
+            <div class="kv-list">
+              ${kv("Job", `<button class="ghost" data-action="incident-job" data-job-id="${escapeHtml(attempt.jobId)}">${escapeHtml(shortId(attempt.jobId))}</button>`)}
+              ${kv("Queued", `${relativeTime(attempt.queuedAt)} <span class="mono">(${escapeHtml(attempt.queuedAt || "—")})</span>`)}
+              ${kv("Completed", attempt.completedAt ? `${relativeTime(attempt.completedAt)} <span class="mono">(${escapeHtml(attempt.completedAt)})</span>` : "—")}
+            </div>
+            ${renderIncidentJobResult(job)}
+          </details>
+        `;
+      }
+
+      function renderIncidentVerification(verification) {
+        const job = jobById(verification.jobId);
+        const status = verification.status || job?.status || "queued";
+        return `
+          <details open>
+            <summary>healthcheck verification · ${pill(status)}</summary>
+            <div class="kv-list">
+              ${kv("Job", `<button class="ghost" data-action="incident-job" data-job-id="${escapeHtml(verification.jobId)}">${escapeHtml(shortId(verification.jobId))}</button>`)}
+              ${kv("Queued", `${relativeTime(verification.queuedAt)} <span class="mono">(${escapeHtml(verification.queuedAt || "—")})</span>`)}
+              ${kv("Completed", verification.completedAt ? `${relativeTime(verification.completedAt)} <span class="mono">(${escapeHtml(verification.completedAt)})</span>` : "—")}
+            </div>
+            ${renderIncidentJobResult(job)}
+          </details>
+        `;
+      }
+
+      function renderIncidentJobResult(job) {
+        if (!state.adminToken) {
+          return `<div class="empty">Save an admin token to include repair output here.</div>`;
+        }
+        if (!job) {
+          return `<div class="empty">Job details are not loaded yet. Open the job for the full event stream.</div>`;
+        }
+        const result = job.error || job.output;
+        if (!result) return `<div class="empty">No output recorded yet.</div>`;
+        return `<pre class="snippet">${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
+      }
+
+      function renderIncidentNotificationDetail(notifications) {
+        if (!notifications.length) return `<div class="empty">No alerts queued.</div>`;
+        return notifications
+          .map(
+            (notification) => `
+              <details>
+                <summary>${escapeHtml(notification.status || "alert")} · ${pill(notification.deliveryStatus || "queued")}</summary>
+                <div class="kv-list">
+                  ${kv("Message", escapeHtml(notification.message || "—"))}
+                  ${kv("Channel", escapeHtml(notification.deliveryChannel || "—"))}
+                  ${kv("Attempts", escapeHtml(notification.deliveryAttempts ?? 0))}
+                  ${kv("Last error", escapeHtml(notification.lastError || "—"))}
+                  ${kv("Delivered", notification.deliveredAt ? `${relativeTime(notification.deliveredAt)} <span class="mono">(${escapeHtml(notification.deliveredAt)})</span>` : "—")}
+                </div>
+              </details>
+            `,
+          )
+          .join("");
       }
 
       function renderIncidentRecoveryJobs(incident) {
@@ -2342,6 +2465,10 @@
         return parts.length
           ? `<div class="actions">${parts.join("")}</div>`
           : '<span class="mono">—</span>';
+      }
+
+      function jobById(jobId) {
+        return state.jobs.find((job) => job.id === jobId);
       }
 
       function renderIncidentNotifications(notifications) {
