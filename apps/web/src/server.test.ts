@@ -659,13 +659,23 @@ describe("Hive server", () => {
         expect(detailResponse.status).toBe(200);
         const detail = (await detailResponse.json()) as {
           task: { status: string };
-          job: { status: string; error: { code: string } };
+          job: {
+            status: string;
+            error: { code: string };
+            events: Array<{ type: string; actor: string }>;
+          };
         };
         expect(detail.task.status).toBe("cancelled");
         expect(detail.job).toMatchObject({
           status: "cancelled",
           error: { code: "job_cancelled" },
         });
+        expect(detail.job.events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ type: "job.cancel.requested", actor: "hive" }),
+            expect.objectContaining({ type: "job.cancel.delivered", actor: "hive" }),
+          ]),
+        );
       },
     );
   });

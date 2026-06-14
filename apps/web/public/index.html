@@ -2143,6 +2143,11 @@
                 </div>`
               : ""
           }
+          ${
+            ["queued", "assigned", "running"].includes(job.status)
+              ? `<div class="actions"><button class="ghost danger" data-action="cancel-job" data-job-id="${escapeHtml(job.id)}">Cancel Job</button></div>`
+              : ""
+          }
           <div>
             <div class="meta">Event stream</div>
             ${
@@ -2159,6 +2164,9 @@
         });
         root.querySelector("[data-action='deny-job']")?.addEventListener("click", (event) => {
           resolveApproval(event.currentTarget.dataset.jobId, "deny", event.currentTarget);
+        });
+        root.querySelector("[data-action='cancel-job']")?.addEventListener("click", (event) => {
+          cancelJob(event.currentTarget.dataset.jobId, event.currentTarget);
         });
       }
       function renderInlineJobError(message) {
@@ -2187,6 +2195,27 @@
           button.disabled = false;
         }
       }
+      async function cancelJob(jobId, button) {
+        if (!state.adminToken || !jobId) return;
+        button.disabled = true;
+        try {
+          const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
+            method: "POST",
+            headers: authHeaders(),
+          });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+          els.jobsMeta.textContent = "job cancelled";
+          await refreshJobs();
+        } catch (err) {
+          renderInlineJobError(`cancel failed: ${err.message}`);
+        } finally {
+          button.disabled = false;
+        }
+      }
       function renderJobEvent(event) {
         let body = "";
         if (event.data && typeof event.data.text === "string") {
@@ -2198,7 +2227,7 @@
         const noisy = /(?:stdout|stderr)$/.test(eventType) || event.level === "debug";
         const important =
           event.level === "error" ||
-          /(?:complete|failed|error|status|final|start)$/.test(eventType) ||
+          /(?:complete|failed|cancel|cancelled|error|status|final|start)$/.test(eventType) ||
           eventType.includes("missing");
         const bodyId = `copy_${Math.random().toString(36).slice(2)}`;
         const label = `#${escapeHtml(event.sequence ?? "—")} · ${escapeHtml(eventType)} · ${escapeHtml(event.level)}`;

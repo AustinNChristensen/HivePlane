@@ -767,6 +767,25 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         return sendJson(response, 200, { job: serializeJob(job) });
       }
 
+      const cancelJobMatch = /^\/api\/jobs\/([^/]+)\/cancel$/.exec(url.pathname);
+      if (request.method === "POST" && cancelJobMatch) {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const jobId = decodeURIComponent(cancelJobMatch[1] ?? "");
+        const existing = findJob(state.jobsState, jobId);
+        if (!existing) return sendJson(response, 404, { error: "not_found" });
+        if (["succeeded", "failed", "cancelled", "timed_out"].includes(existing.status)) {
+          return sendJson(response, 409, {
+            error: "job_not_cancellable",
+            reason: `Job is already ${existing.status}.`,
+          });
+        }
+        const current = now();
+        const job = cancelJob(state.jobsState, jobId, current);
+        if (job) updateHiveTaskFromJob(state, job, current);
+        markDirty();
+        return sendJson(response, 200, { job: job ? serializeJob(job) : null });
+      }
+
       // POST /api/jobs/:jobId/events — bee streams events.
       const eventsMatch = /^\/api\/jobs\/([^/]+)\/events$/.exec(url.pathname);
       if (request.method === "POST" && eventsMatch) {

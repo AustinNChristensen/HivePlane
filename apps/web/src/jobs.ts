@@ -105,6 +105,12 @@ export function cancelJob(
   job.status = "cancelled";
   job.completedAt = now;
   job.error = { code: "job_cancelled", message: reason };
+  job.events.push(
+    createSystemJobEvent(job, now, "job.cancel.requested", "warn", {
+      reason,
+      delivered: false,
+    }),
+  );
   return job;
 }
 
@@ -128,6 +134,12 @@ export function claimPendingJobCancellations(
     };
     cancellations.push(message);
     job.cancellationDeliveredAt = now;
+    job.events.push(
+      createSystemJobEvent(job, now, "job.cancel.delivered", "warn", {
+        reason: message.reason ?? "cancelled by Hive admin",
+        delivered: true,
+      }),
+    );
   }
   return cancellations;
 }
@@ -213,3 +225,25 @@ export function toJobProto(job: JobRecord): Job {
 }
 
 export const ParseJobEventBatch = JobEventBatchSchema;
+
+function createSystemJobEvent(
+  job: JobRecord,
+  now: Date,
+  type: string,
+  level: JobEvent["level"],
+  data: Record<string, JsonValue>,
+): JobEvent {
+  const sequence = job.events.reduce((max, event) => Math.max(max, event.sequence), -1) + 1;
+  return {
+    id: `evt_${randomBytes(6).toString("hex")}`,
+    jobId: job.id,
+    beeId: job.beeId,
+    sequence,
+    type,
+    level,
+    actor: "hive",
+    actorId: "hive",
+    data,
+    createdAt: now.toISOString(),
+  };
+}

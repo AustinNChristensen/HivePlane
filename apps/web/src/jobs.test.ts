@@ -125,6 +125,38 @@ describe("POST /api/bees/:beeId/jobs", () => {
     });
   });
 
+  it("lets an admin cancel a queued job", async () => {
+    const state = createHiveServerState();
+    await withServer({ state, adminToken: "admin-secret", authRequired: true }, async (baseUrl) => {
+      const { beeId } = await setupBee(state, baseUrl);
+      const create = await fetch(`${baseUrl}/api/bees/${beeId}/jobs`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer admin-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ type: "run_healthcheck", payload: {} }),
+      });
+      const created = (await create.json()) as { job: { id: string } };
+
+      const cancel = await fetch(`${baseUrl}/api/jobs/${created.job.id}/cancel`, {
+        method: "POST",
+        headers: { authorization: "Bearer admin-secret" },
+      });
+      expect(cancel.status).toBe(200);
+      const cancelled = (await cancel.json()) as {
+        job: { status: string; error: { code: string }; events: Array<{ type: string }> };
+      };
+      expect(cancelled.job).toMatchObject({
+        status: "cancelled",
+        error: { code: "job_cancelled" },
+      });
+      expect(cancelled.job.events).toEqual(
+        expect.arrayContaining([expect.objectContaining({ type: "job.cancel.requested" })]),
+      );
+    });
+  });
+
   it("holds mutating jobs for admin approval before dispatch", async () => {
     const state = createHiveServerState();
     await withServer({ state, adminToken: "admin-secret", authRequired: true }, async (baseUrl) => {
