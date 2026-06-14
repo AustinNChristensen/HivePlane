@@ -859,6 +859,77 @@ describe("Hive server", () => {
     );
   });
 
+  it("exchanges operator tokens for persisted dashboard sessions", async () => {
+    const state = createHiveServerState();
+    await withServer(
+      { state, adminToken: "secret", now: () => new Date("2026-06-14T15:00:00.000Z") },
+      async (baseUrl) => {
+        const operatorResponse = await fetch(`${baseUrl}/api/operators`, {
+          method: "POST",
+          headers: { authorization: "Bearer secret", "content-type": "application/json" },
+          body: JSON.stringify({ email: "sessioned@example.com", role: "operator" }),
+        });
+        expect(operatorResponse.status).toBe(200);
+        const operatorBody = (await operatorResponse.json()) as {
+          token: string;
+          operator: { userId: string };
+        };
+
+        const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ token: operatorBody.token }),
+        });
+        expect(loginResponse.status).toBe(200);
+        const loginBody = (await loginResponse.json()) as {
+          token: string;
+          actor: { userId: string; role: string };
+          session: { userId: string; expiresAt: string };
+        };
+        expect(loginBody.token).toMatch(/^hp_op_sess_/);
+        expect(loginBody.actor.userId).toBe(operatorBody.operator.userId);
+        expect(loginBody.session.userId).toBe(operatorBody.operator.userId);
+        expect(state.operatorSessions.size).toBe(1);
+
+        const meResponse = await fetch(`${baseUrl}/api/auth/me`, {
+          headers: { authorization: `Bearer ${loginBody.token}` },
+        });
+        expect(meResponse.status).toBe(200);
+        const meBody = (await meResponse.json()) as { actor: { userId: string; role: string } };
+        expect(meBody.actor).toMatchObject({
+          userId: operatorBody.operator.userId,
+          role: "operator",
+        });
+      },
+    );
+  });
+
+  it("rejects expired operator dashboard sessions", async () => {
+    const state = createHiveServerState();
+    await withServer(
+      { state, adminToken: "secret", now: () => new Date("2026-06-14T15:00:00.000Z") },
+      async (baseUrl) => {
+        const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ token: "secret" }),
+        });
+        expect(loginResponse.status).toBe(200);
+        const loginBody = (await loginResponse.json()) as { token: string };
+        for (const session of state.operatorSessions.values()) {
+          session.expiresAt = new Date("2000-01-01T00:00:00.000Z");
+        }
+
+        const meResponse = await fetch(`${baseUrl}/api/auth/me`, {
+          headers: { authorization: `Bearer ${loginBody.token}` },
+        });
+        expect(meResponse.status).toBe(401);
+        const body = (await meResponse.json()) as { reason: string };
+        expect(body.reason).toBe("operator session expired");
+      },
+    );
+  });
+
   it("requires approve permission for system-scoped job approval decisions", async () => {
     const state = createHiveServerState();
     upsertBeeHeartbeat(state, {

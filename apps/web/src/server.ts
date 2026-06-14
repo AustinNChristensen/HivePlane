@@ -31,12 +31,14 @@ import {
   extractBearer,
   formatPairingKeyForDisplay,
   generateBootstrapToken,
+  generateOperatorSessionToken,
   generateOperatorToken,
   generatePairingKey,
   generateSessionToken,
   getRequiredAdminToken,
   isAuthRequired,
   looksLikeBootstrapToken,
+  looksLikeOperatorSessionToken,
   looksLikeOperatorToken,
   looksLikePairingKey,
   looksLikeSessionToken,
@@ -45,6 +47,7 @@ import {
   sha256Hex,
   verifyBeeSignature,
   type BootstrapTokenRecord,
+  type OperatorSessionRecord,
   type PairingKeyRecord,
   type SessionRecord,
 } from "./auth.js";
@@ -218,6 +221,8 @@ export type HiveServerState = {
   auditLog: Map<string, AuditLogEntry>;
   /** Human/operator identities keyed by user id. */
   operators: Map<string, HiveOperatorRecord>;
+  /** Browser/API operator sessions keyed by token hash. */
+  operatorSessions: Map<string, OperatorSessionRecord>;
   /** System authorization domains keyed by system id. */
   systems: Map<string, HiveSystemRecord>;
   /** User grants keyed by `${userId}:${systemId}:${permission}`. */
@@ -419,6 +424,7 @@ export function createHiveServerState(): HiveServerState {
     automations: new Map(),
     auditLog: new Map(),
     operators: new Map(),
+    operatorSessions: new Map(),
     systems: new Map(),
     userSystemPermissions: new Map(),
     beeSystemAccess: new Map(),
@@ -658,6 +664,10 @@ const CreateOperatorRequestSchema = z.object({
   role: z.enum(["owner", "admin", "developer", "operator", "viewer"]).default("operator"),
 });
 
+const LoginRequestSchema = z.object({
+  token: z.string().min(1),
+});
+
 const GrantSystemPermissionRequestSchema = z.object({
   userId: z.string().min(1),
   systemId: z.string().min(1).default("public"),
@@ -801,6 +811,51 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         return sendJson(response, 200, {
           actor,
           permissions: serializeActorPermissions(state, actor),
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/auth/login") {
+        const { body } = await readJson(request);
+        const parsed = LoginRequestSchema.safeParse(body);
+        if (!parsed.success) {
+          return sendJson(response, 400, {
+            error: "bad_request",
+            message: parsed.error.message,
+          });
+        }
+        const authRequest = {
+          ...request,
+          headers: { ...request.headers, authorization: `Bearer ${parsed.data.token}` },
+        } as IncomingMessage;
+        const auth = requireOperator(authRequest, state, adminToken);
+        if (!auth.ok) return sendJson(response, auth.status, auth.body);
+        const current = now();
+        const created = createOperatorSession(state, auth.actor, current);
+        const auditRequest = {
+          ...request,
+          headers: { ...request.headers, "x-hiveplane-actor": auth.actor.userId },
+        } as unknown as IncomingMessage;
+        recordAudit(state, auditRequest, current, {
+          action: "operator.session.create",
+          resourceType: "operator_session",
+          resourceId: created.session.sessionId,
+          data: {
+            userId: auth.actor.userId,
+            role: auth.actor.role,
+            expiresAt: created.session.expiresAt.toISOString(),
+          },
+        });
+        markDirty();
+        return sendJson(response, 200, {
+          token: created.token,
+          session: {
+            sessionId: created.session.sessionId,
+            userId: created.session.userId,
+            createdAt: created.session.createdAt.toISOString(),
+            expiresAt: created.session.expiresAt.toISOString(),
+          },
+          actor: auth.actor,
+          permissions: serializeActorPermissions(state, auth.actor),
         });
       }
 
@@ -1870,7 +1925,10 @@ type AuthenticatedOperator = {
   role: HiveOrgRole;
   email?: string;
   adminToken: boolean;
+  sessionId?: string;
 };
+
+const OPERATOR_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 
 function requireOperator(
   request: IncomingMessage,
@@ -1887,11 +1945,79 @@ function requireOperator(
     return { ok: true, actor: { userId: "admin-token", role: "owner", adminToken: true } };
   }
 
+  if (looksLikeOperatorSessionToken(bearer.token)) {
+    const session = state.operatorSessions.get(sha256Hex(bearer.token));
+    if (!session) {
+      return {
+        ok: false,
+        status: 401,
+        body: { error: "unauthorized", reason: "operator session not recognized" },
+      };
+    }
+    if (session.revokedAt) {
+      return {
+        ok: false,
+        status: 401,
+        body: { error: "unauthorized", reason: "operator session revoked" },
+      };
+    }
+    if (session.expiresAt.getTime() <= Date.now()) {
+      state.operatorSessions.delete(session.tokenHash);
+      return {
+        ok: false,
+        status: 401,
+        body: { error: "unauthorized", reason: "operator session expired" },
+      };
+    }
+    if (session.userId === "admin-token") {
+      const actor: AuthenticatedOperator = {
+        userId: "admin-token",
+        role: "owner",
+        adminToken: true,
+        sessionId: session.sessionId,
+      };
+      if (options.minRole && !roleAtLeast(actor.role, options.minRole)) {
+        return {
+          ok: false,
+          status: 403,
+          body: { error: "forbidden", reason: `requires ${options.minRole} role or higher` },
+        };
+      }
+      return { ok: true, actor };
+    }
+    const operator = state.operators.get(session.userId);
+    if (!operator || operator.revokedAt) {
+      return {
+        ok: false,
+        status: 401,
+        body: { error: "unauthorized", reason: "operator for session not active" },
+      };
+    }
+    const actor: AuthenticatedOperator = {
+      userId: operator.userId,
+      role: operator.role,
+      email: operator.email,
+      adminToken: false,
+      sessionId: session.sessionId,
+    };
+    if (options.minRole && !roleAtLeast(actor.role, options.minRole)) {
+      return {
+        ok: false,
+        status: 403,
+        body: {
+          error: "forbidden",
+          reason: `requires ${options.minRole} role or higher`,
+        },
+      };
+    }
+    return { ok: true, actor };
+  }
+
   if (!looksLikeOperatorToken(bearer.token)) {
     return {
       ok: false,
       status: 401,
-      body: { error: "unauthorized", reason: "operator token shape invalid" },
+      body: { error: "unauthorized", reason: "operator token/session shape invalid" },
     };
   }
 
@@ -2125,6 +2251,23 @@ function createOperator(
   };
   state.operators.set(userId, operator);
   return { operator, token: token.rawToken, tokenId: token.tokenId };
+}
+
+function createOperatorSession(
+  state: HiveServerState,
+  actor: AuthenticatedOperator,
+  now: Date,
+): { session: OperatorSessionRecord; token: string } {
+  const token = generateOperatorSessionToken();
+  const session: OperatorSessionRecord = {
+    sessionId: token.sessionId,
+    userId: actor.userId,
+    tokenHash: token.tokenHash,
+    createdAt: now,
+    expiresAt: new Date(now.getTime() + OPERATOR_SESSION_TTL_MS),
+  };
+  state.operatorSessions.set(session.tokenHash, session);
+  return { session, token: token.rawToken };
 }
 
 function grantSystemPermissions(

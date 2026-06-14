@@ -1550,17 +1550,17 @@
             <button class="action" id="dispatchJob">+ Dispatch</button>
           </div>
           <details class="auth">
-            <summary>Admin</summary>
+            <summary>Sign in</summary>
             <div class="auth-popover">
               <input id="operatorId" placeholder="Operator (audit actor)" autocomplete="username" />
               <input
                 id="adminToken"
                 type="password"
-                placeholder="Admin token (HIVEPLANE_ADMIN_TOKEN)"
+                placeholder="Owner/operator token"
                 autocomplete="off"
               />
-              <button class="ghost" id="saveAdminToken">Save</button>
-              <span class="auth-status" id="authStatus">no admin token saved</span>
+              <button class="ghost" id="saveAdminToken">Sign in</button>
+              <span class="auth-status" id="authStatus">not signed in</span>
             </div>
           </details>
         </header>
@@ -1874,12 +1874,13 @@
 
     <script>
       const ADMIN_KEY = "hiveplane.adminToken";
+      const SESSION_KEY = "hiveplane.operatorSessionToken";
       const OPERATOR_KEY = "hiveplane.operatorId";
       const POLL_MS = 5000;
 
       const state = {
         activeTab: "overview",
-        adminToken: localStorage.getItem(ADMIN_KEY) || "",
+        adminToken: localStorage.getItem(SESSION_KEY) || localStorage.getItem(ADMIN_KEY) || "",
         operatorId: localStorage.getItem(OPERATOR_KEY) || "admin",
         selectedJobId: "",
         selectedTaskId: "",
@@ -2029,33 +2030,55 @@
         els.pageTitle.textContent = titles[state.activeTab] || state.activeTab;
       }
 
-      // --- admin token ---------------------------------------------------------
+      // --- operator session ----------------------------------------------------
       els.operatorId.value = state.operatorId;
-      els.adminToken.value = state.adminToken;
+      els.adminToken.value = "";
       updateAuthStatus();
 
-      els.saveAdminToken.addEventListener("click", () => {
-        state.operatorId = els.operatorId.value.trim() || "admin";
-        state.adminToken = els.adminToken.value.trim();
-        localStorage.setItem(OPERATOR_KEY, state.operatorId);
-        if (state.adminToken) localStorage.setItem(ADMIN_KEY, state.adminToken);
-        else localStorage.removeItem(ADMIN_KEY);
-        updateAuthStatus();
-        refreshActive();
+      els.saveAdminToken.addEventListener("click", async () => {
+        const token = els.adminToken.value.trim();
+        if (!token) {
+          clearRejectedAdminToken("paste an owner/operator token to sign in");
+          return;
+        }
+        els.authStatus.textContent = "signing in...";
+        els.authStatus.className = "auth-status";
+        try {
+          const res = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ token }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error(body.reason || body.message || `HTTP ${res.status}`);
+          }
+          state.adminToken = body.token || "";
+          state.operatorId = body.actor?.userId || els.operatorId.value.trim() || "admin";
+          els.operatorId.value = state.operatorId;
+          els.adminToken.value = "";
+          localStorage.setItem(OPERATOR_KEY, state.operatorId);
+          if (state.adminToken) localStorage.setItem(SESSION_KEY, state.adminToken);
+          localStorage.removeItem(ADMIN_KEY);
+          updateAuthStatus();
+          refreshActive();
+        } catch (err) {
+          clearRejectedAdminToken(`sign-in failed: ${err.message}`);
+        }
       });
 
-      function clearRejectedAdminToken() {
+      function clearRejectedAdminToken(message = "session rejected — sign in again") {
         state.adminToken = "";
         els.adminToken.value = "";
+        localStorage.removeItem(SESSION_KEY);
         localStorage.removeItem(ADMIN_KEY);
-        els.authStatus.textContent =
-          "admin token rejected — cleared saved token; paste the current hive-config token";
+        els.authStatus.textContent = message;
         els.authStatus.className = "auth-status bad";
       }
 
       async function updateAuthStatus() {
         if (!state.adminToken) {
-          els.authStatus.textContent = "no admin token (jobs + tokens disabled)";
+          els.authStatus.textContent = "not signed in (jobs + tokens disabled)";
           els.authStatus.className = "auth-status";
           return;
         }
@@ -2063,12 +2086,15 @@
           const res = await fetch("/api/auth/me", { headers: authHeaders() });
           if (res.ok) {
             const body = await res.json();
-            els.authStatus.textContent = `token verified · ${body.actor?.role || "operator"} · ${state.operatorId}`;
+            state.operatorId = body.actor?.userId || state.operatorId;
+            els.operatorId.value = state.operatorId;
+            localStorage.setItem(OPERATOR_KEY, state.operatorId);
+            els.authStatus.textContent = `signed in · ${body.actor?.role || "operator"} · ${state.operatorId}`;
             els.authStatus.className = "auth-status ok";
           } else if (res.status === 401) {
             clearRejectedAdminToken();
           } else {
-            els.authStatus.textContent = `admin token rejected (${res.status})`;
+            els.authStatus.textContent = `session rejected (${res.status})`;
             els.authStatus.className = "auth-status bad";
           }
         } catch {

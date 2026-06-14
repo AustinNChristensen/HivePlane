@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { JobEvent, JsonValue } from "@hiveplane/protocol";
-import type { BootstrapTokenRecord, SessionRecord } from "./auth.js";
+import type { BootstrapTokenRecord, OperatorSessionRecord, SessionRecord } from "./auth.js";
 import { createJobsState, type JobRecord } from "./jobs.js";
 import {
   createHiveServerState,
@@ -177,6 +177,7 @@ type PersistedSnapshot = {
   automations?: Array<[string, HiveAutomationRecord]>;
   auditLog?: Array<[string, AuditLogEntry]>;
   operators?: Array<[string, HiveOperatorRecord]>;
+  operatorSessions?: Array<[string, PersistedOperatorSession]>;
   systems?: Array<[string, HiveSystemRecord]>;
   userSystemPermissions?: Array<[string, UserSystemPermissionRecord]>;
   beeSystemAccess?: Array<[string, BeeSystemAccessRecord]>;
@@ -191,6 +192,16 @@ type PersistedBootstrapToken = Omit<BootstrapTokenRecord, "expiresAt" | "consume
 type PersistedSession = Omit<SessionRecord, "expiresAt" | "createdAt"> & {
   expiresAt: string;
   createdAt: string;
+};
+
+type PersistedOperatorSession = Omit<
+  OperatorSessionRecord,
+  "expiresAt" | "createdAt" | "lastSeenAt" | "revokedAt"
+> & {
+  expiresAt: string;
+  createdAt: string;
+  lastSeenAt?: string;
+  revokedAt?: string;
 };
 
 type PersistedJob = Omit<JobRecord, "createdAt" | "assignedAt" | "completedAt"> & {
@@ -212,6 +223,10 @@ function serialize(state: HiveServerState): PersistedSnapshot {
     automations: [...state.automations.entries()],
     auditLog: [...state.auditLog.entries()],
     operators: [...state.operators.entries()],
+    operatorSessions: [...state.operatorSessions.entries()].map(([k, v]) => [
+      k,
+      serializeOperatorSession(v),
+    ]),
     systems: [...state.systems.entries()],
     userSystemPermissions: [...state.userSystemPermissions.entries()],
     beeSystemAccess: [...state.beeSystemAccess.entries()],
@@ -277,6 +292,9 @@ function rehydrate(snapshot: PersistedSnapshot): HiveServerState {
   }
   for (const [k, v] of snapshot.auditLog ?? []) state.auditLog.set(k, v);
   for (const [k, v] of snapshot.operators ?? []) state.operators.set(k, v);
+  for (const [k, v] of snapshot.operatorSessions ?? []) {
+    state.operatorSessions.set(k, deserializeOperatorSession(v));
+  }
   if (snapshot.systems) {
     state.systems.clear();
     for (const [k, v] of snapshot.systems) state.systems.set(k, v);
@@ -330,6 +348,28 @@ function deserializeSession(record: PersistedSession): SessionRecord {
     ...record,
     expiresAt: new Date(record.expiresAt),
     createdAt: new Date(record.createdAt),
+  };
+}
+
+function serializeOperatorSession(record: OperatorSessionRecord): PersistedOperatorSession {
+  const { expiresAt, createdAt, lastSeenAt, revokedAt, ...rest } = record;
+  return {
+    ...rest,
+    expiresAt: expiresAt.toISOString(),
+    createdAt: createdAt.toISOString(),
+    ...(lastSeenAt ? { lastSeenAt: lastSeenAt.toISOString() } : {}),
+    ...(revokedAt ? { revokedAt: revokedAt.toISOString() } : {}),
+  };
+}
+
+function deserializeOperatorSession(record: PersistedOperatorSession): OperatorSessionRecord {
+  const { expiresAt, createdAt, lastSeenAt, revokedAt, ...rest } = record;
+  return {
+    ...rest,
+    expiresAt: new Date(expiresAt),
+    createdAt: new Date(createdAt),
+    ...(lastSeenAt ? { lastSeenAt: new Date(lastSeenAt) } : {}),
+    ...(revokedAt ? { revokedAt: new Date(revokedAt) } : {}),
   };
 }
 

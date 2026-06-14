@@ -13,6 +13,7 @@ Keep iterating until every item below is either shipped and verified on `main`, 
 1. **Auth, orgs, and operator roles** — issue #72
    - Goal: replace admin-token-only dogfood access with real operator identity and team/org separation.
    - Acceptance signal: a non-owner operator can sign in/use scoped dashboard actions without receiving owner/admin authority.
+   - Status: session-based operator sign-in shipped and dogfooded on 2026-06-14. Remaining #72 hardening is explicit org/team separation beyond the current System boundary model, plus revoke/logout polish.
 
 2. **Permission enforcement** — issue #32, paired with permissions UI #33
    - Goal: enforce scoped access around users, Bees, jobs/tasks, approvals, recovery actions, and audit visibility.
@@ -135,6 +136,29 @@ Verification:
 
 - full `pnpm format:check`, `pnpm typecheck`, and `pnpm test` passed;
 - server tests cover a finance-scoped operator creating/cancelling tasks, creating/listing automations, being denied audit without `audit`, then being allowed after an audit grant.
+
+### 2026-06-14 — Operator Sessions
+
+Shipped the next #72 auth slice:
+
+- added `hp_op_sess_...` operator dashboard sessions separate from durable `hp_user_...` operator tokens;
+- added `POST /api/auth/login` to exchange an owner/admin/operator token for a persisted 30-day operator session;
+- kept the self-host owner fallback path working by allowing the admin token to mint an owner session;
+- updated the dashboard sign-in popover to store only the returned session token in local storage, clearing the durable pasted token after exchange;
+- persisted operator sessions in `hive-state.json`;
+- added server tests for operator-token exchange, session reuse, and expired-session rejection.
+
+Verification:
+
+- full `pnpm format:check`, `pnpm typecheck`, and `pnpm test` passed;
+- live Hive was restarted;
+- live owner-session smoke passed through `/api/auth/login`, `/api/auth/me`, and `/api/tasks`;
+- live non-owner viewer smoke created operator `user_e9df6a23c0fd2217`, exchanged its token for a `hp_op_sess_...` session, and verified `/api/auth/me` returned that viewer identity.
+
+Still left in #72:
+
+- explicit organization/team records and boundary checks beyond the current System-scoped authorization domains;
+- logout/revoke-session UI and operator/grant revoke polish.
 
 ### 2026-06-14 — Ollama Backend Adapter
 
