@@ -93,11 +93,20 @@ export function requireApproval(job: JobRecord): JobRecord {
   return job;
 }
 
-export function approveJob(state: JobsState, jobId: string): JobRecord | null {
+export function approveJob(
+  state: JobsState,
+  jobId: string,
+  approval?: { approvedBy?: string; approvedAt?: string; reason?: string },
+): JobRecord | null {
   const job = state.jobs.get(jobId);
   if (!job) return null;
   if (job.status !== "waiting_for_approval") return job;
   job.status = "queued";
+  job.payload.hiveApproval = {
+    approvedAt: approval?.approvedAt ?? new Date().toISOString(),
+    approvedBy: approval?.approvedBy ?? "hive",
+    ...(approval?.reason ? { reason: approval.reason } : {}),
+  };
   return job;
 }
 

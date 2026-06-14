@@ -150,6 +150,19 @@ describe("policyDecisionForJob", () => {
     ).toBe(true);
   });
 
+  it("allows approval-required jobs when Hive approval is present", () => {
+    const decision = policyDecisionForJob(
+      DEFAULT_POLICY,
+      job("install_runtime", {
+        hiveApproval: {
+          approvedAt: "2026-06-14T21:30:00.000Z",
+          approvedBy: "operator_123",
+        },
+      }),
+    );
+    expect(decision.allowed).toBe(true);
+  });
+
   it("requires approval when a job says it needs secrets", () => {
     const decision = policyDecisionForJob(
       DEFAULT_POLICY,

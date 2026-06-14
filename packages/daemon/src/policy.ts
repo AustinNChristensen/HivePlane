@@ -322,6 +322,7 @@ export function policyDecisionForJob(policy: BeePolicy, job: Job): PolicyDecisio
     return policyAllowsCommand(policy, command);
   }
   if (jobs.requireApproval.includes(job.type) || APPROVAL_REQUIRED_JOB_TYPES.includes(job.type)) {
+    if (hasHiveApproval(job)) return { allowed: true };
     return {
       allowed: false,
       requiresApproval: true,
@@ -330,6 +331,7 @@ export function policyDecisionForJob(policy: BeePolicy, job: Job): PolicyDecisio
     };
   }
   if (job.payload.requiresSecrets === true) {
+    if (hasHiveApproval(job)) return { allowed: true };
     return {
       allowed: false,
       requiresApproval: true,
@@ -338,6 +340,12 @@ export function policyDecisionForJob(policy: BeePolicy, job: Job): PolicyDecisio
     };
   }
   return { allowed: true };
+}
+
+function hasHiveApproval(job: Job): boolean {
+  const approval = job.payload.hiveApproval;
+  if (!approval || typeof approval !== "object" || Array.isArray(approval)) return false;
+  return typeof approval.approvedAt === "string" && typeof approval.approvedBy === "string";
 }
 
 function policyDecisionForConnectors(policy: NormalizedBeePolicy, job: Job): PolicyDecision {

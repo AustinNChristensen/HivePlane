@@ -1173,8 +1173,13 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         ) {
           return;
         }
-        const job = approveJob(state.jobsState, jobId) ?? existing;
-        recordAudit(state, request, now(), {
+        const current = now();
+        const job =
+          approveJob(state.jobsState, jobId, {
+            approvedBy: actor.userId,
+            approvedAt: current.toISOString(),
+          }) ?? existing;
+        recordAudit(state, request, current, {
           action: "job.approve",
           resourceType: "job",
           resourceId: job.id,

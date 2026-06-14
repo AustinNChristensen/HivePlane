@@ -876,8 +876,13 @@ describe("Hive server", () => {
           headers: { authorization: `Bearer ${operatorBody.token}` },
         });
         expect(approved.status).toBe(200);
-        const approvedBody = (await approved.json()) as { job: { status: string } };
+        const approvedBody = (await approved.json()) as {
+          job: { status: string; payload: { hiveApproval?: { approvedBy?: string } } };
+        };
         expect(approvedBody.job.status).toBe("queued");
+        expect(approvedBody.job.payload.hiveApproval).toMatchObject({
+          approvedBy: operatorBody.operator.userId,
+        });
       },
     );
   });
