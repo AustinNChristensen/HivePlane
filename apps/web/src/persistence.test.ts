@@ -96,7 +96,7 @@ function buildPopulatedState(): HiveServerState {
     id: "task_aaaa",
     title: "Persist task",
     instructions: "Keep this task across restarts.",
-    requirements: { runtimes: ["openclaw"], tools: ["filesystem"], models: [] },
+    requirements: { runtimes: ["openclaw"], tools: ["filesystem"], modelBackends: [], models: [] },
     status: "assigned",
     assignedBeeId: "bee_persist",
     jobId: "job_aaaa",
@@ -295,6 +295,7 @@ describe("end-to-end via createHiveServer + persistence", () => {
           runtimes: [],
           modelBackends: [],
           models: [],
+          localModels: [],
           tools: [],
           networking: [],
           hardware: {

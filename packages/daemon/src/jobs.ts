@@ -849,16 +849,18 @@ function cancelledOutcome(
 type TaskRequirements = {
   runtimes: string[];
   tools: string[];
+  modelBackends: string[];
   models: string[];
 };
 
 function readTaskRequirements(value: JsonValue | undefined): TaskRequirements {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { runtimes: [], tools: [], models: [] };
+    return { runtimes: [], tools: [], modelBackends: [], models: [] };
   }
   return {
     runtimes: readStringArray(value.runtimes),
     tools: readStringArray(value.tools),
+    modelBackends: readStringArray(value.modelBackends),
     models: readStringArray(value.models),
   };
 }

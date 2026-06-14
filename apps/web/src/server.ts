@@ -223,6 +223,7 @@ export type HiveTaskStatus =
 export type HiveTaskRequirements = {
   runtimes: string[];
   tools: string[];
+  modelBackends: string[];
   models: string[];
 };
 
@@ -471,6 +472,7 @@ const TaskRequirementsSchema = z
   .object({
     runtimes: z.array(z.string().min(1)).default([]),
     tools: z.array(z.string().min(1)).default([]),
+    modelBackends: z.array(z.string().min(1)).default([]),
     models: z.array(z.string().min(1)).default([]),
   })
   .default({});
@@ -1624,6 +1626,7 @@ function normalizeTaskRequirements(requirements: HiveTaskRequirements): HiveTask
   return {
     runtimes: dedupeStrings(requirements.runtimes),
     tools: dedupeStrings(requirements.tools),
+    modelBackends: dedupeStrings(requirements.modelBackends),
     models: dedupeStrings(requirements.models),
   };
 }
@@ -1722,6 +1725,7 @@ function matchesTaskRequirements(bee: HiveBeeRecord, requirements: HiveTaskRequi
   if (
     requirements.runtimes.length === 0 &&
     requirements.tools.length === 0 &&
+    requirements.modelBackends.length === 0 &&
     requirements.models.length === 0
   ) {
     return true;
@@ -1731,7 +1735,11 @@ function matchesTaskRequirements(bee: HiveBeeRecord, requirements: HiveTaskRequi
   return (
     requirements.runtimes.every((runtime) => capabilities.runtimes.includes(runtime)) &&
     requirements.tools.every((tool) => capabilities.tools.includes(tool)) &&
-    requirements.models.every((model) => capabilities.models.includes(model))
+    requirements.modelBackends.every((backend) => capabilities.modelBackends.includes(backend)) &&
+    requirements.models.every((model) => {
+      if (capabilities.models.includes(model)) return true;
+      return capabilities.localModels.some((localModel) => localModel.name === model);
+    })
   );
 }
 

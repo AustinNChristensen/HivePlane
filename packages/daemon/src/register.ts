@@ -53,6 +53,7 @@ export async function registerBeeWithHive(
       runtimes: [],
       modelBackends: [],
       models: [],
+      localModels: [],
       tools: [],
       networking: [],
       hardware: {

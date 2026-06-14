@@ -532,7 +532,7 @@ describe("JobExecutor", () => {
           title: "Summarize repo",
           instructions: "Find the important files.",
           requestedBy: "unit-test",
-          requirements: { runtimes: ["openclaw"], tools: [], models: [] },
+          requirements: { runtimes: ["openclaw"], tools: [], modelBackends: [], models: [] },
         },
       }),
     );

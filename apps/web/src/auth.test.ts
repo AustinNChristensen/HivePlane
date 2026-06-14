@@ -138,6 +138,7 @@ describe("POST /api/bees/register", () => {
             runtimes: [],
             modelBackends: [],
             models: [],
+            localModels: [],
             tools: [],
             networking: [],
             hardware: {
@@ -179,6 +180,7 @@ describe("POST /api/bees/register", () => {
           runtimes: [],
           modelBackends: [],
           models: [],
+          localModels: [],
           tools: [],
           networking: [],
           hardware: {
@@ -247,6 +249,7 @@ describe("signed heartbeat enforcement", () => {
             runtimes: [],
             modelBackends: [],
             models: [],
+            localModels: [],
             tools: [],
             networking: [],
             hardware: {

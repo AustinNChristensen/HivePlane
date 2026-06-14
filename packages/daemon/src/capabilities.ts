@@ -22,6 +22,7 @@ export async function collectBeeCapabilities(
     runtimes: [],
     modelBackends: [],
     models: [],
+    localModels: [],
     tools: [],
     networking: [],
     hardware: toCapabilitiesHardware(hardware),
@@ -41,6 +42,14 @@ export async function collectBeeCapabilities(
   if (ollama.installed || ollama.running) {
     capabilities.modelBackends.push("ollama");
     capabilities.models.push(...(ollama.models ?? []));
+    capabilities.localModels.push(
+      ...(ollama.models ?? []).map((name) => ({
+        backend: "ollama",
+        name,
+        ...(ollama.endpointUrl ? { endpointUrl: ollama.endpointUrl } : {}),
+        resourceHints: {},
+      })),
+    );
   }
 
   if (mlx.installed) {

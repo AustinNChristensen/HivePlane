@@ -14,6 +14,14 @@ const capabilities: BeeCapabilities = {
   runtimes: ["openclaw"],
   modelBackends: ["ollama"],
   models: ["qwen2.5-coder:7b"],
+  localModels: [
+    {
+      backend: "ollama",
+      name: "qwen2.5-coder:7b",
+      endpointUrl: "http://127.0.0.1:11434",
+      resourceHints: {},
+    },
+  ],
   tools: ["shell", "filesystem"],
   networking: ["tailscale"],
   hardware: {

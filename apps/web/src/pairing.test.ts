@@ -37,6 +37,7 @@ function buildRegistrationBody(extra: Record<string, unknown>) {
       runtimes: [],
       modelBackends: [],
       models: [],
+      localModels: [],
       tools: [],
       networking: [],
       hardware: {

@@ -79,6 +79,7 @@ export function createDaemonState(config: DaemonConfig): DaemonState {
       runtimes: [],
       modelBackends: [],
       models: [],
+      localModels: [],
       tools: [],
       networking: [],
       hardware: capabilitiesHardware,

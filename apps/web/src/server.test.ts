@@ -71,6 +71,14 @@ describe("Hive heartbeat state", () => {
         runtimes: ["openclaw"],
         modelBackends: ["ollama"],
         models: ["gemma4:12b"],
+        localModels: [
+          {
+            backend: "ollama",
+            name: "gemma4:12b",
+            endpointUrl: "http://127.0.0.1:11434",
+            resourceHints: {},
+          },
+        ],
         tools: ["openclaw"],
         networking: ["tailscale"],
         hardware: {
@@ -403,6 +411,14 @@ describe("Hive server", () => {
         runtimes: ["openclaw"],
         modelBackends: ["ollama"],
         models: ["gemma4:12b"],
+        localModels: [
+          {
+            backend: "ollama",
+            name: "gemma4:12b",
+            endpointUrl: "http://127.0.0.1:11434",
+            resourceHints: {},
+          },
+        ],
         tools: ["github", "filesystem"],
         networking: ["tailscale"],
         hardware: {
@@ -511,6 +527,7 @@ describe("Hive server", () => {
         runtimes: ["openclaw"],
         modelBackends: [],
         models: [],
+        localModels: [],
         tools: ["filesystem"],
         networking: [],
         hardware: {
@@ -532,7 +549,7 @@ describe("Hive server", () => {
           body: JSON.stringify({
             title: "Run model task",
             instructions: "Use a local model.",
-            requirements: { models: ["gemma4:12b"] },
+            requirements: { modelBackends: ["ollama"], models: ["gemma4:12b"] },
           }),
         });
 
@@ -556,6 +573,14 @@ describe("Hive server", () => {
             runtimes: ["openclaw"],
             modelBackends: ["ollama"],
             models: ["gemma4:12b"],
+            localModels: [
+              {
+                backend: "ollama",
+                name: "gemma4:12b",
+                endpointUrl: "http://127.0.0.1:11434",
+                resourceHints: {},
+              },
+            ],
             tools: ["filesystem"],
             networking: [],
             hardware: {
@@ -598,6 +623,7 @@ describe("Hive server", () => {
         runtimes: ["openclaw"],
         modelBackends: [],
         models: [],
+        localModels: [],
         tools: ["filesystem"],
         networking: [],
         hardware: {

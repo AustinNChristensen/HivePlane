@@ -52,6 +52,7 @@ async function setupBee(state: ReturnType<typeof createHiveServerState>, baseUrl
         runtimes: [],
         modelBackends: [],
         models: [],
+        localModels: [],
         tools: [],
         networking: [],
         hardware: {

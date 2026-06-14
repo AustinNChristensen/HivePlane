@@ -24,10 +24,20 @@ export const BeeHardwareSchema = z.object({
   gpu: z.string().min(1).optional(),
 });
 
+export const LocalModelCapabilitySchema = z.object({
+  backend: z.string().min(1),
+  name: z.string().min(1),
+  endpointUrl: z.string().url().optional(),
+  contextLength: z.number().int().positive().optional(),
+  quantization: z.string().min(1).optional(),
+  resourceHints: JsonObjectSchema.default({}),
+});
+
 export const BeeCapabilitiesSchema = z.object({
   runtimes: z.array(z.string().min(1)).default([]),
   modelBackends: z.array(z.string().min(1)).default([]),
   models: z.array(z.string().min(1)).default([]),
+  localModels: z.array(LocalModelCapabilitySchema).default([]),
   tools: z.array(z.string().min(1)).default([]),
   networking: z.array(z.string().min(1)).default([]),
   hardware: BeeHardwareSchema,
@@ -314,6 +324,7 @@ export type HiveUrl = z.infer<typeof HiveUrlSchema>;
 export type BeePlatform = z.infer<typeof BeePlatformSchema>;
 export type BeeStatus = z.infer<typeof BeeStatusSchema>;
 export type BeeHardware = z.infer<typeof BeeHardwareSchema>;
+export type LocalModelCapability = z.infer<typeof LocalModelCapabilitySchema>;
 export type BeeCapabilities = z.infer<typeof BeeCapabilitiesSchema>;
 export type BeeHealthCheck = z.infer<typeof BeeHealthCheckSchema>;
 export type BeePermissions = z.input<typeof BeePermissionsSchema>;
