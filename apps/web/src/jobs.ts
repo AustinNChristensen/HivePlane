@@ -120,7 +120,7 @@ export function appendEvents(
 ): JobRecord | null {
   const job = state.jobs.get(jobId);
   if (!job) return null;
-  if (job.status === "assigned") {
+  if (job.status === "queued" || job.status === "assigned") {
     job.status = "running";
   }
   job.events.push(...events);

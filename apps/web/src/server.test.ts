@@ -387,7 +387,7 @@ describe("Hive server", () => {
 
         expect(response.status).toBe(200);
         const body = (await response.json()) as {
-          task: { status: string; assignedBeeId: string; jobId: string };
+          task: { id: string; status: string; assignedBeeId: string; jobId: string };
         };
         expect(body.task).toMatchObject({
           status: "assigned",
@@ -404,6 +404,52 @@ describe("Hive server", () => {
           type: "agent_task",
           payload: { taskId: expect.any(String) },
         });
+
+        const eventResponse = await fetch(`${baseUrl}/api/jobs/${body.task.jobId}/events`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            type: "job.events.append",
+            jobId: body.task.jobId,
+            beeId: "bee_agent",
+            events: [
+              {
+                id: "evt_task_running",
+                jobId: body.task.jobId,
+                beeId: "bee_agent",
+                sequence: 1,
+                type: "agent_task.openclaw.start",
+                level: "info",
+                actor: "bee",
+                data: { text: "starting OpenClaw task" },
+                createdAt: "2026-05-09T08:00:06.000Z",
+              },
+            ],
+          }),
+        });
+        expect(eventResponse.status).toBe(200);
+
+        const tasksBody = (await (
+          await fetch(`${baseUrl}/api/tasks`, {
+            headers: { authorization: "Bearer secret" },
+          })
+        ).json()) as { tasks: Array<{ id: string; status: string; jobId: string }> };
+        const task = tasksBody.tasks[0];
+        expect(task).toBeDefined();
+        if (!task) throw new Error("expected created task");
+        expect(task).toMatchObject({ status: "running", jobId: body.task.jobId });
+
+        const detailResponse = await fetch(`${baseUrl}/api/tasks/${body.task.id}`, {
+          headers: { authorization: "Bearer secret" },
+        });
+        expect(detailResponse.status).toBe(200);
+        const detail = (await detailResponse.json()) as {
+          task: { id: string; status: string };
+          job: { id: string; eventCount: number; events: Array<{ type: string }> };
+        };
+        expect(detail.task).toMatchObject({ id: task.id, status: "running" });
+        expect(detail.job).toMatchObject({ id: body.task.jobId, eventCount: 1 });
+        expect(detail.job.events[0]).toMatchObject({ type: "agent_task.openclaw.start" });
       },
     );
   });

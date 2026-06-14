@@ -776,7 +776,9 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         if (parsed.data.beeId !== job.beeId) {
           return sendJson(response, 403, { error: "forbidden", reason: "job is not yours" });
         }
-        appendEvents(state.jobsState, jobId, parsed.data.events);
+        const updated = appendEvents(state.jobsState, jobId, parsed.data.events);
+        const current = now();
+        if (updated) updateHiveTaskFromJob(state, updated, current);
         markDirty();
         return sendJson(response, 200, { accepted: true, eventCount: job.events.length });
       }
@@ -834,6 +836,19 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
       if (request.method === "GET" && url.pathname === "/api/tasks") {
         if (!checkAdmin(request, response, adminToken)) return;
         return sendJson(response, 200, { tasks: serializeTasks(state) });
+      }
+
+      const getTaskMatch = /^\/api\/tasks\/([^/]+)$/.exec(url.pathname);
+      if (request.method === "GET" && getTaskMatch) {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const taskId = decodeURIComponent(getTaskMatch[1] ?? "");
+        const task = state.tasks.get(taskId);
+        if (!task) return sendJson(response, 404, { error: "not_found" });
+        const job = task.jobId ? findJob(state.jobsState, task.jobId) : null;
+        return sendJson(response, 200, {
+          task: serializeTask(task),
+          ...(job ? { job: serializeJob(job) } : {}),
+        });
       }
 
       if (request.method === "POST" && url.pathname === "/api/tasks") {

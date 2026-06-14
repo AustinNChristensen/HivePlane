@@ -705,11 +705,14 @@
         activeTab: "bees",
         adminToken: localStorage.getItem(ADMIN_KEY) || "",
         selectedJobId: "",
+        selectedTaskId: "",
         selectedBeeId: "",
         bees: [],
         incidents: [],
         jobs: [],
         tasks: [],
+        selectedTask: null,
+        selectedTaskJob: null,
         selectedJob: null,
       };
 
@@ -1632,6 +1635,9 @@
           if (!res.ok) throw new Error(body.reason || body.message || `HTTP ${res.status}`);
           els.taskTitle.value = "";
           els.taskInstructions.value = "";
+          state.selectedTaskId = body.task?.id || state.selectedTaskId;
+          state.selectedTask = null;
+          state.selectedTaskJob = null;
           state.selectedJobId = body.task?.jobId || state.selectedJobId;
           els.tasksMeta.textContent =
             body.task?.status === "blocked" ? body.task.lastError : "task assigned";
@@ -1660,8 +1666,17 @@
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const { tasks } = await res.json();
           state.tasks = tasks ?? [];
+          if (
+            state.selectedTaskId &&
+            !state.tasks.some((task) => task.id === state.selectedTaskId)
+          ) {
+            state.selectedTaskId = "";
+            state.selectedTask = null;
+            state.selectedTaskJob = null;
+          }
           renderTasks(state.tasks);
           els.tasksMeta.textContent = `${state.tasks.length} tasks · updated ${new Date().toLocaleTimeString()}`;
+          if (state.selectedTaskId) await refreshSelectedTask();
         } catch (err) {
           els.tasksBody.innerHTML = `<div class="empty">Failed to load tasks: ${escapeHtml(err.message)}</div>`;
         }
@@ -1672,6 +1687,33 @@
           els.tasksBody.innerHTML = `<div class="empty">No Hive tasks yet.</div>`;
           return;
         }
+        const rows = tasks
+          .map((task) => {
+            const selected = task.id === state.selectedTaskId;
+            const selectedTask =
+              selected && state.selectedTask?.id === task.id ? state.selectedTask : null;
+            const selectedJob = selected ? state.selectedTaskJob : null;
+            return `
+                    <tr class="${selected ? "selected" : ""}" data-action="select-task-row" data-task-id="${escapeHtml(task.id)}">
+                      <td>${pill(task.status || "queued")}</td>
+                      <td>${escapeHtml(task.title || "—")}</td>
+                      <td>${task.assignedBeeId ? renderBeeName(task.assignedBeeId) : "—"}</td>
+                      <td>${capList(task.requirements?.runtimes || [])}</td>
+                      <td>${task.jobId ? `<button class="ghost" data-action="task-job" data-job-id="${escapeHtml(task.jobId)}">${escapeHtml(shortId(task.jobId))}</button>` : "—"}</td>
+                      <td title="${escapeHtml(task.updatedAt || "")}">${relativeTime(task.updatedAt)}</td>
+                      <td>${escapeHtml(task.lastError || task.instructions || "—")}</td>
+                    </tr>
+                    ${
+                      selected
+                        ? `<tr class="detail-row"><td colspan="7"><div id="selectedTaskDetail" class="inline-detail job-detail">${
+                            selectedTask
+                              ? renderTaskDetail(selectedTask, selectedJob)
+                              : `<div class="empty">Loading task detail...</div>`
+                          }</div></td></tr>`
+                        : ""
+                    }`;
+          })
+          .join("");
         els.tasksBody.innerHTML = `
           <table>
             <thead>
@@ -1685,22 +1727,7 @@
                 <th>Detail</th>
               </tr>
             </thead>
-            <tbody>
-              ${tasks
-                .map(
-                  (task) => `
-                    <tr>
-                      <td>${pill(task.status || "queued")}</td>
-                      <td>${escapeHtml(task.title || "—")}</td>
-                      <td>${task.assignedBeeId ? renderBeeName(task.assignedBeeId) : "—"}</td>
-                      <td>${capList(task.requirements?.runtimes || [])}</td>
-                      <td>${task.jobId ? `<button class="ghost" data-action="task-job" data-job-id="${escapeHtml(task.jobId)}">${escapeHtml(shortId(task.jobId))}</button>` : "—"}</td>
-                      <td title="${escapeHtml(task.updatedAt || "")}">${relativeTime(task.updatedAt)}</td>
-                      <td>${escapeHtml(task.lastError || task.instructions || "—")}</td>
-                    </tr>`,
-                )
-                .join("")}
-            </tbody>
+            <tbody>${rows}</tbody>
           </table>`;
         els.tasksBody.querySelectorAll("[data-action='task-job']").forEach((button) => {
           button.addEventListener("click", () => {
@@ -1709,6 +1736,107 @@
             refreshJobs();
           });
         });
+        els.tasksBody.querySelectorAll("[data-action='select-task-row']").forEach((row) => {
+          row.addEventListener("click", (event) => {
+            if (event.target.closest("button, details, a")) return;
+            state.selectedTaskId = row.dataset.taskId;
+            state.selectedTask = null;
+            state.selectedTaskJob = null;
+            renderTasks(state.tasks);
+            refreshSelectedTask();
+          });
+        });
+      }
+
+      async function refreshSelectedTask() {
+        if (!state.selectedTaskId) {
+          state.selectedTask = null;
+          state.selectedTaskJob = null;
+          renderTasks(state.tasks);
+          return;
+        }
+        try {
+          const res = await fetch(`/api/tasks/${encodeURIComponent(state.selectedTaskId)}`, {
+            headers: authHeaders(),
+          });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            renderInlineTaskError("Admin token rejected. The stale saved token was cleared.");
+            return;
+          }
+          if (res.status === 404) {
+            renderInlineTaskError("Selected task no longer exists.");
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const { task, job } = await res.json();
+          state.selectedTask = task;
+          state.selectedTaskJob = job || null;
+          renderTasks(state.tasks);
+        } catch (err) {
+          renderInlineTaskError(`Failed to load task detail: ${err.message}`);
+        }
+      }
+
+      function renderTaskDetail(task, job) {
+        const result = job?.error || job?.output;
+        const finalText = extractTaskFinalText(result);
+        return `
+          <div>${pill(task.status || "queued")} <span class="mono">${escapeHtml(task.id)}</span></div>
+          <div class="job-detail-grid">
+            <div class="kv"><span>Requester</span><div>${escapeHtml(task.requestedBy || "hive")}</div></div>
+            <div class="kv"><span>Bee</span><div>${task.assignedBeeId ? renderBeeName(task.assignedBeeId) : "—"}</div></div>
+            <div class="kv"><span>Created</span><div title="${escapeHtml(task.createdAt || "")}">${relativeTime(task.createdAt)}</div></div>
+            <div class="kv"><span>Updated</span><div title="${escapeHtml(task.updatedAt || "")}">${relativeTime(task.updatedAt)}</div></div>
+          </div>
+          <details open>
+            <summary>instructions</summary>
+            <pre class="snippet">${escapeHtml(task.instructions || "—")}</pre>
+          </details>
+          <details>
+            <summary>requirements</summary>
+            <pre class="snippet">${escapeHtml(JSON.stringify(task.requirements || {}, null, 2))}</pre>
+          </details>
+          ${task.lastError ? `<details open><summary>task error</summary><pre class="snippet">${escapeHtml(task.lastError)}</pre></details>` : ""}
+          ${
+            finalText
+              ? `<details open><summary>final text</summary><pre class="snippet">${escapeHtml(finalText)}</pre></details>`
+              : ""
+          }
+          ${
+            result
+              ? `<details><summary>${job?.error ? "job error" : "job output"}</summary><pre class="snippet">${escapeHtml(JSON.stringify(result, null, 2))}</pre></details>`
+              : ""
+          }
+          ${
+            job
+              ? `<details ${job.status === "running" ? "open" : ""}>
+                  <summary>backing job · ${escapeHtml(shortId(job.id))} · ${escapeHtml(job.status)}</summary>
+                  ${renderJobDetail(job)}
+                </details>`
+              : `<div class="empty">No backing job yet. The task is waiting for a matching healthy Bee.</div>`
+          }
+        `;
+      }
+
+      function extractTaskFinalText(result) {
+        if (!result || typeof result !== "object") return "";
+        const compact = result.result;
+        if (compact && typeof compact === "object") {
+          if (typeof compact.finalText === "string" && compact.finalText.trim()) {
+            return compact.finalText;
+          }
+          if (typeof compact.text === "string" && compact.text.trim()) return compact.text;
+        }
+        if (typeof result.message === "string" && result.message.trim()) return result.message;
+        return "";
+      }
+
+      function renderInlineTaskError(message) {
+        const detail = document.getElementById("selectedTaskDetail");
+        if (detail) {
+          detail.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
+        }
       }
 
       // --- jobs view -----------------------------------------------------------
