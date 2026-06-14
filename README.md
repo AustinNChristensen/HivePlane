@@ -381,6 +381,8 @@ the user-owned Hive URL.
 - [Vision](docs/vision.md)
 - [MVP demo script](docs/mvp-demo-script.md)
 - [Infrastructure providers](docs/infrastructure-providers.md)
+- [Systems and scoped permissions](docs/systems-permissions.md)
+- [Sub-agent provisioning](docs/sub-agent-provisioning.md)
 - [Self-healing recovery](docs/self-healing-todo.md)
 - [Competitor analysis](docs/competitor-analysis.md)
 
