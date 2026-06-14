@@ -157,6 +157,70 @@ describe("POST /api/bees/:beeId/jobs", () => {
     });
   });
 
+  it("lets an admin retry a cancelled direct job", async () => {
+    const state = createHiveServerState();
+    await withServer({ state, adminToken: "admin-secret", authRequired: true }, async (baseUrl) => {
+      const { beeId } = await setupBee(state, baseUrl);
+      const create = await fetch(`${baseUrl}/api/bees/${beeId}/jobs`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer admin-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "run_healthcheck",
+          payload: { dogfood: "retry" },
+          timeoutSeconds: 30,
+        }),
+      });
+      const created = (await create.json()) as { job: { id: string } };
+      await fetch(`${baseUrl}/api/jobs/${created.job.id}/cancel`, {
+        method: "POST",
+        headers: { authorization: "Bearer admin-secret" },
+      });
+
+      const retry = await fetch(`${baseUrl}/api/jobs/${created.job.id}/retry`, {
+        method: "POST",
+        headers: { authorization: "Bearer admin-secret" },
+      });
+      expect(retry.status).toBe(200);
+      const retried = (await retry.json()) as {
+        job: {
+          id: string;
+          status: string;
+          type: string;
+          payload: { dogfood?: string };
+          timeoutSeconds?: number;
+          events: Array<{ type: string; data: { sourceJobId?: string } }>;
+        };
+        sourceJob: { events: Array<{ type: string; data: { newJobId?: string } }> };
+      };
+      expect(retried.job.id).not.toBe(created.job.id);
+      expect(retried.job).toMatchObject({
+        status: "queued",
+        type: "run_healthcheck",
+        payload: { dogfood: "retry" },
+        timeoutSeconds: 30,
+      });
+      expect(retried.job.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "job.retry.created",
+            data: { sourceJobId: created.job.id },
+          }),
+        ]),
+      );
+      expect(retried.sourceJob.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "job.retry.requested",
+            data: { newJobId: retried.job.id },
+          }),
+        ]),
+      );
+    });
+  });
+
   it("holds mutating jobs for admin approval before dispatch", async () => {
     const state = createHiveServerState();
     await withServer({ state, adminToken: "admin-secret", authRequired: true }, async (baseUrl) => {

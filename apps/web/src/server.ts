@@ -42,6 +42,7 @@ import {
 import { getHiveInfo } from "./hive-info.js";
 import {
   appendEvents,
+  appendSystemJobEvent,
   approveJob,
   cancelJob,
   claimPendingJobCancellations,
@@ -784,6 +785,51 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         if (job) updateHiveTaskFromJob(state, job, current);
         markDirty();
         return sendJson(response, 200, { job: job ? serializeJob(job) : null });
+      }
+
+      const retryJobMatch = /^\/api\/jobs\/([^/]+)\/retry$/.exec(url.pathname);
+      if (request.method === "POST" && retryJobMatch) {
+        if (!checkAdmin(request, response, adminToken)) return;
+        const jobId = decodeURIComponent(retryJobMatch[1] ?? "");
+        const source = findJob(state.jobsState, jobId);
+        if (!source) return sendJson(response, 404, { error: "not_found" });
+        if (!["failed", "cancelled", "timed_out"].includes(source.status)) {
+          return sendJson(response, 409, {
+            error: "job_not_retryable",
+            reason: `Job is currently ${source.status}.`,
+          });
+        }
+        if (typeof source.payload.taskId === "string") {
+          return sendJson(response, 409, {
+            error: "use_task_retry",
+            reason: "This job backs a Hive task. Retry the task instead.",
+          });
+        }
+        const current = now();
+        const job = createJob(
+          state.jobsState,
+          source.beeId,
+          {
+            type: source.type,
+            payload: { ...source.payload },
+            ...(source.timeoutSeconds !== undefined
+              ? { timeoutSeconds: source.timeoutSeconds }
+              : {}),
+          },
+          current,
+        );
+        appendSystemJobEvent(source, current, "job.retry.requested", "info", {
+          newJobId: job.id,
+        });
+        appendSystemJobEvent(job, current, "job.retry.created", "info", {
+          sourceJobId: source.id,
+        });
+        if (jobNeedsApproval(job)) requireApproval(job);
+        markDirty();
+        return sendJson(response, 200, {
+          job: serializeJob(job),
+          sourceJob: serializeJob(source),
+        });
       }
 
       // POST /api/jobs/:jobId/events — bee streams events.

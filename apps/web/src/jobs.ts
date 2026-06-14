@@ -105,12 +105,10 @@ export function cancelJob(
   job.status = "cancelled";
   job.completedAt = now;
   job.error = { code: "job_cancelled", message: reason };
-  job.events.push(
-    createSystemJobEvent(job, now, "job.cancel.requested", "warn", {
-      reason,
-      delivered: false,
-    }),
-  );
+  appendSystemJobEvent(job, now, "job.cancel.requested", "warn", {
+    reason,
+    delivered: false,
+  });
   return job;
 }
 
@@ -134,12 +132,10 @@ export function claimPendingJobCancellations(
     };
     cancellations.push(message);
     job.cancellationDeliveredAt = now;
-    job.events.push(
-      createSystemJobEvent(job, now, "job.cancel.delivered", "warn", {
-        reason: message.reason ?? "cancelled by Hive admin",
-        delivered: true,
-      }),
-    );
+    appendSystemJobEvent(job, now, "job.cancel.delivered", "warn", {
+      reason: message.reason ?? "cancelled by Hive admin",
+      delivered: true,
+    });
   }
   return cancellations;
 }
@@ -225,6 +221,18 @@ export function toJobProto(job: JobRecord): Job {
 }
 
 export const ParseJobEventBatch = JobEventBatchSchema;
+
+export function appendSystemJobEvent(
+  job: JobRecord,
+  now: Date,
+  type: string,
+  level: JobEvent["level"],
+  data: Record<string, JsonValue>,
+): JobEvent {
+  const event = createSystemJobEvent(job, now, type, level, data);
+  job.events.push(event);
+  return event;
+}
 
 function createSystemJobEvent(
   job: JobRecord,

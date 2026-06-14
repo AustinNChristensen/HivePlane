@@ -2148,6 +2148,11 @@
               ? `<div class="actions"><button class="ghost danger" data-action="cancel-job" data-job-id="${escapeHtml(job.id)}">Cancel Job</button></div>`
               : ""
           }
+          ${
+            ["failed", "cancelled", "timed_out"].includes(job.status) && !job.payload?.taskId
+              ? `<div class="actions"><button class="action" data-action="retry-job" data-job-id="${escapeHtml(job.id)}">Retry Job</button></div>`
+              : ""
+          }
           <div>
             <div class="meta">Event stream</div>
             ${
@@ -2167,6 +2172,9 @@
         });
         root.querySelector("[data-action='cancel-job']")?.addEventListener("click", (event) => {
           cancelJob(event.currentTarget.dataset.jobId, event.currentTarget);
+        });
+        root.querySelector("[data-action='retry-job']")?.addEventListener("click", (event) => {
+          retryJob(event.currentTarget.dataset.jobId, event.currentTarget);
         });
       }
       function renderInlineJobError(message) {
@@ -2212,6 +2220,29 @@
           await refreshJobs();
         } catch (err) {
           renderInlineJobError(`cancel failed: ${err.message}`);
+        } finally {
+          button.disabled = false;
+        }
+      }
+      async function retryJob(jobId, button) {
+        if (!state.adminToken || !jobId) return;
+        button.disabled = true;
+        try {
+          const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/retry`, {
+            method: "POST",
+            headers: authHeaders(),
+          });
+          if (res.status === 401) {
+            clearRejectedAdminToken();
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+          const body = await res.json();
+          state.selectedJobId = body.job?.id || jobId;
+          els.jobsMeta.textContent = "job retried";
+          await refreshJobs();
+        } catch (err) {
+          renderInlineJobError(`retry failed: ${err.message}`);
         } finally {
           button.disabled = false;
         }
