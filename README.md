@@ -341,7 +341,6 @@ hive uninstall            # remove the service unit (use `hive up` to reinstall)
 - **[#49](https://github.com/AustinNChristensen/HivePlane/issues/49)** — No TLS on the Hive; rely on Tailscale or a reverse proxy.
 - **[#50](https://github.com/AustinNChristensen/HivePlane/issues/50)** — `run_command` policy DX is hand-edited JSON.
 - **[#51](https://github.com/AustinNChristensen/HivePlane/issues/51)** — systemd path is unverified on real Linux.
-- **[#48](https://github.com/AustinNChristensen/HivePlane/issues/48)** — install scripts hard-code the upstream repo URL.
 
 ### Supported Deployment Modes
 
@@ -372,6 +371,19 @@ Planned cloud features:
 
 The open-source core should remain genuinely useful without HivePlane Cloud.
 
+Cloud is an operating convenience, not a replacement for self-hosting. The
+default self-host path stays Hive + Tailscale, with Bees connecting outbound to
+the user-owned Hive URL.
+
+## Design Docs
+
+- [Architecture](docs/architecture.md)
+- [Vision](docs/vision.md)
+- [MVP demo script](docs/mvp-demo-script.md)
+- [Infrastructure providers](docs/infrastructure-providers.md)
+- [Self-healing recovery](docs/self-healing-todo.md)
+- [Competitor analysis](docs/competitor-analysis.md)
+
 ## MVP Pillars
 
 1. **Bee daemon** — phones home, receives jobs, enforces local policy, streams logs.
@@ -385,6 +397,19 @@ The open-source core should remain genuinely useful without HivePlane Cloud.
 ## License
 
 HivePlane is licensed under the Apache License 2.0.
+
+The Apache-2.0 core should include the parts users must be able to inspect,
+self-host, and trust: Hive, Bee, pairing/session identity, local policy, job and
+task execution, recovery, dashboard operations, core runtime/model adapters,
+and docs.
+
+Managed enterprise features may live in HivePlane Cloud or paid extensions when
+they primarily reduce operational burden for teams: hosted control plane,
+enterprise SSO/RBAC, long-retention audit logs, compliance reporting, managed
+relay/networking, shared policy packs, and priority support.
+
+Contributions should preserve that split. Reliability, safety, interoperability,
+and self-hosting improvements belong in the open-source core by default.
 
 ## Status
 
