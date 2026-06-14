@@ -64,6 +64,21 @@ async function main(): Promise<void> {
     case "init":
       await runInit(parsed);
       return;
+    case "login":
+      runRemoteLogin(parsed);
+      return;
+    case "daemon":
+      await runDaemon(parsed);
+      return;
+    case "node":
+      runNode(parsed);
+      return;
+    case "job":
+      runJob(parsed);
+      return;
+    case "approval":
+      runApproval(parsed);
+      return;
     case "install":
       await runInstall(parsed);
       return;
@@ -320,6 +335,130 @@ async function runUp(parsed: ArgvParseResult): Promise<void> {
   await runStart(parsed);
 }
 
+function runRemoteLogin(parsed: ArgvParseResult): never {
+  if (!parsed.positional[0]) {
+    console.error("Usage: hive login <hive-url> --token <admin-token>");
+    process.exit(2);
+  }
+  notImplemented(
+    "hive login",
+    "remote Hive auth profiles are not wired yet; use `hive init` on the Hive host for now.",
+  );
+}
+
+async function runDaemon(parsed: ArgvParseResult): Promise<void> {
+  const [subcommand, ...rest] = parsed.positional;
+  const nested = parseArgs(rest);
+  if (parsed.configDir) nested.configDir = parsed.configDir;
+
+  switch (subcommand) {
+    case "start":
+      await runStart(nested);
+      return;
+    case "status":
+      await runStatus(nested);
+      return;
+    case "stop":
+      await runStop();
+      return;
+    case "restart":
+      await runRestart();
+      return;
+    case "logs":
+      await runLogs(nested);
+      return;
+    default:
+      console.error("Usage: hive daemon (start|status|stop|restart|logs)");
+      process.exit(2);
+  }
+}
+
+function runNode(parsed: ArgvParseResult): never {
+  const [subcommand, methodOrTarget, maybeTarget] = parsed.positional;
+  if (subcommand === "register") {
+    notImplemented(
+      "hive node register",
+      "Bee registration is currently performed by `bee login` and the Hive pairing API.",
+    );
+  }
+  if (subcommand === "provision" && methodOrTarget === "ssh" && maybeTarget) {
+    notImplemented(
+      "hive node provision ssh",
+      "SSH provisioning is tracked separately and is not wired into the CLI yet.",
+    );
+  }
+
+  console.error("Usage: hive node register | hive node provision ssh <host>");
+  process.exit(2);
+}
+
+function runJob(parsed: ArgvParseResult): never {
+  const [subcommand, id] = parsed.positional;
+  switch (subcommand) {
+    case "list":
+      notImplemented("hive job list", "job listing needs the remote Hive API client wiring.");
+    case "show":
+      if (!id) {
+        console.error("Usage: hive job show <job-id>");
+        process.exit(2);
+      }
+      notImplemented(
+        "hive job show",
+        "job detail fetching needs the remote Hive API client wiring.",
+      );
+    case "logs":
+      if (!id) {
+        console.error("Usage: hive job logs <job-id>");
+        process.exit(2);
+      }
+      notImplemented(
+        "hive job logs",
+        "job event streaming needs the remote Hive API client wiring.",
+      );
+    default:
+      console.error("Usage: hive job (list|show <job-id>|logs <job-id>)");
+      process.exit(2);
+  }
+}
+
+function runApproval(parsed: ArgvParseResult): never {
+  const [subcommand, id] = parsed.positional;
+  switch (subcommand) {
+    case "list":
+      notImplemented(
+        "hive approval list",
+        "approval listing needs the remote Hive API client wiring.",
+      );
+    case "approve":
+      if (!id) {
+        console.error("Usage: hive approval approve <approval-id>");
+        process.exit(2);
+      }
+      notImplemented(
+        "hive approval approve",
+        "approval resolution needs the remote Hive API client wiring.",
+      );
+    case "deny":
+      if (!id) {
+        console.error("Usage: hive approval deny <approval-id>");
+        process.exit(2);
+      }
+      notImplemented(
+        "hive approval deny",
+        "approval resolution needs the remote Hive API client wiring.",
+      );
+    default:
+      console.error("Usage: hive approval (list|approve <approval-id>|deny <approval-id>)");
+      process.exit(2);
+  }
+}
+
+function notImplemented(command: string, detail: string): never {
+  console.error(`${command} is not implemented yet.`);
+  console.error(detail);
+  process.exit(1);
+}
+
 /**
  * Read the Hive config and abort with a clear error if no admin token has
  * been set yet. Returns the resolved config dir on success so callers don't
@@ -345,6 +484,19 @@ Usage:
   hive init [--port <n>] [--rotate-admin-token]
                              Generate or update ~/.hiveplane/hive-config.json
                              (creates an admin token if missing).
+  hive login <url> --token <t>
+                             Placeholder for remote Hive auth profile login.
+  hive daemon start|status|stop|restart|logs
+                             Aliases for local Hive daemon control.
+  hive node register         Placeholder for direct node registration.
+  hive node provision ssh <host>
+                             Placeholder for SSH remote provisioning.
+  hive job list              Placeholder for job listing.
+  hive job show <job-id>     Placeholder for job details.
+  hive job logs <job-id>     Placeholder for job event logs.
+  hive approval list         Placeholder for approval listing.
+  hive approval approve <id> Placeholder for approving a pending action.
+  hive approval deny <id>    Placeholder for denying a pending action.
   hive install               Install the launchd/systemd unit for the Hive
                              (no-op if already present).
   hive start                 Start the Hive service. Auto-installs the unit
