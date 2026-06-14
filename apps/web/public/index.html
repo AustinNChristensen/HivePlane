@@ -638,6 +638,25 @@
         color: var(--muted);
         font-size: 12px;
       }
+      .task-route-preview {
+        margin: 0 18px 18px;
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.025);
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .task-route-preview.ready {
+        border-color: color-mix(in srgb, var(--good) 42%, var(--border));
+        background: rgba(46, 230, 188, 0.08);
+        color: var(--text);
+      }
+      .task-route-preview.blocked {
+        border-color: color-mix(in srgb, var(--warn) 48%, var(--border));
+        background: rgba(255, 189, 74, 0.08);
+        color: var(--warn);
+      }
       .checkbox-row {
         display: flex;
         align-items: center;
@@ -1366,6 +1385,10 @@
                   <select id="taskTools" multiple size="4"></select>
                 </div>
                 <div class="form-field">
+                  <label for="taskModelBackends">Model Backends</label>
+                  <select id="taskModelBackends" multiple size="4"></select>
+                </div>
+                <div class="form-field">
                   <label for="taskModels">Models</label>
                   <select id="taskModels" multiple size="4"></select>
                 </div>
@@ -1391,6 +1414,7 @@
                     placeholder="one-off"
                   />
                 </div>
+                <button class="ghost" id="loadDemoTask">Demo Task</button>
                 <button class="action" id="createTask">Assign Task</button>
               </div>
               <div class="form-field wide">
@@ -1399,6 +1423,9 @@
               </div>
               <div class="task-hint" id="taskBeeHint">
                 Bee capabilities load with the task list.
+              </div>
+              <div class="task-route-preview" id="taskRoutePreview">
+                Route preview loads after Bees report capabilities.
               </div>
               <div id="tasksBody"></div>
               <div class="detail-section">
@@ -1522,14 +1549,17 @@
         taskTitle: document.getElementById("taskTitle"),
         taskPreferredBee: document.getElementById("taskPreferredBee"),
         taskBeeHint: document.getElementById("taskBeeHint"),
+        taskRoutePreview: document.getElementById("taskRoutePreview"),
         taskRuntime: document.getElementById("taskRuntime"),
         taskTools: document.getElementById("taskTools"),
+        taskModelBackends: document.getElementById("taskModelBackends"),
         taskModels: document.getElementById("taskModels"),
         taskConnectors: document.getElementById("taskConnectors"),
         taskSessionId: document.getElementById("taskSessionId"),
         taskWorkingDirectory: document.getElementById("taskWorkingDirectory"),
         taskRepeatMinutes: document.getElementById("taskRepeatMinutes"),
         taskInstructions: document.getElementById("taskInstructions"),
+        loadDemoTask: document.getElementById("loadDemoTask"),
         createTask: document.getElementById("createTask"),
         tokenBeeName: document.getElementById("tokenBeeName"),
         mintToken: document.getElementById("mintToken"),
@@ -3102,6 +3132,28 @@
 
       // --- tasks view ----------------------------------------------------------
       els.taskPreferredBee.addEventListener("change", applySelectedBeeRequirements);
+      [els.taskRuntime, els.taskTools, els.taskModelBackends, els.taskModels, els.taskConnectors]
+        .filter(Boolean)
+        .forEach((input) => {
+          input.addEventListener("change", renderTaskRoutePreview);
+        });
+      els.loadDemoTask.addEventListener("click", () => {
+        const bee = bestDemoBee();
+        if (bee) {
+          els.taskPreferredBee.value = bee.beeId;
+          applySelectedBeeRequirements();
+        }
+        els.taskTitle.value = "HivePlane demo delegation";
+        els.taskInstructions.value = "Reply with exactly: HivePlane delegated task succeeded.";
+        const caps = bee?.capabilities || {};
+        if (!els.taskRuntime.value) els.taskRuntime.value = firstValue(caps.runtimes) || "openclaw";
+        if (!selectedValues(els.taskTools).length) {
+          setSelectedValues(els.taskTools, caps.tools?.includes("openclaw") ? ["openclaw"] : []);
+        }
+        els.taskRepeatMinutes.value = "";
+        renderTaskBeeHint();
+        renderTaskRoutePreview();
+      });
 
       els.createTask.addEventListener("click", async () => {
         if (!state.adminToken) {
@@ -3116,6 +3168,7 @@
         const workingDirectory = els.taskWorkingDirectory.value.trim();
         const repeatMinutes = Number(els.taskRepeatMinutes.value || 0);
         const tools = selectedValues(els.taskTools);
+        const modelBackends = selectedValues(els.taskModelBackends);
         const models = selectedValues(els.taskModels);
         const connectors = selectedValues(els.taskConnectors);
         if (!title || !instructions) {
@@ -3129,7 +3182,13 @@
             instructions,
             requestedBy: "dashboard",
             ...(preferredBeeId ? { preferredBeeId } : {}),
-            requirements: { runtimes: runtime ? [runtime] : [], tools, models, connectors },
+            requirements: {
+              runtimes: runtime ? [runtime] : [],
+              tools,
+              modelBackends,
+              models,
+              connectors,
+            },
             context: {
               ...(sessionId ? { sessionId } : {}),
               ...(runtime ? { runtime } : {}),
@@ -3165,6 +3224,7 @@
           els.taskWorkingDirectory.value = "";
           els.taskRepeatMinutes.value = "";
           setSelectedValues(els.taskTools, []);
+          setSelectedValues(els.taskModelBackends, []);
           setSelectedValues(els.taskModels, []);
           setSelectedValues(els.taskConnectors, []);
           els.taskInstructions.value = "";
@@ -3210,6 +3270,7 @@
             state.bees = bees ?? [];
             renderTaskBeeOptions();
             renderTaskRequirementOptions();
+            renderTaskRoutePreview();
           }
           const { tasks } = await tasksRes.json();
           const { automations } = await automationsRes.json();
@@ -3225,6 +3286,7 @@
           }
           if (state.selectedTaskId) await refreshSelectedTask(false);
           renderTaskBeeHint();
+          renderTaskRoutePreview();
           renderTasks(state.tasks);
           renderAutomations(state.automations);
           els.tasksMeta.textContent = `${state.tasks.length} tasks · updated ${new Date().toLocaleTimeString()}`;
@@ -3260,10 +3322,12 @@
       function renderTaskRequirementOptions() {
         const selectedRuntime = els.taskRuntime.value;
         const selectedTools = selectedValues(els.taskTools);
+        const selectedModelBackends = selectedValues(els.taskModelBackends);
         const selectedModels = selectedValues(els.taskModels);
         const selectedConnectors = selectedValues(els.taskConnectors);
         const runtimes = taskCapabilityValues("runtimes", selectedRuntime ? [selectedRuntime] : []);
         const tools = taskCapabilityValues("tools", selectedTools);
+        const modelBackends = taskCapabilityValues("modelBackends", selectedModelBackends);
         const models = taskCapabilityValues("models", selectedModels);
         const connectors = taskConnectorValues(selectedConnectors);
         els.taskRuntime.innerHTML = [
@@ -3271,8 +3335,10 @@
           ...runtimes.map((runtime) => optionHtml(runtime, runtime === selectedRuntime)),
         ].join("");
         renderMultiSelectOptions(els.taskTools, tools, selectedTools);
+        renderMultiSelectOptions(els.taskModelBackends, modelBackends, selectedModelBackends);
         renderMultiSelectOptions(els.taskModels, models, selectedModels);
         renderMultiSelectOptions(els.taskConnectors, connectors, selectedConnectors);
+        renderTaskRoutePreview();
       }
 
       function renderTaskBeeHint() {
@@ -3296,6 +3362,95 @@
         els.taskBeeHint.textContent = `${beeDisplayName(selectedBeeId)} capabilities: runtimes ${runtimes}; tools ${tools}; models ${models}; connectors ${connectors}; sessions ${sessions}.`;
       }
 
+      function renderTaskRoutePreview() {
+        const preview = els.taskRoutePreview;
+        if (!preview) return;
+        const matches = matchingTaskBees();
+        preview.classList.remove("ready", "blocked");
+        if (!state.bees.length) {
+          preview.textContent = "Route preview loads after Bees report capabilities.";
+          return;
+        }
+        if (!matches.length) {
+          preview.classList.add("blocked");
+          preview.textContent =
+            "No healthy online Bee matches the selected runtime, tools, model backend, model, and connector requirements.";
+          return;
+        }
+        preview.classList.add("ready");
+        const winner = matches[0];
+        const required = currentTaskRequirements();
+        const reqText = [
+          required.runtimes.length ? `runtime ${required.runtimes.join(", ")}` : "",
+          required.tools.length ? `tools ${required.tools.join(", ")}` : "",
+          required.modelBackends.length ? `model backend ${required.modelBackends.join(", ")}` : "",
+          required.models.length ? `models ${required.models.join(", ")}` : "",
+          required.connectors.length ? `connectors ${required.connectors.join(", ")}` : "",
+        ]
+          .filter(Boolean)
+          .join("; ");
+        preview.textContent = `Routes to ${beeDisplayName(winner.beeId)}${
+          matches.length > 1
+            ? ` (+${matches.length - 1} fallback${matches.length > 2 ? "s" : ""})`
+            : ""
+        }. ${reqText || "No hard requirements selected."}`;
+      }
+
+      function currentTaskRequirements() {
+        const runtime = els.taskRuntime.value.trim();
+        return {
+          runtimes: runtime ? [runtime] : [],
+          tools: selectedValues(els.taskTools),
+          modelBackends: selectedValues(els.taskModelBackends),
+          models: selectedValues(els.taskModels),
+          connectors: selectedValues(els.taskConnectors),
+        };
+      }
+
+      function matchingTaskBees() {
+        const preferredBeeId = els.taskPreferredBee.value.trim();
+        const requirements = currentTaskRequirements();
+        return [...state.bees]
+          .filter((bee) => {
+            if (preferredBeeId && bee.beeId !== preferredBeeId) return false;
+            if (bee.status !== "online" || bee.operationalState !== "healthy") return false;
+            return beeMatchesRequirements(bee, requirements);
+          })
+          .sort((a, b) => (a.activeJobs ?? 0) - (b.activeJobs ?? 0));
+      }
+
+      function beeMatchesRequirements(bee, requirements) {
+        const caps = bee.capabilities || {};
+        return (
+          requirements.runtimes.every((runtime) => (caps.runtimes || []).includes(runtime)) &&
+          requirements.tools.every((tool) => (caps.tools || []).includes(tool)) &&
+          requirements.modelBackends.every((backend) =>
+            (caps.modelBackends || []).includes(backend),
+          ) &&
+          requirements.models.every(
+            (model) =>
+              (caps.models || []).includes(model) ||
+              (caps.localModels || []).some((localModel) => localModel.name === model),
+          ) &&
+          requirements.connectors.every((connector) =>
+            (caps.connectors || []).some(
+              (candidate) => candidate.id === connector && candidate.status !== "unavailable",
+            ),
+          )
+        );
+      }
+
+      function bestDemoBee() {
+        return [...state.bees]
+          .filter((bee) => bee.status === "online" && bee.operationalState === "healthy")
+          .sort((a, b) => {
+            const aOpenClaw = (a.capabilities?.runtimes || []).includes("openclaw") ? 1 : 0;
+            const bOpenClaw = (b.capabilities?.runtimes || []).includes("openclaw") ? 1 : 0;
+            if (aOpenClaw !== bOpenClaw) return bOpenClaw - aOpenClaw;
+            return (a.activeJobs ?? 0) - (b.activeJobs ?? 0);
+          })[0];
+      }
+
       function applySelectedBeeRequirements() {
         const bee = beeById(els.taskPreferredBee.value);
         if (!bee) {
@@ -3303,9 +3458,11 @@
           els.taskSessionId.value = "";
           els.taskWorkingDirectory.value = "";
           setSelectedValues(els.taskTools, []);
+          setSelectedValues(els.taskModelBackends, []);
           setSelectedValues(els.taskModels, []);
           setSelectedValues(els.taskConnectors, []);
           renderTaskBeeHint();
+          renderTaskRoutePreview();
           return;
         }
         const caps = bee.capabilities || {};
@@ -3314,12 +3471,14 @@
         els.taskSessionId.value = session?.id || "";
         els.taskWorkingDirectory.value = session?.workingDirectory || "";
         setSelectedValues(els.taskTools, caps.tools || []);
+        setSelectedValues(els.taskModelBackends, caps.modelBackends || []);
         setSelectedValues(els.taskModels, caps.models || []);
         setSelectedValues(
           els.taskConnectors,
           (caps.connectors || []).map((connector) => connector.id),
         );
         renderTaskBeeHint();
+        renderTaskRoutePreview();
       }
 
       function summarizeAgentSessions(sessions) {
@@ -3352,6 +3511,10 @@
 
       function capCsv(values) {
         return Array.isArray(values) ? values.filter(Boolean)[0] || "" : "";
+      }
+
+      function firstValue(values) {
+        return Array.isArray(values) ? values.find(Boolean) || "" : "";
       }
 
       function taskCapabilityValues(key, keep = []) {
@@ -3399,6 +3562,17 @@
         });
       }
 
+      function renderTaskRequirementsSummary(requirements) {
+        const values = [
+          ...(requirements.runtimes || []).map((value) => `runtime:${value}`),
+          ...(requirements.tools || []).map((value) => `tool:${value}`),
+          ...(requirements.modelBackends || []).map((value) => `backend:${value}`),
+          ...(requirements.models || []).map((value) => `model:${value}`),
+          ...(requirements.connectors || []).map((value) => `connector:${value}`),
+        ];
+        return capList(values);
+      }
+
       function renderTasks(tasks) {
         if (!tasks.length) {
           els.tasksBody.innerHTML = `<div class="empty">No Hive tasks yet.</div>`;
@@ -3415,7 +3589,7 @@
                       <td>${pill(task.status || "queued")}</td>
                       <td>${escapeHtml(task.title || "—")}</td>
                       <td>${task.assignedBeeId ? renderBeeName(task.assignedBeeId) : "—"}</td>
-                      <td>${capList(task.requirements?.runtimes || [])}</td>
+                      <td>${renderTaskRequirementsSummary(task.requirements || {})}</td>
                       <td>${task.jobId ? `<button class="ghost" data-action="task-job" data-job-id="${escapeHtml(task.jobId)}">${escapeHtml(shortId(task.jobId))}</button>` : "—"}</td>
                       <td title="${escapeHtml(task.updatedAt || "")}">${relativeTime(task.updatedAt)}</td>
                       <td>${escapeHtml(task.lastError || task.instructions || "—")}</td>
@@ -3438,7 +3612,7 @@
                 <th>Status</th>
                 <th>Title</th>
                 <th>Bee</th>
-                <th>Runtime</th>
+                <th>Requirements</th>
                 <th>Job</th>
                 <th>Updated</th>
                 <th>Detail</th>

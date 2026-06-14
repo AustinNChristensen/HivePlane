@@ -1,6 +1,6 @@
 # MVP Demo Script
 
-This is the first end-to-end HivePlane demo. It is meant to prove the control-plane value proposition and expose the next engineering gaps.
+This is the first end-to-end HivePlane demo. It is meant to prove one product moment: the operator connects two machines, sees their runtimes/connectors/models, and safely delegates a real agent task to the right Bee without reading the codebase.
 
 ## Demo Promise
 
@@ -9,10 +9,11 @@ In under 10 minutes, an operator can:
 1. start a Hive;
 2. pair a Bee from another machine;
 3. verify runtime/model capability reporting;
-4. run a safe healthcheck/job;
-5. delegate one OpenClaw-backed task;
-6. break and recover the Bee;
-7. inspect the job, incident, recovery, and audit trail in the dashboard.
+4. choose task requirements from live capability dropdowns;
+5. preview which Bee will receive the task;
+6. delegate one OpenClaw-backed task;
+7. cancel/retry a task when needed;
+8. inspect events, artifacts, output, and audit history in the dashboard.
 
 ## Setup
 
@@ -67,25 +68,49 @@ Real signal:
 - the job detail shows payload, output, and event stream;
 - Activity shows the job lifecycle.
 
-### 5. Delegate An Agent Task
+### 5. Stage The Useful User Task
 
 Open **Tasks**.
 
-Create a task with:
+Click **Demo Task**. Confirm the form is staged with:
 
 - preferred Bee: the online Bee;
 - runtime: `openclaw`;
-- title: `Demo task`;
+- tools: `openclaw`, if reported;
+- model backend/model/connector dropdowns: live values from the selected Bee, if reported;
+- title: `HivePlane demo delegation`;
 - instructions: `Reply with exactly: HivePlane delegated task succeeded.`;
+
+Real signal:
+
+- the route preview names the Bee that will receive the task;
+- if no Bee matches, the preview says that before task creation;
+- the selected Bee hint shows reported runtimes, tools, models, connectors, and sessions.
+
+### 6. Delegate An Agent Task
+
+Click **Assign Task**.
 
 Real signal:
 
 - task assigns to the Bee;
 - backing `agent_task` job runs through OpenClaw;
 - final text is visible in task detail;
-- job events include OpenClaw stdout/stderr and compact result metadata.
+- job events include OpenClaw stdout/stderr and compact result metadata;
+- artifacts/output are visible from the inline task detail and the linked job detail.
 
-### 6. Break And Recover
+### 7. Cancel And Retry
+
+For the control demo, create a second long-running task, then click **Cancel** while it is queued/running.
+
+Real signal:
+
+- the backing job receives cancellation;
+- the task status changes to `cancelled`;
+- the task detail shows cancellation events;
+- clicking **Retry** creates a fresh backing job without duplicating the old one.
+
+### 8. Break And Recover
 
 On the Bee machine, stop the Bee but leave Rescue running:
 
@@ -102,7 +127,7 @@ Real signal:
 - verification healthcheck runs after repair;
 - incident resolves.
 
-### 7. Inspect The Recovery Trail
+### 9. Inspect The Recovery Trail
 
 Open **Incidents** and expand the incident row.
 
@@ -121,7 +146,9 @@ Expected:
 - signed Bee heartbeat.
 - job creation, assignment, event append, and completion.
 - dashboard job detail.
-- at least one safe command or healthcheck.
+- at least one safe command or healthcheck;
+- dashboard route preview from live requirements;
+- task cancel and retry controls;
 - Rescue-based Bee restart.
 
 ## What Can Be Mocked For Now
