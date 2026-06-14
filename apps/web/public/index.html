@@ -57,12 +57,31 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 16px 24px;
-        border-bottom: 1px solid var(--border);
-        background: linear-gradient(90deg, rgba(32, 18, 66, 0.82), rgba(7, 5, 16, 0.62));
-        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
-        gap: 16px;
+        gap: 18px;
         flex-wrap: wrap;
+        margin-bottom: 28px;
+      }
+      .app-shell {
+        min-height: calc(100vh - 56px);
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        margin: 28px auto;
+        width: min(1560px, calc(100vw - 32px));
+        overflow: hidden;
+        background: rgba(7, 5, 16, 0.68);
+        box-shadow:
+          0 32px 120px rgba(0, 0, 0, 0.38),
+          0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+      }
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+        padding: 30px 22px 22px;
+        border-right: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(45, 29, 86, 0.72), rgba(7, 5, 16, 0.92) 42%);
       }
       .brand {
         display: flex;
@@ -81,9 +100,35 @@
         box-shadow: 0 0 22px rgba(25, 227, 210, 0.34);
       }
       .auth {
-        display: flex;
-        align-items: center;
+        position: relative;
+      }
+      .auth summary {
+        list-style: none;
+        background: rgba(255, 255, 255, 0.015);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 9px 12px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .auth summary::-webkit-details-marker {
+        display: none;
+      }
+      .auth-popover {
+        position: absolute;
+        top: calc(100% + 8px);
+        right: 0;
+        z-index: 10;
+        display: grid;
+        grid-template-columns: minmax(260px, 1fr) auto;
         gap: 8px;
+        width: min(440px, calc(100vw - 32px));
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: rgba(12, 9, 20, 0.98);
+        box-shadow: var(--glow);
       }
       .auth input {
         background: rgba(7, 5, 16, 0.72);
@@ -96,6 +141,7 @@
         width: 280px;
       }
       .auth-status {
+        grid-column: 1 / -1;
         font-size: 12px;
         color: var(--muted);
       }
@@ -106,31 +152,208 @@
         color: var(--bad);
       }
       nav.tabs {
-        display: flex;
-        gap: 0;
-        padding: 0 24px;
-        border-bottom: 1px solid var(--border);
-        background: rgba(7, 5, 16, 0.52);
-        backdrop-filter: blur(18px);
+        display: grid;
+        gap: 8px;
       }
       nav.tabs button {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
         background: transparent;
-        border: none;
+        border: 1px solid transparent;
+        border-radius: 8px;
         color: var(--muted);
-        padding: 12px 16px;
+        padding: 11px 13px;
         cursor: pointer;
         font-size: 14px;
-        border-bottom: 2px solid transparent;
         font-weight: 500;
+        text-align: left;
       }
       nav.tabs button.active {
         color: var(--text);
-        border-bottom-color: var(--accent-2);
+        background: rgba(139, 92, 255, 0.22);
+        border-color: rgba(139, 92, 255, 0.52);
         text-shadow: 0 0 18px rgba(25, 227, 210, 0.34);
       }
+      .nav-icon {
+        width: 18px;
+        color: var(--subtle);
+        font-family: var(--mono);
+        font-size: 11px;
+        display: inline-block;
+      }
+      .sidebar-footer {
+        margin-top: auto;
+        padding-top: 18px;
+        border-top: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .workspace-card {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .workspace-avatar {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        border-radius: 8px;
+        background: var(--accent-gradient);
+        color: #070510;
+        font-weight: 700;
+      }
+      .content-shell {
+        min-width: 0;
+        padding: 30px 34px 24px;
+        background:
+          radial-gradient(circle at 76% 0%, rgba(25, 227, 210, 0.14), transparent 28rem),
+          radial-gradient(circle at 92% 100%, rgba(255, 61, 127, 0.12), transparent 30rem),
+          rgba(7, 5, 16, 0.38);
+      }
       main {
-        padding: 24px;
-        max-width: 1400px;
+        padding: 0;
+        max-width: none;
+      }
+      .page-title {
+        min-width: 220px;
+      }
+      .page-title h1 {
+        margin: 0;
+        font-size: 26px;
+        line-height: 1.1;
+        letter-spacing: 0;
+      }
+      .page-title .meta {
+        margin-top: 8px;
+        font-size: 13px;
+      }
+      .top-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-left: auto;
+      }
+      .search-box {
+        min-width: 300px;
+        background: rgba(7, 5, 16, 0.52);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        padding: 11px 13px;
+        font-size: 13px;
+      }
+      .overview-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.9fr);
+        gap: 20px;
+        align-items: start;
+      }
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 16px;
+        margin-bottom: 20px;
+      }
+      .metric-card {
+        position: relative;
+        overflow: hidden;
+        min-height: 128px;
+        padding: 22px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: linear-gradient(135deg, rgba(18, 14, 28, 0.94), rgba(12, 9, 20, 0.84));
+        box-shadow: var(--glow);
+      }
+      .metric-card::after {
+        content: "";
+        position: absolute;
+        inset: auto -24px -34px auto;
+        width: 128px;
+        height: 128px;
+        border-radius: 999px;
+        background: var(--metric-glow, rgba(139, 92, 255, 0.36));
+        filter: blur(24px);
+        opacity: 0.72;
+      }
+      .metric-label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .metric-value {
+        position: relative;
+        margin-top: 22px;
+        font-size: 32px;
+        line-height: 1;
+        font-weight: 750;
+        z-index: 1;
+      }
+      .metric-foot {
+        position: relative;
+        margin-top: 9px;
+        color: var(--muted);
+        font-size: 12px;
+        z-index: 1;
+      }
+      .ops-stack {
+        display: grid;
+        gap: 20px;
+      }
+      .compact-list {
+        display: grid;
+      }
+      .list-item {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 14px;
+        align-items: center;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border);
+      }
+      .list-item:last-child {
+        border-bottom: 0;
+      }
+      .list-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+        font-weight: 650;
+      }
+      .list-subtitle {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .bee-glyph {
+        flex: 0 0 auto;
+        width: 19px;
+        height: 19px;
+        border-radius: 6px;
+        background: var(--accent-gradient);
+        box-shadow: 0 0 20px rgba(25, 227, 210, 0.35);
+      }
+      .load-bar {
+        width: 92px;
+        height: 7px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .load-fill {
+        display: block;
+        height: 100%;
+        width: var(--load, 0%);
+        border-radius: inherit;
+        background: var(--accent-gradient);
+      }
+      .right-panel .panel + .panel {
+        margin-top: 20px;
       }
       .panel {
         background: var(--panel);
@@ -334,6 +557,7 @@
         cursor: pointer;
         font-size: 13px;
         box-shadow: 0 10px 28px rgba(25, 227, 210, 0.16);
+        white-space: nowrap;
       }
       button.action:hover {
         opacity: 0.9;
@@ -677,151 +901,249 @@
         gap: 6px;
       }
       .footer {
-        padding: 16px 24px;
-        border-top: 1px solid var(--border);
+        padding-top: 18px;
         font-size: 12px;
         color: var(--muted);
-        margin-top: 24px;
       }
       .footer a {
         color: var(--muted);
       }
+      @media (max-width: 980px) {
+        .app-shell {
+          grid-template-columns: 1fr;
+          margin: 0;
+          width: 100%;
+          min-height: 100vh;
+          border-radius: 0;
+          border-left: 0;
+          border-right: 0;
+        }
+        .sidebar {
+          border-right: 0;
+          border-bottom: 1px solid var(--border);
+          padding: 18px;
+        }
+        nav.tabs {
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+        }
+        nav.tabs button {
+          justify-content: center;
+          padding: 9px 8px;
+        }
+        .nav-icon,
+        .sidebar-footer {
+          display: none;
+        }
+        .content-shell {
+          padding: 22px 16px;
+        }
+        .metric-grid,
+        .overview-grid {
+          grid-template-columns: 1fr;
+        }
+        .top-actions {
+          margin-left: 0;
+          width: 100%;
+        }
+        .search-box,
+        .auth input {
+          min-width: 0;
+          width: 100%;
+        }
+        .auth-popover {
+          right: auto;
+          left: 0;
+        }
+      }
     </style>
   </head>
   <body>
-    <header>
-      <div class="brand">
-        <div class="brand-mark"></div>
-        HivePlane
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark"></div>
+          HivePlane
+        </div>
+
+        <nav class="tabs" aria-label="Dashboard sections">
+          <button class="tab active" data-tab="overview">
+            <span><span class="nav-icon">::</span> Overview</span>
+          </button>
+          <button class="tab" data-tab="bees">
+            <span><span class="nav-icon">B</span> Bees</span>
+          </button>
+          <button class="tab" data-tab="tasks">
+            <span><span class="nav-icon">+</span> Tasks</span>
+          </button>
+          <button class="tab" data-tab="jobs">
+            <span><span class="nav-icon">=</span> Jobs</span>
+          </button>
+          <button class="tab" data-tab="tokens">
+            <span><span class="nav-icon">T</span> Tokens</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="workspace-card">
+            <div class="workspace-avatar">HP</div>
+            <div>
+              <div>HivePlane</div>
+              <div class="meta">Admin · production</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <div class="content-shell">
+        <header>
+          <div class="page-title">
+            <h1 id="pageTitle">production</h1>
+            <div class="meta" id="overviewSubtitle">Loading swarm status...</div>
+          </div>
+          <div class="top-actions">
+            <input
+              class="search-box"
+              id="dashboardSearch"
+              placeholder="Search bees, jobs, runs..."
+            />
+            <button class="action" id="dispatchJob">+ Dispatch</button>
+          </div>
+          <details class="auth">
+            <summary>Admin</summary>
+            <div class="auth-popover">
+              <input
+                id="adminToken"
+                type="password"
+                placeholder="Admin token (HIVEPLANE_ADMIN_TOKEN)"
+                autocomplete="off"
+              />
+              <button class="ghost" id="saveAdminToken">Save</button>
+              <span class="auth-status" id="authStatus">no admin token saved</span>
+            </div>
+          </details>
+        </header>
+
+        <main>
+          <section data-view="overview">
+            <div id="overviewBody">
+              <div class="empty">Loading dashboard...</div>
+            </div>
+          </section>
+
+          <section data-view="bees" hidden>
+            <div class="pairing-card" id="pairingCard" hidden>
+              <div class="panel-header">
+                <span>Pair a new Bee</span>
+                <span class="meta" id="pairingMeta">—</span>
+              </div>
+              <div class="pairing-body">
+                <div class="pairing-code unset" id="pairingCode">
+                  — set an admin token to load —
+                </div>
+                <div class="pairing-actions">
+                  <button class="ghost" id="copyPairing" disabled>Copy</button>
+                  <button class="action" id="rotatePairing">Rotate</button>
+                </div>
+                <div class="pairing-instructions" id="pairingInstructions">
+                  On the Bee, run <code>bee login</code> and paste the key when prompted (or
+                  <code>bee login &lt;hive-url&gt; --pairing-key &lt;key&gt;</code>).
+                </div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-header">
+                <span>Connected Bees</span>
+                <span class="meta" id="beesMeta">—</span>
+              </div>
+              <div id="beesBody"></div>
+            </div>
+            <div class="panel incidents-panel">
+              <div class="panel-header">
+                <span>Incidents</span>
+                <span class="meta" id="incidentsMeta">—</span>
+              </div>
+              <div id="incidentsBody"></div>
+            </div>
+          </section>
+
+          <section data-view="tasks" hidden>
+            <div class="panel">
+              <div class="panel-header">
+                <span>Hive Tasks</span>
+                <span class="meta" id="tasksMeta">—</span>
+              </div>
+              <div class="form-row">
+                <div class="form-field">
+                  <label for="taskTitle">Title</label>
+                  <input id="taskTitle" placeholder="Summarize this repo" />
+                </div>
+                <div class="form-field">
+                  <label for="taskPreferredBee">Bee</label>
+                  <select id="taskPreferredBee">
+                    <option value="">Any matching Bee</option>
+                  </select>
+                </div>
+                <div class="form-field">
+                  <label for="taskRuntime">Runtime</label>
+                  <select id="taskRuntime">
+                    <option value="">Any runtime</option>
+                  </select>
+                </div>
+                <div class="form-field">
+                  <label for="taskTools">Tools</label>
+                  <select id="taskTools" multiple size="4"></select>
+                </div>
+                <div class="form-field">
+                  <label for="taskModels">Models</label>
+                  <select id="taskModels" multiple size="4"></select>
+                </div>
+                <button class="action" id="createTask">Assign Task</button>
+              </div>
+              <div class="form-field wide">
+                <label for="taskInstructions">Instructions</label>
+                <textarea id="taskInstructions" spellcheck="false"></textarea>
+              </div>
+              <div class="task-hint" id="taskBeeHint">
+                Bee capabilities load with the task list.
+              </div>
+              <div id="tasksBody"></div>
+            </div>
+          </section>
+
+          <section data-view="jobs" hidden>
+            <div class="panel">
+              <div class="panel-header">
+                <span>Jobs</span>
+                <span class="meta" id="jobsMeta">—</span>
+              </div>
+              <div id="jobsBody"></div>
+            </div>
+          </section>
+
+          <section data-view="tokens" hidden>
+            <div class="panel">
+              <div class="panel-header">
+                <span>Mint a bootstrap token</span>
+                <span class="meta">single-use, default 30-min TTL</span>
+              </div>
+              <div class="form-row">
+                <div class="form-field">
+                  <label for="tokenBeeName">Bee name (optional)</label>
+                  <input id="tokenBeeName" placeholder="laptop-1" />
+                </div>
+                <button class="action" id="mintToken">Mint token</button>
+              </div>
+              <div id="tokenResult"></div>
+            </div>
+          </section>
+        </main>
+
+        <div class="footer">
+          Auto-refreshes every 5s. Service:
+          <code id="hiveService">hiveplane-hive</code>. See
+          <a href="https://github.com/AustinNChristensen/HivePlane">GitHub</a>.
+        </div>
       </div>
-      <div class="auth">
-        <input
-          id="adminToken"
-          type="password"
-          placeholder="Admin token (HIVEPLANE_ADMIN_TOKEN)"
-          autocomplete="off"
-        />
-        <button class="ghost" id="saveAdminToken">Save</button>
-        <span class="auth-status" id="authStatus">no admin token saved</span>
-      </div>
-    </header>
-
-    <nav class="tabs">
-      <button class="tab active" data-tab="bees">Bees</button>
-      <button class="tab" data-tab="tasks">Tasks</button>
-      <button class="tab" data-tab="jobs">Jobs</button>
-      <button class="tab" data-tab="tokens">Tokens</button>
-    </nav>
-
-    <main>
-      <section data-view="bees">
-        <div class="pairing-card" id="pairingCard" hidden>
-          <div class="panel-header">
-            <span>Pair a new Bee</span>
-            <span class="meta" id="pairingMeta">—</span>
-          </div>
-          <div class="pairing-body">
-            <div class="pairing-code unset" id="pairingCode">— set an admin token to load —</div>
-            <div class="pairing-actions">
-              <button class="ghost" id="copyPairing" disabled>Copy</button>
-              <button class="action" id="rotatePairing">Rotate</button>
-            </div>
-            <div class="pairing-instructions" id="pairingInstructions">
-              On the Bee, run <code>bee login</code> and paste the key when prompted (or
-              <code>bee login &lt;hive-url&gt; --pairing-key &lt;key&gt;</code>).
-            </div>
-          </div>
-        </div>
-        <div class="panel">
-          <div class="panel-header">
-            <span>Connected Bees</span>
-            <span class="meta" id="beesMeta">—</span>
-          </div>
-          <div id="beesBody"></div>
-        </div>
-        <div class="panel incidents-panel">
-          <div class="panel-header">
-            <span>Incidents</span>
-            <span class="meta" id="incidentsMeta">—</span>
-          </div>
-          <div id="incidentsBody"></div>
-        </div>
-      </section>
-
-      <section data-view="tasks" hidden>
-        <div class="panel">
-          <div class="panel-header">
-            <span>Hive Tasks</span>
-            <span class="meta" id="tasksMeta">—</span>
-          </div>
-          <div class="form-row">
-            <div class="form-field">
-              <label for="taskTitle">Title</label>
-              <input id="taskTitle" placeholder="Summarize this repo" />
-            </div>
-            <div class="form-field">
-              <label for="taskPreferredBee">Bee</label>
-              <select id="taskPreferredBee">
-                <option value="">Any matching Bee</option>
-              </select>
-            </div>
-            <div class="form-field">
-              <label for="taskRuntime">Runtime</label>
-              <select id="taskRuntime">
-                <option value="">Any runtime</option>
-              </select>
-            </div>
-            <div class="form-field">
-              <label for="taskTools">Tools</label>
-              <select id="taskTools" multiple size="4"></select>
-            </div>
-            <div class="form-field">
-              <label for="taskModels">Models</label>
-              <select id="taskModels" multiple size="4"></select>
-            </div>
-            <button class="action" id="createTask">Assign Task</button>
-          </div>
-          <div class="form-field wide">
-            <label for="taskInstructions">Instructions</label>
-            <textarea id="taskInstructions" spellcheck="false"></textarea>
-          </div>
-          <div class="task-hint" id="taskBeeHint">Bee capabilities load with the task list.</div>
-          <div id="tasksBody"></div>
-        </div>
-      </section>
-
-      <section data-view="jobs" hidden>
-        <div class="panel">
-          <div class="panel-header">
-            <span>Jobs</span>
-            <span class="meta" id="jobsMeta">—</span>
-          </div>
-          <div id="jobsBody"></div>
-        </div>
-      </section>
-
-      <section data-view="tokens" hidden>
-        <div class="panel">
-          <div class="panel-header">
-            <span>Mint a bootstrap token</span>
-            <span class="meta">single-use, default 30-min TTL</span>
-          </div>
-          <div class="form-row">
-            <div class="form-field">
-              <label for="tokenBeeName">Bee name (optional)</label>
-              <input id="tokenBeeName" placeholder="laptop-1" />
-            </div>
-            <button class="action" id="mintToken">Mint token</button>
-          </div>
-          <div id="tokenResult"></div>
-        </div>
-      </section>
-    </main>
-
-    <div class="footer">
-      Auto-refreshes every 5s. Service:
-      <code id="hiveService">hiveplane-hive</code>. See
-      <a href="https://github.com/AustinNChristensen/HivePlane">GitHub</a>.
     </div>
 
     <script>
@@ -829,7 +1151,7 @@
       const POLL_MS = 5000;
 
       const state = {
-        activeTab: "bees",
+        activeTab: "overview",
         adminToken: localStorage.getItem(ADMIN_KEY) || "",
         selectedJobId: "",
         selectedTaskId: "",
@@ -842,9 +1164,15 @@
         selectedTaskJob: null,
         selectedJob: null,
         eventFilter: "signal",
+        searchQuery: "",
       };
 
       const els = {
+        pageTitle: document.getElementById("pageTitle"),
+        overviewSubtitle: document.getElementById("overviewSubtitle"),
+        overviewBody: document.getElementById("overviewBody"),
+        dashboardSearch: document.getElementById("dashboardSearch"),
+        dispatchJob: document.getElementById("dispatchJob"),
         adminToken: document.getElementById("adminToken"),
         saveAdminToken: document.getElementById("saveAdminToken"),
         authStatus: document.getElementById("authStatus"),
@@ -882,16 +1210,38 @@
       // --- tabs ----------------------------------------------------------------
       document.querySelectorAll("nav.tabs button.tab").forEach((btn) => {
         btn.addEventListener("click", () => {
-          state.activeTab = btn.dataset.tab;
-          document
-            .querySelectorAll("nav.tabs button.tab")
-            .forEach((b) => b.classList.toggle("active", b === btn));
-          document.querySelectorAll("main section").forEach((s) => {
-            s.hidden = s.dataset.view !== state.activeTab;
-          });
-          refreshActive();
+          switchTab(btn.dataset.tab);
         });
       });
+
+      els.dispatchJob.addEventListener("click", () => switchTab("tasks"));
+      els.dashboardSearch.addEventListener("input", () => {
+        state.searchQuery = els.dashboardSearch.value.trim().toLowerCase();
+        if (state.activeTab === "overview") renderOverview();
+      });
+
+      function switchTab(tab) {
+        state.activeTab = tab;
+        document
+          .querySelectorAll("nav.tabs button.tab")
+          .forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+        document.querySelectorAll("main section").forEach((s) => {
+          s.hidden = s.dataset.view !== state.activeTab;
+        });
+        updatePageTitle();
+        refreshActive();
+      }
+
+      function updatePageTitle() {
+        const titles = {
+          overview: "production",
+          bees: "bees",
+          tasks: "dispatch",
+          jobs: "jobs",
+          tokens: "tokens",
+        };
+        els.pageTitle.textContent = titles[state.activeTab] || state.activeTab;
+      }
 
       // --- admin token ---------------------------------------------------------
       els.adminToken.value = state.adminToken;
@@ -1144,6 +1494,216 @@
           els.incidentsBody.innerHTML = `<div class="empty">Failed to load incidents.</div>`;
         }
       }
+
+      async function refreshOverview() {
+        try {
+          const requests = [fetch("/api/bees")];
+          if (state.adminToken) {
+            requests.push(fetch("/api/jobs", { headers: authHeaders() }));
+            requests.push(fetch("/api/tasks", { headers: authHeaders() }));
+          }
+          const [beesRes, jobsRes, tasksRes] = await Promise.all(requests);
+          if (!beesRes.ok) throw new Error(`HTTP ${beesRes.status}`);
+          const { bees, incidents } = await beesRes.json();
+          state.bees = bees ?? [];
+          state.incidents = incidents ?? [];
+          ensureSelectedBee(state.bees);
+          if (jobsRes) {
+            if (jobsRes.status === 401) {
+              clearRejectedAdminToken();
+            } else if (jobsRes.ok) {
+              const { jobs } = await jobsRes.json();
+              state.jobs = jobs ?? [];
+            }
+          }
+          if (tasksRes?.ok) {
+            const { tasks } = await tasksRes.json();
+            state.tasks = tasks ?? [];
+          }
+          renderOverview();
+        } catch (err) {
+          els.overviewBody.innerHTML = `<div class="empty">Failed to load dashboard: ${escapeHtml(err.message)}</div>`;
+        }
+      }
+
+      function renderOverview() {
+        const bees = filterOverviewItems(state.bees, (bee) =>
+          [
+            bee.beeName,
+            bee.beeId,
+            bee.status,
+            bee.operationalState,
+            bee.daemonVersion,
+            ...(bee.capabilities?.runtimes || []),
+            ...(bee.capabilities?.tools || []),
+            ...(bee.capabilities?.models || []),
+          ].join(" "),
+        );
+        const jobs = filterOverviewItems(state.jobs, (job) =>
+          [job.id, job.type, job.status, job.beeId, beeDisplayName(job.beeId)].join(" "),
+        );
+        const activeBees = state.bees.filter((bee) => bee.status === "online");
+        const healthyBees = state.bees.filter((bee) => bee.operationalState === "healthy");
+        const activeJobs = state.bees.reduce((sum, bee) => sum + Number(bee.activeJobs || 0), 0);
+        const activeIncidents = state.incidents.filter(
+          (incident) => incident.status !== "resolved",
+        );
+        const rescueOnline = state.bees.filter((bee) => bee.rescue?.status === "online");
+        const waitingApprovals = jobs
+          .filter((job) => job.status === "waiting_for_approval")
+          .slice(0, 3);
+        const recentJobs = [...jobs]
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+          .slice(0, 7);
+        const onlineText =
+          `${activeBees.length} Bee${activeBees.length === 1 ? "" : "s"} online` +
+          ` · ${activeIncidents.length} incident${activeIncidents.length === 1 ? "" : "s"} active` +
+          ` · last sync ${new Date().toLocaleTimeString()}`;
+        els.overviewSubtitle.textContent = onlineText;
+        els.overviewBody.innerHTML = `
+          <div class="metric-grid">
+            ${metricCard("Active Bees", activeBees.length, `${healthyBees.length}/${state.bees.length} healthy`, "rgba(139, 92, 255, 0.42)")}
+            ${metricCard("Active Jobs", activeJobs, `${state.jobs.length || "no"} jobs tracked`, "rgba(25, 227, 210, 0.36)")}
+            ${metricCard("Rescue Online", rescueOnline.length, `${state.bees.length} managed machines`, "rgba(46, 230, 188, 0.34)")}
+            ${metricCard("Incidents", activeIncidents.length, activeIncidents[0]?.summary || "no active incidents", "rgba(255, 61, 127, 0.32)")}
+          </div>
+          <div class="overview-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <span>Bees</span>
+                <span class="meta">${bees.length} shown</span>
+              </div>
+              ${renderOverviewBees(bees)}
+            </div>
+            <div class="ops-stack right-panel">
+              <div class="panel">
+                <div class="panel-header">
+                  <span>Pending approvals</span>
+                  <span class="meta">${waitingApprovals.length} waiting</span>
+                </div>
+                ${renderOverviewApprovals(waitingApprovals)}
+              </div>
+              <div class="panel">
+                <div class="panel-header">
+                  <span>Recent jobs</span>
+                  <span class="meta">${state.adminToken ? "live" : "admin token required"}</span>
+                </div>
+                ${renderOverviewJobs(recentJobs)}
+              </div>
+            </div>
+          </div>
+        `;
+        bindOverviewActions();
+      }
+
+      function metricCard(label, value, foot, glow) {
+        return `
+          <div class="metric-card" style="--metric-glow: ${escapeHtml(glow)}">
+            <div class="metric-label">${escapeHtml(label)}</div>
+            <div class="metric-value">${escapeHtml(value)}</div>
+            <div class="metric-foot">${escapeHtml(foot || "—")}</div>
+          </div>
+        `;
+      }
+
+      function renderOverviewBees(bees) {
+        if (!bees.length) {
+          return `<div class="empty">No Bees match this view.</div>`;
+        }
+        return `<div class="compact-list">${bees
+          .slice(0, 8)
+          .map((bee) => {
+            const load = Math.max(0, Math.min(100, Number(bee.activeJobs || 0) * 20));
+            const caps = bee.capabilities || {};
+            const runtime = summarizeCaps(caps.runtimes);
+            return `
+              <div class="list-item" data-action="overview-bee" data-bee-id="${escapeHtml(bee.beeId)}">
+                <div>
+                  <div class="list-title">
+                    <span class="bee-glyph"></span>
+                    <span class="truncate" title="${escapeHtml(bee.beeName || bee.beeId)}">${escapeHtml(bee.beeName || shortId(bee.beeId))}</span>
+                  </div>
+                  <div class="list-subtitle">${escapeHtml(runtime)} · last seen ${escapeHtml(relativeTime(bee.lastSeenAt))}</div>
+                </div>
+                <div class="actions">
+                  <div class="load-bar" title="${escapeHtml(bee.activeJobs ?? 0)} active jobs"><span class="load-fill" style="--load: ${load}%"></span></div>
+                  ${pill(bee.status || "unknown")}
+                </div>
+              </div>
+            `;
+          })
+          .join("")}</div>`;
+      }
+
+      function renderOverviewApprovals(jobs) {
+        if (!state.adminToken) {
+          return `<div class="empty">Save an admin token to review approvals.</div>`;
+        }
+        if (!jobs.length) {
+          return `<div class="empty">No pending approvals.</div>`;
+        }
+        return `<div class="compact-list">${jobs
+          .map(
+            (job) => `
+              <div class="list-item">
+                <div>
+                  <div class="list-title"><span class="mono">${escapeHtml(job.type)}</span> ${pill("review", "waiting_for_approval")}</div>
+                  <div class="list-subtitle">Requested on ${renderBeeName(job.beeId)} · ${escapeHtml(relativeTime(job.createdAt))}</div>
+                </div>
+                <div class="actions">
+                  <button class="action" data-action="approve-job" data-job-id="${escapeHtml(job.id)}">Approve</button>
+                  <button class="ghost danger" data-action="deny-job" data-job-id="${escapeHtml(job.id)}">Deny</button>
+                </div>
+              </div>
+            `,
+          )
+          .join("")}</div>`;
+      }
+
+      function renderOverviewJobs(jobs) {
+        if (!state.adminToken) {
+          return `<div class="empty">Save an admin token to view recent jobs.</div>`;
+        }
+        if (!jobs.length) {
+          return `<div class="empty">No jobs yet.</div>`;
+        }
+        return `<div class="compact-list">${jobs
+          .map(
+            (job) => `
+              <div class="list-item" data-action="overview-job" data-job-id="${escapeHtml(job.id)}">
+                <div>
+                  <div class="list-title"><span class="mono">${escapeHtml(job.type)}</span></div>
+                  <div class="list-subtitle">${renderBeeName(job.beeId)} · ${escapeHtml(relativeTime(job.createdAt))}</div>
+                </div>
+                ${pill(job.status || "queued")}
+              </div>
+            `,
+          )
+          .join("")}</div>`;
+      }
+
+      function filterOverviewItems(items, textFn) {
+        if (!state.searchQuery) return items;
+        return items.filter((item) => textFn(item).toLowerCase().includes(state.searchQuery));
+      }
+
+      function bindOverviewActions() {
+        els.overviewBody.querySelectorAll("[data-action='overview-bee']").forEach((row) => {
+          row.addEventListener("click", () => {
+            state.selectedBeeId = row.dataset.beeId;
+            switchTab("bees");
+          });
+        });
+        els.overviewBody.querySelectorAll("[data-action='overview-job']").forEach((row) => {
+          row.addEventListener("click", () => {
+            state.selectedJobId = row.dataset.jobId;
+            state.selectedJob = null;
+            switchTab("jobs");
+          });
+        });
+        bindJobDetailActions(els.overviewBody);
+      }
+
       function ensureSelectedBee(bees) {
         if (state.selectedBeeId && !bees.some((b) => b.beeId === state.selectedBeeId)) {
           state.selectedBeeId = "";
@@ -1723,13 +2283,7 @@
         }
       }
       function showJobsTab() {
-        state.activeTab = "jobs";
-        document
-          .querySelectorAll("nav.tabs button.tab")
-          .forEach((b) => b.classList.toggle("active", b.dataset.tab === "jobs"));
-        document.querySelectorAll("main section").forEach((s) => {
-          s.hidden = s.dataset.view !== "jobs";
-        });
+        switchTab("jobs");
       }
 
       // --- tasks view ----------------------------------------------------------
@@ -2625,7 +3179,9 @@
 
       // --- polling -------------------------------------------------------------
       function refreshActive() {
-        if (state.activeTab === "bees") {
+        if (state.activeTab === "overview") {
+          refreshOverview();
+        } else if (state.activeTab === "bees") {
           refreshBees();
           refreshPairingCard();
         } else if (state.activeTab === "tasks") {
