@@ -37,9 +37,10 @@ HivePlane should be the first install when someone wants to turn scattered AI to
 
 1. **Connect** machines, runtimes, models, tools, gateways, and skills.
 2. **Govern** which users, agents, and machines may use which capabilities.
-3. **Coordinate** work across devices and AI systems without hand-wired access.
-4. **Observe** health, jobs, queues, capabilities, traces, and audit history.
-5. **Recover** failed agents, gateways, and machines through safe repairs, verification, and alerts.
+3. **Delegate** tasks to Bee computers as sub-agents of the Hive.
+4. **Coordinate** work across devices and AI systems without hand-wired access.
+5. **Observe** health, jobs, queues, capabilities, traces, and audit history.
+6. **Recover** failed agents, gateways, and machines through safe repairs, verification, and alerts.
 
 The core user is not only "a developer running agents." It is anyone operating a multi-device AI environment:
 
@@ -79,14 +80,22 @@ Capabilities should be granted deliberately, audited, and revocable.
 - Let machines and agents request use of other capabilities through policy.
 - Track versions, health, owner, required secrets, and risk level.
 
-### 3. Access Control
+### 3. Sub-Agent Task Delegation
+
+- Treat each Bee computer as an assignable sub-agent seat in the Hive.
+- Route tasks to Bees based on runtime availability, skills, local tools, model inventory, permissions, and current operational state.
+- Let the Hive break larger requests into scoped subtasks and send them to the best available Bee.
+- Keep Bee task execution auditable: who requested it, which agent/runtime handled it, what capability was used, and what result came back.
+- Avoid dispatching work to Bees that are expected-offline, degraded, recovering, or missing required permissions.
+
+### 4. Access Control
 
 - Assign users, groups, agents, machines, and skills to policies.
 - Gate risky operations behind approval.
 - Keep sensitive systems scoped to the right humans and agents.
 - Prefer least-privilege grants over all-powerful bot accounts.
 
-### 4. Operations + Recovery
+### 5. Operations + Recovery
 
 - Health checks for machines, runtimes, gateways, local models, queues, and skills.
 - Device expectation profiles for always-on servers vs intermittent laptops.
@@ -94,7 +103,7 @@ Capabilities should be granted deliberately, audited, and revocable.
 - AI-assisted diagnosis inside a constrained repair system.
 - Verification and alerting before calling an incident solved.
 
-### 5. Audit + Source Of Truth
+### 6. Audit + Source Of Truth
 
 - Show which agents are running, what they can access, what they did, and whether the work succeeded.
 - Preserve approval history, repair attempts, job logs, and capability changes.
