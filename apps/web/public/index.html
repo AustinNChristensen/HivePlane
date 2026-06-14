@@ -743,6 +743,95 @@
         font-size: 12px;
         color: var(--muted);
       }
+      .bee-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 14px;
+        padding: 18px;
+      }
+      .bee-card {
+        display: grid;
+        gap: 14px;
+        min-width: 0;
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.018));
+        cursor: pointer;
+      }
+      .bee-card:hover,
+      .bee-card.selected {
+        border-color: color-mix(in srgb, var(--accent-2) 54%, var(--border));
+        box-shadow: inset 0 0 0 1px rgba(25, 227, 210, 0.08);
+      }
+      .bee-card-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: flex-start;
+      }
+      .bee-card-title {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+      }
+      .bee-card-name {
+        font-size: 15px;
+        font-weight: 700;
+      }
+      .bee-card-status {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+      .bee-card-signals {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .bee-signal {
+        min-width: 0;
+        padding: 9px 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.025);
+      }
+      .bee-signal span {
+        display: block;
+        margin-bottom: 3px;
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .bee-card-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .bee-card-more {
+        position: relative;
+      }
+      .bee-card-more summary {
+        height: 34px;
+        display: inline-flex;
+        align-items: center;
+        padding: 0 12px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--text);
+      }
+      .bee-card-more[open] summary {
+        margin-bottom: 8px;
+      }
+      .bee-card-more-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
       details > summary {
         cursor: pointer;
         font-size: 12px;
@@ -1011,7 +1100,8 @@
           padding: 22px 16px;
         }
         .metric-grid,
-        .overview-grid {
+        .overview-grid,
+        .bee-card-signals {
           grid-template-columns: 1fr;
         }
         .top-actions {
@@ -1834,65 +1924,59 @@
           els.beesBody.innerHTML = `<div class="empty">No bees connected yet.<br>Run <code>curl http://&lt;hive&gt;/install/bee.sh | sh</code> on a worker, then <code>bee login</code> and paste the pairing key above.</div>`;
           return;
         }
-        const rows = bees
+        const cards = bees
           .map((b) => {
+            const capabilities = b.capabilities || {};
+            const runtime = summarizeCaps(capabilities.runtimes);
             return `
-              <tr class="${b.beeId === state.selectedBeeId ? "selected" : ""}" data-action="select-bee" data-bee-id="${escapeHtml(b.beeId)}">
-                <td>${pill(b.status || "unknown")}</td>
-                <td>${pill(b.operationalState || "healthy")}</td>
-                <td><span class="mono truncate" title="${escapeHtml(b.beeId)}">${escapeHtml(b.beeName || shortId(b.beeId))}</span></td>
-                <td><span class="mono truncate" title="${escapeHtml(b.beeId)}">${escapeHtml(shortId(b.beeId))}</span></td>
-                <td>${renderProfileSummary(b.profile)}</td>
-                <td>${escapeHtml(b.daemonVersion || "—")}</td>
-                <td>${renderRescueStatus(b.rescue)}</td>
-                <td>${escapeHtml(b.activeJobs ?? 0)}</td>
-                <td title="${escapeHtml(b.lastSeenAt || "")}">${relativeTime(b.lastSeenAt)}</td>
-                <td>${renderHealthChecks(b.healthChecks || [])}</td>
-                <td>${escapeHtml(b.heartbeatCount ?? 0)}</td>
-                <td title="${escapeHtml(b.firstSeenAt || "")}">${relativeTime(b.firstSeenAt)}</td>
-                <td>
-                  <div class="actions">
-                    <button class="ghost" data-action="open-bee" data-bee-id="${escapeHtml(b.beeId)}">Detail</button>
-                    <button class="ghost" data-action="healthcheck" data-bee-id="${escapeHtml(b.beeId)}">Healthcheck</button>
-                    <button class="ghost" data-action="adapter-job" data-job-type="restart_bee" data-bee-id="${escapeHtml(b.beeId)}">Recover</button>
-                    <button class="ghost" data-action="adapter-job" data-job-type="openclaw_status" data-bee-id="${escapeHtml(b.beeId)}">OpenClaw</button>
-                    <button class="ghost" data-action="adapter-job" data-job-type="restart_openclaw_gateway" data-bee-id="${escapeHtml(b.beeId)}">Fix OC</button>
-                    <button class="ghost" data-action="adapter-job" data-job-type="restart_hermes_gateway" data-bee-id="${escapeHtml(b.beeId)}">Fix Hermes</button>
-                    <button class="ghost" data-action="adapter-job" data-job-type="repair_imessage_bridge" data-bee-id="${escapeHtml(b.beeId)}">Fix iMessage</button>
-                    <button class="ghost" data-action="adapter-job" data-job-type="ollama_status" data-bee-id="${escapeHtml(b.beeId)}">Ollama</button>
-                    <button class="ghost" data-action="adapter-job" data-job-type="update_bee" data-bee-id="${escapeHtml(b.beeId)}">Update</button>
-                    <button class="ghost" data-action="adapter-job" data-job-type="collect_bee_logs" data-bee-id="${escapeHtml(b.beeId)}">Logs</button>
-                    <button class="ghost" data-action="safe-command" data-command="hostname" data-args="[]" data-bee-id="${escapeHtml(b.beeId)}">Hostname</button>
-                    <button class="ghost" data-action="safe-command" data-command="df" data-args='["-h","/"]' data-bee-id="${escapeHtml(b.beeId)}">Disk</button>
-                    <button class="ghost" data-action="safe-command" data-command="uptime" data-args="[]" data-bee-id="${escapeHtml(b.beeId)}">Uptime</button>
-                    <button class="ghost danger" data-action="delete-bee" data-bee-id="${escapeHtml(b.beeId)}" data-bee-name="${escapeHtml(b.beeName || shortId(b.beeId))}">Delete</button>
+              <article class="bee-card ${b.beeId === state.selectedBeeId ? "selected" : ""}" data-action="select-bee" data-bee-id="${escapeHtml(b.beeId)}">
+                <div class="bee-card-head">
+                  <div class="bee-card-title">
+                    <div class="bee-card-name truncate" title="${escapeHtml(b.beeName || b.beeId)}">${escapeHtml(b.beeName || shortId(b.beeId))}</div>
+                    <div class="meta mono" title="${escapeHtml(b.beeId)}">${escapeHtml(shortId(b.beeId))} · ${escapeHtml(b.daemonVersion || "version unknown")}</div>
                   </div>
-                </td>
-              </tr>
+                  <div class="bee-card-status">
+                    ${pill(b.status || "unknown")}
+                    ${pill(b.operationalState || "healthy")}
+                  </div>
+                </div>
+                <div class="bee-card-signals">
+                  ${beeSignal("Last seen", relativeTime(b.lastSeenAt), b.lastSeenAt)}
+                  ${beeSignal("Jobs", escapeHtml(b.activeJobs ?? 0))}
+                  ${beeSignal("Runtime", runtime)}
+                  ${beeSignal("Rescue", b.rescue ? `${b.rescue.status || "unknown"} · ${relativeTime(b.rescue.lastSeenAt)}` : "none")}
+                </div>
+                <div>
+                  <div class="meta">Health</div>
+                  ${renderHealthSummary(b.healthChecks || [])}
+                </div>
+                <div class="bee-card-actions">
+                  <button class="action" data-action="open-bee" data-bee-id="${escapeHtml(b.beeId)}">Detail</button>
+                  <button class="ghost" data-action="healthcheck" data-bee-id="${escapeHtml(b.beeId)}">Healthcheck</button>
+                  <button class="ghost" data-action="adapter-job" data-job-type="restart_bee" data-bee-id="${escapeHtml(b.beeId)}">Recover</button>
+                  <details class="bee-card-more">
+                    <summary>More</summary>
+                    <div class="bee-card-more-actions">
+                      <button class="ghost" data-action="adapter-job" data-job-type="openclaw_status" data-bee-id="${escapeHtml(b.beeId)}">OpenClaw</button>
+                      <button class="ghost" data-action="adapter-job" data-job-type="restart_openclaw_gateway" data-bee-id="${escapeHtml(b.beeId)}">Fix OC</button>
+                      <button class="ghost" data-action="adapter-job" data-job-type="restart_hermes_gateway" data-bee-id="${escapeHtml(b.beeId)}">Fix Hermes</button>
+                      <button class="ghost" data-action="adapter-job" data-job-type="repair_imessage_bridge" data-bee-id="${escapeHtml(b.beeId)}">Fix iMessage</button>
+                      <button class="ghost" data-action="adapter-job" data-job-type="ollama_status" data-bee-id="${escapeHtml(b.beeId)}">Ollama</button>
+                      <button class="ghost" data-action="adapter-job" data-job-type="update_bee" data-bee-id="${escapeHtml(b.beeId)}">Update</button>
+                      <button class="ghost" data-action="adapter-job" data-job-type="collect_bee_logs" data-bee-id="${escapeHtml(b.beeId)}">Logs</button>
+                      <button class="ghost" data-action="safe-command" data-command="hostname" data-args="[]" data-bee-id="${escapeHtml(b.beeId)}">Hostname</button>
+                      <button class="ghost" data-action="safe-command" data-command="df" data-args='["-h","/"]' data-bee-id="${escapeHtml(b.beeId)}">Disk</button>
+                      <button class="ghost" data-action="safe-command" data-command="uptime" data-args="[]" data-bee-id="${escapeHtml(b.beeId)}">Uptime</button>
+                      <button class="ghost danger" data-action="delete-bee" data-bee-id="${escapeHtml(b.beeId)}" data-bee-name="${escapeHtml(b.beeName || shortId(b.beeId))}">Delete</button>
+                    </div>
+                  </details>
+                </div>
+              </article>
             `;
           })
           .join("");
         els.beesBody.innerHTML = `
-          <table>
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>State</th>
-                <th>Name</th>
-                <th>Bee ID</th>
-                <th>Profile</th>
-                <th>Version</th>
-                <th>Rescue</th>
-                <th>Active jobs</th>
-                <th>Last heartbeat</th>
-                <th>Health</th>
-                <th>Heartbeats</th>
-                <th>First seen</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>`;
+          <div class="bee-grid">${cards}</div>`;
         els.beesBody.querySelectorAll("[data-action='healthcheck']").forEach((button) => {
           button.addEventListener("click", () => queueHealthcheck(button.dataset.beeId, button));
         });
@@ -1921,6 +2005,7 @@
         els.beesBody.querySelectorAll("[data-action='select-bee']").forEach((row) => {
           row.addEventListener("click", (event) => {
             if (event.target.closest("button")) return;
+            if (event.target.closest("details")) return;
             if (event.target.closest("form")) return;
             state.selectedBeeId = row.dataset.beeId;
             openBeeModal(row.dataset.beeId);
@@ -2060,6 +2145,26 @@
             pill(check.name, check.status || "unknown", check.message || check.checkedAt || ""),
           )
           .join("")}</div>`;
+      }
+      function renderHealthSummary(checks) {
+        if (!checks.length) return '<span class="mono">—</span>';
+        const failed = checks.filter((check) => check.status !== "ok");
+        const visible = (failed.length ? failed : checks).slice(0, 4);
+        const hiddenCount = Math.max(0, checks.length - visible.length);
+        const hidden = hiddenCount ? `<span class="pill">+${hiddenCount}</span>` : "";
+        return `<div class="check-list">${visible
+          .map((check) =>
+            pill(check.name, check.status || "unknown", check.message || check.checkedAt || ""),
+          )
+          .join("")}${hidden}</div>`;
+      }
+      function beeSignal(label, value, title = "") {
+        return `
+          <div class="bee-signal" title="${escapeHtml(title || value || "")}">
+            <span>${escapeHtml(label)}</span>
+            <div class="truncate">${escapeHtml(value || "—")}</div>
+          </div>
+        `;
       }
       function renderRescueStatus(rescue) {
         if (!rescue) return '<span class="mono">—</span>';
