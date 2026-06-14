@@ -34,7 +34,7 @@ describe("BeeConnectionManager", () => {
     const transport: BeeConnectionTransport = {
       async postHeartbeat(heartbeat) {
         seenHeartbeats.push(heartbeat);
-        return { accepted: true, jobs };
+        return { accepted: true, jobs, cancellations: [] };
       },
     };
     const onJobs = vi.fn();
@@ -83,6 +83,7 @@ describe("HttpBeeConnectionTransport", () => {
       Response.json({
         accepted: true,
         jobs: [],
+        cancellations: [],
       }),
     );
     const fetchImpl = fetchMock as unknown as typeof fetch;

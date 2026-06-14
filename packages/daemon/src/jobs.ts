@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { sign as edSign } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { randomBytes } from "node:crypto";
@@ -37,7 +37,8 @@ export type JobExecutorOptions = {
 
 export type JobOutcome =
   | { status: "succeeded"; output?: Record<string, JsonValue> }
-  | { status: "failed"; error: Record<string, JsonValue> };
+  | { status: "failed"; error: Record<string, JsonValue> }
+  | { status: "cancelled"; error: Record<string, JsonValue> };
 
 export class JobExecutor {
   private readonly fetchImpl: typeof fetch;
@@ -49,12 +50,17 @@ export class JobExecutor {
     this.spawnImpl = options.spawnImpl ?? spawn;
   }
 
-  async execute(job: Job): Promise<void> {
+  async execute(job: Job, signal?: AbortSignal): Promise<void> {
     let outcome: JobOutcome;
     try {
+      if (signal?.aborted) {
+        outcome = cancelledOutcome(job);
+        await this.complete(job, outcome);
+        return;
+      }
       switch (job.type) {
         case "run_command":
-          outcome = await this.runCommand(job);
+          outcome = await this.runCommand(job, signal);
           break;
         case "run_healthcheck":
           outcome = await this.runHealthcheck(job);
@@ -69,10 +75,10 @@ export class JobExecutor {
           outcome = await this.runOllamaListModels(job);
           break;
         case "update_bee":
-          outcome = await this.runBeeUpdate(job);
+          outcome = await this.runBeeUpdate(job, signal);
           break;
         case "agent_task":
-          outcome = await this.runAgentTask(job);
+          outcome = await this.runAgentTask(job, signal);
           break;
         default:
           outcome = {
@@ -103,7 +109,7 @@ export class JobExecutor {
     }
   }
 
-  private async runCommand(job: Job): Promise<JobOutcome> {
+  private async runCommand(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
     const command = typeof job.payload.command === "string" ? job.payload.command : "";
     const args = Array.isArray(job.payload.args)
       ? job.payload.args.filter((a): a is string => typeof a === "string")
@@ -121,6 +127,7 @@ export class JobExecutor {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     });
+    const cleanupCancellation = attachChildCancellation(child, signal);
 
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
@@ -153,28 +160,32 @@ export class JobExecutor {
 
     return await new Promise<JobOutcome>((resolve) => {
       child.once("error", (err) => {
+        cleanupCancellation();
         resolve({
           status: "failed",
           error: { code: "spawn_error", message: err.message },
         });
       });
-      child.once("close", async (exitCode, signal) => {
+      child.once("close", async (exitCode, exitSignal) => {
+        cleanupCancellation();
         await Promise.allSettled(pendingEventPosts);
         const ok = exitCode === 0;
         const summary = {
           exitCode: exitCode ?? -1,
-          signal: signal ?? null,
+          signal: exitSignal ?? null,
           stdout: stdoutChunks.join(""),
           stderr: stderrChunks.join(""),
         };
         if (ok) {
           resolve({ status: "succeeded", output: summary as Record<string, JsonValue> });
+        } else if (exitSignal && signal?.aborted) {
+          resolve(cancelledOutcome(job, exitSignal));
         } else {
           resolve({
             status: "failed",
             error: {
-              code: "non_zero_exit",
-              message: `exit code ${exitCode}${signal ? ` (signal ${signal})` : ""}`,
+              code: exitSignal ? "process_signalled" : "non_zero_exit",
+              message: `exit code ${exitCode}${exitSignal ? ` (signal ${exitSignal})` : ""}`,
               ...summary,
             } as Record<string, JsonValue>,
           });
@@ -219,11 +230,11 @@ export class JobExecutor {
     return { status: "succeeded", output };
   }
 
-  private async runBeeUpdate(job: Job): Promise<JobOutcome> {
+  private async runBeeUpdate(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
     const cwd = typeof job.payload.installDir === "string" ? job.payload.installDir : process.cwd();
     await this.emit(job, "info", "bee_update.start", { cwd });
 
-    const git = await this.runUpdateCommand(job, "git", ["pull", "--ff-only"], cwd);
+    const git = await this.runUpdateCommand(job, "git", ["pull", "--ff-only"], cwd, signal);
     if (!git.ok) return git.outcome;
 
     const install = await this.runUpdateCommand(
@@ -231,6 +242,7 @@ export class JobExecutor {
       "pnpm",
       ["install", "--frozen-lockfile", "--silent"],
       cwd,
+      signal,
     );
     if (!install.ok) return install.outcome;
 
@@ -249,7 +261,7 @@ export class JobExecutor {
     };
   }
 
-  private async runAgentTask(job: Job): Promise<JobOutcome> {
+  private async runAgentTask(job: Job, signal?: AbortSignal): Promise<JobOutcome> {
     const taskId = typeof job.payload.taskId === "string" ? job.payload.taskId : job.id;
     const title = typeof job.payload.title === "string" ? job.payload.title : "Hive task";
     const instructions =
@@ -263,13 +275,17 @@ export class JobExecutor {
     await this.emit(job, "info", "agent_task.accepted", { taskId, title });
 
     if (runtime === "openclaw") {
-      return await this.runOpenClawAgentTask(job, {
-        taskId,
-        title,
-        instructions,
-        requestedBy,
-        requirements,
-      });
+      return await this.runOpenClawAgentTask(
+        job,
+        {
+          taskId,
+          title,
+          instructions,
+          requestedBy,
+          requirements,
+        },
+        signal,
+      );
     }
 
     await this.emit(job, "info", "agent_task.scaffold", {
@@ -299,6 +315,7 @@ export class JobExecutor {
       requestedBy: string;
       requirements: TaskRequirements;
     },
+    signal?: AbortSignal,
   ): Promise<JobOutcome> {
     const openclawPath =
       this.options.openclawPathOverride ??
@@ -341,6 +358,7 @@ export class JobExecutor {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     });
+    const cleanupCancellation = attachChildCancellation(child, signal);
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
     const pendingEventPosts: Promise<void>[] = [];
@@ -360,13 +378,15 @@ export class JobExecutor {
 
     return await new Promise<JobOutcome>((resolve) => {
       child.once("error", async (err) => {
+        cleanupCancellation();
         await Promise.allSettled(pendingEventPosts);
         resolve({
           status: "failed",
           error: { code: "openclaw_spawn_error", message: err.message },
         });
       });
-      child.once("close", async (exitCode, signal) => {
+      child.once("close", async (exitCode, exitSignal) => {
+        cleanupCancellation();
         await Promise.allSettled(pendingEventPosts);
         const stdout = stdoutChunks.join("");
         const stderr = stderrChunks.join("");
@@ -378,7 +398,7 @@ export class JobExecutor {
           runtime: "openclaw",
           sessionKey,
           exitCode: exitCode ?? -1,
-          signal: signal ?? null,
+          signal: exitSignal ?? null,
           stdout: truncateText(stdout, 8_000),
           stderr: truncateText(stderr, 8_000),
           ...(compactResult ? { result: compactResult } : {}),
@@ -388,11 +408,15 @@ export class JobExecutor {
           resolve({ status: "succeeded", output: summary });
           return;
         }
+        if (exitSignal && signal?.aborted) {
+          resolve(cancelledOutcome(job, exitSignal));
+          return;
+        }
         resolve({
           status: "failed",
           error: {
-            code: "openclaw_agent_failed",
-            message: `openclaw agent exited ${exitCode}`,
+            code: exitSignal ? "openclaw_agent_signalled" : "openclaw_agent_failed",
+            message: `openclaw agent exited ${exitCode}${exitSignal ? ` (signal ${exitSignal})` : ""}`,
             ...summary,
           },
         });
@@ -405,9 +429,10 @@ export class JobExecutor {
     command: string,
     args: string[],
     cwd: string,
+    signal?: AbortSignal,
   ): Promise<
     | { ok: true; summary: Record<string, JsonValue> }
-    | { ok: false; outcome: Extract<JobOutcome, { status: "failed" }> }
+    | { ok: false; outcome: Extract<JobOutcome, { status: "failed" | "cancelled" }> }
   > {
     await this.emit(job, "info", "bee_update.command.start", { command, args });
     const child = this.spawnImpl(command, args, {
@@ -415,6 +440,7 @@ export class JobExecutor {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     });
+    const cleanupCancellation = attachChildCancellation(child, signal);
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
     const pendingEventPosts: Promise<void>[] = [];
@@ -434,6 +460,7 @@ export class JobExecutor {
 
     return await new Promise((resolve) => {
       child.once("error", async (err) => {
+        cleanupCancellation();
         await Promise.allSettled(pendingEventPosts);
         resolve({
           ok: false,
@@ -443,18 +470,33 @@ export class JobExecutor {
           },
         });
       });
-      child.once("close", async (exitCode, signal) => {
+      child.once("close", async (exitCode, exitSignal) => {
+        cleanupCancellation();
         await Promise.allSettled(pendingEventPosts);
         const summary: Record<string, JsonValue> = {
           command,
           args,
           exitCode: exitCode ?? -1,
-          signal: signal ?? null,
+          signal: exitSignal ?? null,
           stdout: stdoutChunks.join(""),
           stderr: stderrChunks.join(""),
         };
         if (exitCode === 0) {
           resolve({ ok: true, summary });
+          return;
+        }
+        if (exitSignal && signal?.aborted) {
+          resolve({
+            ok: false,
+            outcome: {
+              status: "cancelled",
+              error: {
+                code: "job_cancelled",
+                message: `job cancelled while running ${command}`,
+                ...summary,
+              },
+            },
+          });
           return;
         }
         resolve({
@@ -511,6 +553,7 @@ export class JobExecutor {
       status: outcome.status,
       ...(outcome.status === "succeeded" && outcome.output ? { output: outcome.output } : {}),
       ...(outcome.status === "failed" ? { error: outcome.error } : {}),
+      ...(outcome.status === "cancelled" ? { error: outcome.error } : {}),
       completedAt: new Date().toISOString(),
     });
     const url = new URL(`/api/jobs/${job.id}/complete`, this.options.hiveUrl);
@@ -562,6 +605,37 @@ export class JobExecutor {
       }
     }, 1_000).unref();
   }
+}
+
+function attachChildCancellation(child: ChildProcess, signal?: AbortSignal): () => void {
+  if (!signal) return () => undefined;
+  let killTimer: NodeJS.Timeout | undefined;
+  const abort = () => {
+    if (!child.killed) child.kill("SIGTERM");
+    killTimer = setTimeout(() => {
+      if (!child.killed) child.kill("SIGKILL");
+    }, 5_000);
+    killTimer.unref();
+  };
+  if (signal.aborted) abort();
+  signal.addEventListener("abort", abort, { once: true });
+  return () => {
+    signal.removeEventListener("abort", abort);
+    if (killTimer) clearTimeout(killTimer);
+  };
+}
+
+function cancelledOutcome(
+  job: Job,
+  signal = "SIGTERM",
+): Extract<JobOutcome, { status: "cancelled" }> {
+  return {
+    status: "cancelled",
+    error: {
+      code: "job_cancelled",
+      message: `job ${job.id} cancelled${signal ? ` (${signal})` : ""}`,
+    },
+  };
 }
 
 type TaskRequirements = {

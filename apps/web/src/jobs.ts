@@ -5,6 +5,7 @@ import {
   JobSchema,
   JobTypeSchema,
   type Job,
+  type JobCancelMessage,
   type JobEvent,
   type JobStatus,
   type JobType,
@@ -21,6 +22,7 @@ export type JobRecord = {
   timeoutSeconds?: number;
   createdAt: Date;
   assignedAt?: Date;
+  cancellationDeliveredAt?: Date;
   completedAt?: Date;
   events: JobEvent[];
   exitCode?: number;
@@ -104,6 +106,30 @@ export function cancelJob(
   job.completedAt = now;
   job.error = { code: "job_cancelled", message: reason };
   return job;
+}
+
+export function claimPendingJobCancellations(
+  state: JobsState,
+  beeId: string,
+  now: Date,
+): JobCancelMessage[] {
+  const cancellations: JobCancelMessage[] = [];
+  for (const job of state.jobs.values()) {
+    if (job.beeId !== beeId) continue;
+    if (job.status !== "cancelled") continue;
+    if (!job.assignedAt) continue;
+    if (job.cancellationDeliveredAt) continue;
+    const message: JobCancelMessage = {
+      type: "job.cancel",
+      jobId: job.id,
+      reason:
+        typeof job.error?.message === "string" ? job.error.message : "cancelled by Hive admin",
+      cancelledAt: (job.completedAt ?? now).toISOString(),
+    };
+    cancellations.push(message);
+    job.cancellationDeliveredAt = now;
+  }
+  return cancellations;
 }
 
 /** Atomically transition queued jobs for this bee to "assigned" and return them as Job protos. */

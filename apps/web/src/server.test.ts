@@ -583,6 +583,25 @@ describe("Hive server", () => {
           task: { id: string; status: string; jobId: string };
         };
 
+        const firstHeartbeat = await fetch(`${baseUrl}/api/bees/heartbeat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            type: "bee.heartbeat",
+            beeId: "bee_agent",
+            timestamp: "2026-05-09T08:00:06.000Z",
+            daemonVersion: "0.0.7",
+            status: "online",
+            activeJobs: 0,
+            healthChecks: [],
+          }),
+        });
+        expect(firstHeartbeat.status).toBe(200);
+        const firstHeartbeatBody = (await firstHeartbeat.json()) as {
+          jobs: Array<{ id: string }>;
+        };
+        expect(firstHeartbeatBody.jobs.map((job) => job.id)).toContain(createBody.task.jobId);
+
         const cancelResponse = await fetch(`${baseUrl}/api/tasks/${createBody.task.id}/cancel`, {
           method: "POST",
           headers: { authorization: "Bearer secret" },
@@ -595,6 +614,27 @@ describe("Hive server", () => {
           status: "cancelled",
           lastError: "Cancelled by Hive admin.",
         });
+
+        const cancelHeartbeat = await fetch(`${baseUrl}/api/bees/heartbeat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            type: "bee.heartbeat",
+            beeId: "bee_agent",
+            timestamp: "2026-05-09T08:00:06.500Z",
+            daemonVersion: "0.0.7",
+            status: "online",
+            activeJobs: 1,
+            healthChecks: [],
+          }),
+        });
+        expect(cancelHeartbeat.status).toBe(200);
+        const cancelHeartbeatBody = (await cancelHeartbeat.json()) as {
+          cancellations: Array<{ jobId: string; type: string }>;
+        };
+        expect(cancelHeartbeatBody.cancellations).toEqual([
+          expect.objectContaining({ type: "job.cancel", jobId: createBody.task.jobId }),
+        ]);
 
         const completeResponse = await fetch(
           `${baseUrl}/api/jobs/${createBody.task.jobId}/complete`,

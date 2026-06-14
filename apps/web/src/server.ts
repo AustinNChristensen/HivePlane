@@ -44,6 +44,7 @@ import {
   appendEvents,
   approveJob,
   cancelJob,
+  claimPendingJobCancellations,
   claimPendingJobs,
   completeJob,
   CreateJobRequestSchema,
@@ -686,11 +687,16 @@ export function createHiveServer(options: CreateHiveServerOptions = {}) {
         scheduleOpenHiveTasks(state, current);
         await deliverPendingIncidentNotifications(current);
         // Hand back any pending jobs and mark them as assigned.
+        const cancellations = claimPendingJobCancellations(
+          state.jobsState,
+          heartbeat.beeId,
+          current,
+        );
         const jobs = claimPendingJobs(state.jobsState, heartbeat.beeId, current, {
           excludeTypes: RESCUE_JOB_TYPES,
         });
         markDirty();
-        return sendJson(response, 200, { accepted: true, bee, jobs });
+        return sendJson(response, 200, { accepted: true, bee, jobs, cancellations });
       }
 
       if (request.method === "POST" && url.pathname === "/api/rescue/heartbeat") {

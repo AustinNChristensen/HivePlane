@@ -37,6 +37,12 @@ function makeJob(overrides: Partial<Job> = {}): Job {
 class FakeChild extends EventEmitter {
   stdout = new EventEmitter();
   stderr = new EventEmitter();
+  killed = false;
+  kill = vi.fn((signal?: NodeJS.Signals) => {
+    this.killed = true;
+    setImmediate(() => this.emit("close", null, signal ?? "SIGTERM"));
+    return true;
+  });
 }
 
 function makeSpawn(opts: {
@@ -44,6 +50,7 @@ function makeSpawn(opts: {
   stderrChunks?: string[];
   exitCode?: number;
   errorAt?: number; // ms
+  closeDelayMs?: number;
 }) {
   return vi.fn(() => {
     const child = new FakeChild();
@@ -57,7 +64,9 @@ function makeSpawn(opts: {
       if (opts.errorAt !== undefined) {
         setTimeout(() => child.emit("error", new Error("spawn boom")), opts.errorAt);
       } else {
-        child.emit("close", opts.exitCode ?? 0, null);
+        setTimeout(() => {
+          if (!child.killed) child.emit("close", opts.exitCode ?? 0, null);
+        }, opts.closeDelayMs ?? 0);
       }
     });
     return child as unknown as ReturnType<typeof import("node:child_process").spawn>;
@@ -121,6 +130,44 @@ describe("JobExecutor", () => {
     expect(completeBody.status).toBe("succeeded");
     expect(completeBody.output.exitCode).toBe(0);
     expect(completeBody.output.stdout).toContain("hello");
+  });
+
+  it("kills a running command when the job is cancelled", async () => {
+    const identity = await makeIdentity();
+    const session = makeSession();
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    let child: FakeChild | undefined;
+    const spawnImpl = vi.fn(() => {
+      child = new FakeChild();
+      return child as unknown as ReturnType<typeof import("node:child_process").spawn>;
+    });
+    const controller = new AbortController();
+
+    const executor = new JobExecutor({
+      hiveUrl: session.hiveUrl,
+      session,
+      identity,
+      daemonVersion: "0.0.1-test",
+      policy: { runCommand: { allow: ["sleep"], unsafeAllowAll: false } },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      spawnImpl: spawnImpl as unknown as typeof import("node:child_process").spawn,
+    });
+
+    const running = executor.execute(
+      makeJob({ payload: { command: "sleep", args: ["30"] } }),
+      controller.signal,
+    );
+    controller.abort("unit-test cancellation");
+    await running;
+
+    expect(child?.kill).toHaveBeenCalledWith("SIGTERM");
+    const lastCall = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    const completeBody = JSON.parse(Buffer.from(lastCall[1].body as Uint8Array).toString("utf8"));
+    expect(completeBody.status).toBe("cancelled");
+    expect(completeBody.error.code).toBe("job_cancelled");
   });
 
   it("reloads local policy at execution time", async () => {

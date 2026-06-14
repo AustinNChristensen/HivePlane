@@ -1,5 +1,12 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { BeeHeartbeatSchema, JobSchema, type BeeHeartbeat, type Job } from "@hiveplane/protocol";
+import {
+  BeeHeartbeatSchema,
+  JobCancelMessageSchema,
+  JobSchema,
+  type BeeHeartbeat,
+  type Job,
+  type JobCancelMessage,
+} from "@hiveplane/protocol";
 import { z } from "zod";
 import { createHeartbeat, type DaemonState } from "./index.js";
 
@@ -18,6 +25,7 @@ export type BeeConnectionManagerOptions = {
   onStatusChange?: (status: BeeConnectionStatus) => void;
   beforeHeartbeat?: () => Promise<void> | void;
   onJobs?: (jobs: Job[]) => Promise<void> | void;
+  onCancellations?: (cancellations: JobCancelMessage[]) => Promise<void> | void;
   onError?: (error: unknown) => void;
 };
 
@@ -38,6 +46,7 @@ const DEFAULT_RETRY_POLICY: BeeRetryPolicy = {
 export const BeeHeartbeatResponseSchema = z.object({
   accepted: z.boolean().default(true),
   jobs: z.array(JobSchema).default([]),
+  cancellations: z.array(JobCancelMessageSchema).default([]),
 });
 
 export type BeeHeartbeatResponse = z.infer<typeof BeeHeartbeatResponseSchema>;
@@ -90,6 +99,10 @@ export class BeeConnectionManager {
 
     this.consecutiveFailures = 0;
     this.setStatus("connected");
+
+    if (response.cancellations.length > 0) {
+      await this.options.onCancellations?.(response.cancellations);
+    }
 
     if (response.jobs.length > 0) {
       await this.options.onJobs?.(response.jobs);

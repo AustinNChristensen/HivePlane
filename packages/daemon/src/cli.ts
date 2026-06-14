@@ -81,6 +81,7 @@ async function main(): Promise<void> {
           ...(options.configDir ? { configDir: options.configDir } : {}),
         })
       : undefined;
+  const activeJobs = new Map<string, AbortController>();
 
   const manager = new BeeConnectionManager({
     state,
@@ -96,9 +97,21 @@ async function main(): Promise<void> {
       state.capabilities = capabilities;
       state.permissions = readBeePolicy(options.configDir);
       state.status = statusFromHealthChecks(state.healthChecks);
+      state.activeJobs = activeJobs.size;
+    },
+    onCancellations: (cancellations) => {
+      for (const cancellation of cancellations) {
+        const controller = activeJobs.get(cancellation.jobId);
+        if (!controller) continue;
+        console.log(
+          `[bee] cancelling job ${cancellation.jobId}: ${cancellation.reason ?? "cancelled"}`,
+        );
+        controller.abort(cancellation.reason ?? "cancelled by Hive admin");
+      }
+      state.activeJobs = activeJobs.size;
     },
     onStatusChange: (status) => console.log(`[bee] status=${status}`),
-    onJobs: async (jobs) => {
+    onJobs: (jobs) => {
       console.log(`[bee] received ${jobs.length} job(s)`);
       if (!jobExecutor) {
         console.warn(
@@ -106,15 +119,25 @@ async function main(): Promise<void> {
         );
         return;
       }
-      // Run jobs sequentially for v0; concurrency comes when we add maxConcurrentJobs.
+      // Start jobs in the background so heartbeats can continue delivering cancellation signals.
       for (const job of jobs) {
-        try {
-          await jobExecutor.execute(job);
-        } catch (error) {
-          console.error(
-            `[bee] job ${job.id} failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
+        if (activeJobs.has(job.id)) continue;
+        const controller = new AbortController();
+        activeJobs.set(job.id, controller);
+        state.activeJobs = activeJobs.size;
+        void jobExecutor
+          .execute(job, controller.signal)
+          .catch((error) => {
+            console.error(
+              `[bee] job ${job.id} failed: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          })
+          .finally(() => {
+            activeJobs.delete(job.id);
+            state.activeJobs = activeJobs.size;
+          });
       }
     },
     onError: (error) =>

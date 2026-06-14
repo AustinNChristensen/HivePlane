@@ -201,6 +201,8 @@ export const JobCancelMessageSchema = z.object({
   cancelledAt: IsoDateTimeSchema,
 });
 
+export type JobCancelMessage = z.infer<typeof JobCancelMessageSchema>;
+
 export const JobEventLevelSchema = z.enum(["debug", "info", "warn", "error"]);
 export const JobEventActorSchema = z.enum(["user", "bee", "hive", "system"]);
 
