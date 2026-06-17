@@ -82,6 +82,8 @@ describe("install-path smoke test", () => {
     expect(script).toContain("Node 20+ is required");
     expect(script).toContain("git is required");
     expect(script).toContain("pnpm not found, enabling via corepack");
+    expect(script).toContain("--method <method>");
+    expect(script).toContain("HIVEPLANE_INSTALL_METHOD=auto|service|foreground|manual");
     expect(script).toContain("HIVEPLANE_HIVE_URL is required for one-command pairing");
     expect(script).toContain("HIVEPLANE_PAIRING_KEY or HIVEPLANE_BOOTSTRAP_TOKEN is required");
     expect(script).toContain("bee start                 # auto-installs launchd/systemd unit");
