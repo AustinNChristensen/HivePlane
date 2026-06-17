@@ -1,0 +1,141 @@
+{
+  "checks": [
+    {
+      "name": "openclaw-gateway",
+      "command": "openclaw",
+      "args": ["gateway", "status"],
+      "timeoutMs": 5000
+    },
+    {
+      "name": "openclaw-channel-imessage",
+      "command": "openclaw",
+      "args": ["channels", "status", "--probe", "--channel", "imessage"],
+      "timeoutMs": 15000
+    },
+    {
+      "name": "imsg-cli",
+      "command": "/opt/homebrew/bin/imsg",
+      "args": ["--help"],
+      "timeoutMs": 3000
+    },
+    {
+      "name": "messages-app",
+      "command": "pgrep",
+      "args": ["-x", "Messages"],
+      "timeoutMs": 3000
+    },
+    {
+      "name": "hiveplane-bee-launchd",
+      "command": "/opt/hiveplane/repairs/check-hiveplane-bee",
+      "args": [],
+      "timeoutMs": 5000
+    },
+    {
+      "name": "tailscale-network",
+      "command": "/opt/hiveplane/repairs/check-tailscale",
+      "args": [],
+      "timeoutMs": 5000
+    },
+    {
+      "name": "ollama-service",
+      "command": "curl",
+      "args": ["-fsS", "http://127.0.0.1:11434/api/tags"],
+      "timeoutMs": 5000
+    },
+    {
+      "name": "ollama-models",
+      "command": "/opt/hiveplane/repairs/check-ollama-models",
+      "args": [],
+      "timeoutMs": 10000
+    },
+    {
+      "name": "disk-pressure",
+      "command": "/opt/hiveplane/repairs/check-disk-pressure",
+      "args": ["/", "15"],
+      "timeoutMs": 3000
+    }
+  ],
+  "allowedRemediationCommands": [
+    "/opt/hiveplane/repairs/restart-openclaw",
+    "/opt/hiveplane/repairs/restart-imessage-stack",
+    "/opt/hiveplane/repairs/repair-imsg-permissions-check",
+    "/opt/hiveplane/repairs/restart-hiveplane-bee",
+    "/opt/hiveplane/repairs/restart-ollama",
+    "/opt/hiveplane/repairs/collect-openclaw-logs",
+    "/opt/hiveplane/repairs/cleanup-disk-pressure"
+  ],
+  "remediations": [
+    {
+      "name": "restart-openclaw",
+      "triggerCheck": "openclaw-gateway",
+      "type": "restart_service",
+      "command": "/opt/hiveplane/repairs/restart-openclaw",
+      "args": [],
+      "timeoutMs": 45000,
+      "cooldownMs": 300000
+    },
+    {
+      "name": "restart-imessage-stack",
+      "triggerCheck": "openclaw-channel-imessage",
+      "type": "restart_service",
+      "command": "/opt/hiveplane/repairs/restart-imessage-stack",
+      "args": [],
+      "timeoutMs": 45000,
+      "cooldownMs": 300000
+    },
+    {
+      "name": "diagnose-imsg-permissions",
+      "triggerCheck": "openclaw-channel-imessage",
+      "type": "collect_logs",
+      "command": "/opt/hiveplane/repairs/repair-imsg-permissions-check",
+      "args": [],
+      "timeoutMs": 15000,
+      "cooldownMs": 300000
+    },
+    {
+      "name": "reopen-messages",
+      "triggerCheck": "messages-app",
+      "type": "restart_service",
+      "command": "/opt/hiveplane/repairs/restart-imessage-stack",
+      "args": [],
+      "timeoutMs": 45000,
+      "cooldownMs": 300000
+    },
+    {
+      "name": "restart-ollama",
+      "triggerCheck": "ollama-service",
+      "type": "restart_service",
+      "command": "/opt/hiveplane/repairs/restart-ollama",
+      "args": [],
+      "timeoutMs": 45000,
+      "cooldownMs": 300000
+    },
+    {
+      "name": "collect-openclaw-logs",
+      "triggerCheck": "openclaw-gateway",
+      "type": "collect_logs",
+      "command": "/opt/hiveplane/repairs/collect-openclaw-logs",
+      "args": [],
+      "timeoutMs": 15000,
+      "cooldownMs": 120000
+    },
+    {
+      "name": "collect-imessage-logs",
+      "triggerCheck": "openclaw-channel-imessage",
+      "type": "collect_logs",
+      "command": "/opt/hiveplane/repairs/collect-openclaw-logs",
+      "args": [],
+      "timeoutMs": 15000,
+      "cooldownMs": 120000
+    },
+    {
+      "name": "cleanup-disk-pressure",
+      "triggerCheck": "disk-pressure",
+      "type": "collect_logs",
+      "command": "/opt/hiveplane/repairs/cleanup-disk-pressure",
+      "args": [],
+      "timeoutMs": 30000,
+      "cooldownMs": 3600000
+    }
+  ]
+}

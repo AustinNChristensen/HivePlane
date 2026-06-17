@@ -202,13 +202,77 @@ Bootstrap tokens are single-use and expire in 30 minutes by default.
 
 ### Step 3 — Install the Bee daemon
 
-On each Bee machine, either run the one-command install copied from the dashboard, or use the manual flow:
+On each Bee machine, either run the one-command install copied from the dashboard, or use the guided installer:
 
 ```bash
 curl -fsSL http://mac-mini.tailnet-name.ts.net:4483/install/bee.sh | sh
 ```
 
-This clones HivePlane to `~/.hiveplane/install`, runs `pnpm install`, drops `bee` and `hiveplane-bee` shims into `~/.local/bin`, and generates a persistent Ed25519 identity under `~/.hiveplane`. It does **not** start anything yet.
+This clones HivePlane to `~/.hiveplane/install`, runs `pnpm install`, drops `bee` and `hiveplane-bee` shims into `~/.local/bin`, generates a persistent Ed25519 identity under `~/.hiveplane`, and then prompts for the connection details when run from a terminal:
+
+- Hive URL.
+- Pairing key or bootstrap token.
+- Bee display name.
+- Start method.
+
+For a fully non-interactive install:
+
+```bash
+curl -fsSL http://mac-mini.tailnet-name.ts.net:4483/install/bee.sh | sh -s -- \
+  --hive-url http://mac-mini.tailnet-name.ts.net:4483 \
+  --pairing-key K7RQ-2P9X \
+  --name laptop-1 \
+  --method auto
+```
+
+Or with a long-form bootstrap token:
+
+```bash
+curl -fsSL http://mac-mini.tailnet-name.ts.net:4483/install/bee.sh | sh -s -- \
+  --hive-url http://mac-mini.tailnet-name.ts.net:4483 \
+  --token hp_boot_xxxxxxxxxxxxxxxxxxx \
+  --name laptop-1 \
+  --method auto
+```
+
+`--method auto` starts the Bee as a durable service using launchd on macOS or systemd-user on Linux. Other methods:
+
+- `--method service`: same service path as `auto`.
+- `--method foreground`: pair, then run the Bee as a foreground child process.
+- `--method manual`: install and pair only; run `bee start` later.
+
+Installer options:
+
+```text
+--hive-url <url>        Hive URL this Bee should connect to
+--pairing-key <key>     Dashboard pairing key, e.g. K7RQ-2P9X
+--token <token>         Bootstrap token, e.g. hp_boot_...
+--bootstrap-token <t>   Alias for --token
+--name <name>           Bee display name in Hive
+--method <method>       auto, service, foreground, manual
+--install-dir <path>    Install directory, defaults to ~/.hiveplane/install
+--bin-dir <path>        CLI shim directory, defaults to ~/.local/bin
+--repo-url <url>        Git repository URL
+--repo-ref <ref>        Git branch/tag/ref to install
+--no-start              Pair but do not start the Bee
+--foreground            Start in the foreground after pairing
+--help                  Show installer help
+```
+
+Environment equivalents:
+
+```text
+HIVEPLANE_HIVE_URL
+HIVEPLANE_PAIRING_KEY
+HIVEPLANE_BOOTSTRAP_TOKEN
+HIVEPLANE_BEE_NAME
+HIVEPLANE_INSTALL_METHOD=auto|service|foreground|manual
+HIVEPLANE_INSTALL_DIR
+HIVEPLANE_BIN_DIR
+HIVEPLANE_REPO_URL
+HIVEPLANE_REPO_REF
+HIVEPLANE_NO_START=1
+```
 
 If `~/.local/bin` isn't on your shell's PATH, the installer prints the line you need to add to your shell rc.
 
@@ -410,6 +474,7 @@ the user-owned Hive URL.
 - [Systems and scoped permissions](docs/systems-permissions.md)
 - [Sub-agent provisioning](docs/sub-agent-provisioning.md)
 - [Self-healing recovery](docs/self-healing-todo.md)
+- [Remote macOS recovery](docs/macos-remote-recovery.md)
 - [Competitor analysis](docs/competitor-analysis.md)
 
 ## MVP Pillars
